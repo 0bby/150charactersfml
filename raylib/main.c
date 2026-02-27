@@ -56,6 +56,29 @@ typedef enum {
 } GamePhase;
 
 //------------------------------------------------------------------------------------
+// Ability System (placeholder for future)
+//------------------------------------------------------------------------------------
+#define MAX_ABILITIES_PER_UNIT 4
+#define MAX_SHOP_SLOTS 3
+
+typedef struct {
+    int abilityId;        // -1 = empty, >= 0 = ability index (future)
+} AbilitySlot;
+
+//------------------------------------------------------------------------------------
+// HUD Layout Constants
+//------------------------------------------------------------------------------------
+#define HUD_UNIT_BAR_HEIGHT 130
+#define HUD_SHOP_HEIGHT 50
+#define HUD_TOTAL_HEIGHT (HUD_UNIT_BAR_HEIGHT + HUD_SHOP_HEIGHT)
+#define HUD_CARD_WIDTH 180
+#define HUD_CARD_HEIGHT 120
+#define HUD_CARD_SPACING 10
+#define HUD_PORTRAIT_SIZE 80
+#define HUD_ABILITY_SLOT_SIZE 32
+#define HUD_ABILITY_SLOT_GAP 4
+
+//------------------------------------------------------------------------------------
 // Unit type (visual info — model, scale, name)
 //------------------------------------------------------------------------------------
 typedef struct {
@@ -80,6 +103,7 @@ typedef struct {
     bool active;
     bool selected;
     bool dragging;
+    AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
 } Unit;
 
 //------------------------------------------------------------------------------------
@@ -89,6 +113,7 @@ typedef struct {
     int typeIndex;
     Vector3 position;
     Team team;
+    AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
 } UnitSnapshot;
 
 //------------------------------------------------------------------------------------
@@ -122,6 +147,8 @@ bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
         .selected       = false,
         .dragging       = false,
     };
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+        units[*unitCount].abilities[a].abilityId = -1;
     (*unitCount)++;
     return true;
 }
@@ -189,6 +216,8 @@ void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[], int *snapCo
         snaps[i].typeIndex = units[i].typeIndex;
         snaps[i].position = units[i].position;
         snaps[i].team     = units[i].team;
+        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+            snaps[i].abilities[a] = units[i].abilities[a];
     }
 }
 
@@ -210,6 +239,8 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             .selected       = false,
             .dragging       = false,
         };
+        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+            units[i].abilities[a] = snaps[i].abilities[a];
     }
 }
 
@@ -253,6 +284,17 @@ int main(void)
         }
         else unitTypes[i].loaded = false;
     }
+
+    // Portrait render textures for HUD (one per max blue unit)
+    RenderTexture2D portraits[BLUE_TEAM_MAX_SIZE];
+    for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++)
+        portraits[i] = LoadRenderTexture(HUD_PORTRAIT_SIZE, HUD_PORTRAIT_SIZE);
+
+    // Dedicated camera for portrait rendering
+    Camera portraitCam = { 0 };
+    portraitCam.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+    portraitCam.fovy = 30.0f;
+    portraitCam.projection = CAMERA_PERSPECTIVE;
 
     // Units
     Unit units[MAX_UNITS] = { 0 };
@@ -358,10 +400,11 @@ int main(void)
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
+                int hudTop = sh - HUD_TOTAL_HEIGHT;
                 int btnXBlue = btnMargin;
                 int btnXRed  = sw - btnWidth - btnMargin;
-                int btnYStart = sh - (unitTypeCount * (btnHeight + btnMargin));
-                Rectangle playBtn = { (float)(sw/2 - playBtnW/2), (float)(sh - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
+                int btnYStart = hudTop - (unitTypeCount * (btnHeight + btnMargin)) - btnMargin;
+                Rectangle playBtn = { (float)(sw/2 - playBtnW/2), (float)(hudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 bool clickedButton = false;
 
                 // Play button
@@ -400,8 +443,8 @@ int main(void)
                         { SpawnUnit(units, &unitCount, i, TEAM_RED); clickedButton = true; break; }
                     }
                 }
-                // Unit selection
-                if (!clickedButton)
+                // Unit selection (skip if clicking inside HUD area)
+                if (!clickedButton && mouse.y < hudTop)
                 {
                     bool hitAny = false;
                     for (int i = unitCount - 1; i >= 0; i--)
@@ -535,6 +578,35 @@ int main(void)
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
+        // Collect active blue units for HUD
+        int blueHudUnits[BLUE_TEAM_MAX_SIZE];
+        int blueHudCount = 0;
+        for (int i = 0; i < unitCount && blueHudCount < BLUE_TEAM_MAX_SIZE; i++) {
+            if (units[i].active && units[i].team == TEAM_BLUE)
+                blueHudUnits[blueHudCount++] = i;
+        }
+
+        // Render unit portraits into offscreen textures
+        for (int h = 0; h < blueHudCount; h++) {
+            int ui = blueHudUnits[h];
+            UnitType *type = &unitTypes[units[ui].typeIndex];
+            if (!type->loaded) continue;
+
+            // Auto-center camera on model
+            BoundingBox bb = type->baseBounds;
+            float centerY = (bb.min.y + bb.max.y) / 2.0f * type->scale;
+            float extent = (bb.max.y - bb.min.y) * type->scale;
+            portraitCam.target = (Vector3){ 0.0f, centerY, 0.0f };
+            portraitCam.position = (Vector3){ 0.0f, centerY, extent * 2.5f };
+
+            BeginTextureMode(portraits[h]);
+                ClearBackground((Color){ 30, 30, 40, 255 });
+                BeginMode3D(portraitCam);
+                    DrawModel(type->model, (Vector3){ 0, 0, 0 }, type->scale, GetTeamTint(TEAM_BLUE));
+                EndMode3D();
+            EndTextureMode();
+        }
+
         BeginMode3D(camera);
             DrawGrid(20, 10.0f);
 
@@ -613,9 +685,10 @@ int main(void)
         {
             int sw = GetScreenWidth();
             int sh = GetScreenHeight();
+            int dHudTop = sh - HUD_TOTAL_HEIGHT;
             int dBtnXBlue = btnMargin;
             int dBtnXRed  = sw - btnWidth - btnMargin;
-            int dBtnYStart = sh - (unitTypeCount * (btnHeight + btnMargin));
+            int dBtnYStart = dHudTop - (unitTypeCount * (btnHeight + btnMargin)) - btnMargin;
 
             for (int i = 0; i < unitTypeCount; i++)
             {
@@ -643,7 +716,7 @@ int main(void)
 
             // PLAY button (centre-bottom)
             {
-                Rectangle dPlayBtn = { (float)(sw/2 - playBtnW/2), (float)(sh - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
+                Rectangle dPlayBtn = { (float)(sw/2 - playBtnW/2), (float)(dHudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 int ba, ra;
                 CountTeams(units, unitCount, &ba, &ra);
                 bool canPlay = (ba > 0 && ra > 0);
@@ -719,6 +792,160 @@ int main(void)
         if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), fBar))
         { camFOV = (GetMousePosition().x - 10) / 150.0f * 120.0f; if (camFOV < 1) camFOV = 1; }
 
+        // ── UNIT HUD BAR + SHOP ── (visible in all phases except GAME_OVER)
+        if (phase != PHASE_GAME_OVER)
+        {
+            int hudSw = GetScreenWidth();
+            int hudSh = GetScreenHeight();
+            int hudTop = hudSh - HUD_TOTAL_HEIGHT;
+
+            // --- Dark background panel (full width, bottom) ---
+            DrawRectangle(0, hudTop, hudSw, HUD_TOTAL_HEIGHT, (Color){ 24, 24, 32, 230 });
+            DrawRectangle(0, hudTop, hudSw, 2, (Color){ 60, 60, 80, 255 });
+
+            // --- Unit cards (centered horizontally in the unit bar) ---
+            int totalCardsW = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH
+                            + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+            int cardsStartX = (hudSw - totalCardsW) / 2;
+            int cardsY = hudTop + HUD_SHOP_HEIGHT + 5;
+
+            for (int slot = 0; slot < BLUE_TEAM_MAX_SIZE; slot++)
+            {
+                int cardX = cardsStartX + slot * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
+
+                // Card background
+                DrawRectangle(cardX, cardsY, HUD_CARD_WIDTH, HUD_CARD_HEIGHT,
+                             (Color){ 35, 35, 50, 255 });
+                DrawRectangleLines(cardX, cardsY, HUD_CARD_WIDTH, HUD_CARD_HEIGHT,
+                                  (Color){ 60, 60, 80, 255 });
+
+                if (slot < blueHudCount)
+                {
+                    int ui = blueHudUnits[slot];
+                    UnitType *type = &unitTypes[units[ui].typeIndex];
+                    const UnitStats *stats = &UNIT_STATS[units[ui].typeIndex];
+
+                    // Selection highlight
+                    if (units[ui].selected)
+                        DrawRectangleLinesEx(
+                            (Rectangle){ (float)(cardX - 1), (float)(cardsY - 1),
+                                        (float)(HUD_CARD_WIDTH + 2), (float)(HUD_CARD_HEIGHT + 2) },
+                            2, (Color){ 100, 255, 100, 255 });
+
+                    // Portrait (left side of card) — Y-flipped for RenderTexture
+                    Rectangle srcRect = { 0, 0, (float)HUD_PORTRAIT_SIZE, -(float)HUD_PORTRAIT_SIZE };
+                    Rectangle dstRect = { (float)(cardX + 4), (float)(cardsY + 4),
+                                          (float)HUD_PORTRAIT_SIZE, (float)HUD_PORTRAIT_SIZE };
+                    DrawTexturePro(portraits[slot].texture, srcRect, dstRect,
+                                  (Vector2){ 0, 0 }, 0.0f, WHITE);
+                    DrawRectangleLines(cardX + 4, cardsY + 4,
+                                      HUD_PORTRAIT_SIZE, HUD_PORTRAIT_SIZE,
+                                      (Color){ 60, 60, 80, 255 });
+
+                    // Unit name below portrait
+                    const char *unitName = type->name;
+                    int nameW = MeasureText(unitName, 12);
+                    DrawText(unitName,
+                            cardX + 4 + (HUD_PORTRAIT_SIZE - nameW) / 2,
+                            cardsY + HUD_PORTRAIT_SIZE + 8,
+                            12, (Color){ 200, 200, 220, 255 });
+
+                    // Mini health bar
+                    int hbX = cardX + 4;
+                    int hbY = cardsY + HUD_PORTRAIT_SIZE + 22;
+                    int hbW = HUD_PORTRAIT_SIZE;
+                    int hbH = 6;
+                    float hpRatio = units[ui].currentHealth / stats->health;
+                    if (hpRatio < 0) hpRatio = 0;
+                    if (hpRatio > 1) hpRatio = 1;
+                    DrawRectangle(hbX, hbY, hbW, hbH, (Color){ 20, 20, 20, 255 });
+                    Color hpCol = (hpRatio > 0.5f) ? GREEN : (hpRatio > 0.25f) ? ORANGE : RED;
+                    DrawRectangle(hbX, hbY, (int)(hbW * hpRatio), hbH, hpCol);
+                    DrawRectangleLines(hbX, hbY, hbW, hbH, (Color){ 60, 60, 80, 255 });
+
+                    // 2x2 Ability slot grid (right side of card)
+                    int abilStartX = cardX + HUD_PORTRAIT_SIZE + 12;
+                    int abilStartY = cardsY + 8;
+                    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+                    {
+                        int col = a % 2;
+                        int row = a / 2;
+                        int ax = abilStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                        int ay = abilStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+
+                        DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE,
+                                     HUD_ABILITY_SLOT_SIZE, (Color){ 40, 40, 55, 255 });
+                        DrawRectangleLines(ax, ay, HUD_ABILITY_SLOT_SIZE,
+                                          HUD_ABILITY_SLOT_SIZE, (Color){ 90, 90, 110, 255 });
+
+                        // Placeholder "?" in empty slots
+                        if (units[ui].abilities[a].abilityId < 0)
+                        {
+                            const char *q = "?";
+                            int qw = MeasureText(q, 16);
+                            DrawText(q, ax + (HUD_ABILITY_SLOT_SIZE - qw) / 2,
+                                    ay + (HUD_ABILITY_SLOT_SIZE - 16) / 2,
+                                    16, (Color){ 80, 80, 100, 255 });
+                        }
+                    }
+                }
+                else
+                {
+                    // Empty slot placeholder
+                    const char *emptyText = "EMPTY";
+                    int ew = MeasureText(emptyText, 14);
+                    DrawText(emptyText,
+                            cardX + (HUD_CARD_WIDTH - ew) / 2,
+                            cardsY + (HUD_CARD_HEIGHT - 14) / 2,
+                            14, (Color){ 60, 60, 80, 255 });
+                }
+            }
+
+            // --- Shop panel (only during PREP, above unit bar) ---
+            if (phase == PHASE_PREP)
+            {
+                int shopY = hudTop + 2;
+                int shopH = HUD_SHOP_HEIGHT - 2;
+                DrawRectangle(0, shopY, hudSw, shopH, (Color){ 20, 20, 28, 240 });
+                DrawRectangle(0, shopY + shopH - 1, hudSw, 1, (Color){ 60, 60, 80, 255 });
+
+                // ROLL button (left)
+                Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
+                Color rollColor = (Color){ 180, 140, 40, 255 };
+                if (CheckCollisionPointRec(GetMousePosition(), rollBtn))
+                    rollColor = (Color){ 220, 180, 60, 255 };
+                DrawRectangleRec(rollBtn, rollColor);
+                DrawRectangleLinesEx(rollBtn, 2, (Color){ 120, 90, 20, 255 });
+                const char *rollText = "ROLL";
+                int rollW = MeasureText(rollText, 16);
+                DrawText(rollText, (int)(rollBtn.x + (80 - rollW) / 2),
+                        (int)(rollBtn.y + (30 - 16) / 2), 16, WHITE);
+
+                // Placeholder ability cards in shop (3 slots, centered)
+                int shopCardW = 100;
+                int shopCardH = 34;
+                int shopCardGap = 10;
+                int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
+                int shopCardsX = (hudSw - totalShopW) / 2;
+                for (int s = 0; s < MAX_SHOP_SLOTS; s++)
+                {
+                    int scx = shopCardsX + s * (shopCardW + shopCardGap);
+                    int scy = shopY + 8;
+                    DrawRectangle(scx, scy, shopCardW, shopCardH, (Color){ 50, 50, 65, 255 });
+                    DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){ 90, 90, 110, 255 });
+                    const char *placeholder = "???";
+                    int pw = MeasureText(placeholder, 14);
+                    DrawText(placeholder, scx + (shopCardW - pw) / 2,
+                            scy + (shopCardH - 14) / 2, 14, (Color){ 100, 100, 120, 255 });
+                }
+
+                // Gold display (right side)
+                const char *goldText = TextFormat("Gold: %d", 10);
+                int gw = MeasureText(goldText, 18);
+                DrawText(goldText, hudSw - gw - 20, shopY + 16, 18, (Color){ 240, 200, 60, 255 });
+            }
+        }
+
         DrawFPS(10, 10);
         EndDrawing();
     }
@@ -728,6 +955,7 @@ int main(void)
         pclose(nfcPipe);
         printf("[NFC] Bridge closed\n");
     }
+    for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     for (int i = 0; i < unitTypeCount; i++) UnloadModel(unitTypes[i].model);
     CloseWindow();
     return 0;
