@@ -75,12 +75,17 @@ int main(void)
 
     InitWindow(screenWidth, screenHeight, "Unit Spawner");
 
+    // --- Camera Parameters for Adjustment ---
+    float camHeight = 102.0f;
+    float camDistance = 104.0f;
+    float camFOV = 52.0f;
+
     // Define the camera to look into our 3d world
     Camera camera = { 0 };
-    camera.position = (Vector3){ 50.0f, 50.0f, 50.0f };
-    camera.target = (Vector3){ 0.0f, 12.0f, 0.0f };
+    camera.position = (Vector3){ 0.0f, camHeight, camDistance };
+    camera.target = (Vector3){ 0.0f, 0.0f, 0.0f };
     camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
-    camera.fovy = 45.0f;
+    camera.fovy = camFOV;
     camera.projection = CAMERA_PERSPECTIVE;
 
     // --- Unit Type Registry ---
@@ -131,6 +136,11 @@ int main(void)
     {
         // Update
         //----------------------------------------------------------------------------------
+
+        // Update camera from parameters
+        camera.position.y = camHeight;
+        camera.position.z = camDistance;
+        camera.fovy = camFOV;
 
         // Smooth Y lift for all units
         for (int i = 0; i < unitCount; i++)
@@ -281,6 +291,50 @@ int main(void)
 
             // Info
             DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
+            
+            // --- Simple Sliders for Camera Debugging ---
+            // Height Slider
+            Rectangle hBar = { 10, 60, 150, 20 };
+            float hPerc = (camHeight / 150.0f);
+            if (hPerc > 1.0f) hPerc = 1.0f;
+            if (hPerc < 0.0f) hPerc = 0.0f;
+            DrawRectangleRec(hBar, LIGHTGRAY);
+            DrawRectangle(10, 60, (int)(150 * hPerc), 20, SKYBLUE);
+            DrawText(TextFormat("Height: %.1f", camHeight), 170, 60, 10, BLACK);
+            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), hBar)) 
+            {
+                camHeight = (GetMousePosition().x - 10) / 150.0f * 150.0f;
+                if (camHeight < 1.0f) camHeight = 1.0f; 
+            }
+
+            // Distance Slider
+            Rectangle dBar = { 10, 90, 150, 20 };
+            float dPerc = (camDistance / 150.0f);
+            if (dPerc > 1.0f) dPerc = 1.0f;
+            if (dPerc < 0.0f) dPerc = 0.0f;
+            DrawRectangleRec(dBar, LIGHTGRAY);
+            DrawRectangle(10, 90, (int)(150 * dPerc), 20, SKYBLUE);
+            DrawText(TextFormat("Distance: %.1f", camDistance), 170, 90, 10, BLACK);
+            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), dBar)) 
+            {
+                camDistance = (GetMousePosition().x - 10) / 150.0f * 150.0f;
+                if (camDistance < 1.0f) camDistance = 1.0f;
+            }
+
+            // FOV Slider
+            Rectangle fBar = { 10, 120, 150, 20 };
+            float fPerc = (camFOV / 120.0f);
+            if (fPerc > 1.0f) fPerc = 1.0f;
+            if (fPerc < 0.0f) fPerc = 0.0f;
+            DrawRectangleRec(fBar, LIGHTGRAY);
+            DrawRectangle(10, 120, (int)(150 * fPerc), 20, SKYBLUE);
+            DrawText(TextFormat("FOV: %.1f", camFOV), 170, 120, 10, BLACK);
+            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), fBar)) 
+            {
+                camFOV = (GetMousePosition().x - 10) / 150.0f * 120.0f;
+                if (camFOV < 1.0f) camFOV = 1.0f;
+            }
+
             DrawFPS(10, 10);
 
         EndDrawing();
