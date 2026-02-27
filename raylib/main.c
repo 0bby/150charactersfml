@@ -60,6 +60,8 @@ int main(void)
     // if model is scaled on drawing, bounds must be also scaled
 
     bool selected = false;          // Selected object flag
+    bool dragging = false;          // Dragging flag
+    float modelScale = 0.1f;        // Model scale factor
 
     Vector2 mushroomScreenPosition = { 0.0f, 0.0f };
 
@@ -71,9 +73,32 @@ int main(void)
     {
         // Update
         //----------------------------------------------------------------------------------
-        UpdateCamera(&camera, CAMERA_ORBITAL);
+        // UpdateCamera(&camera, CAMERA_ORBITAL);
 
-        mushroomScreenPosition = GetWorldToScreen((Vector3){position.x, position.y + (bounds.max.y * 0.1f) + 1.0f, position.z}, camera);
+        // Update mushroom position if dragging
+        float targetY = dragging ? 5.0f : 0.0f;
+        position.y += (targetY - position.y) * 0.1f; // Smooth lifting effect
+
+        if (dragging)
+        {
+            Ray ray = GetScreenToWorldRay(GetMousePosition(), camera);
+            // Check collision with ground plane (y=0)
+            RayCollision groundHit = GetRayCollisionQuad(ray, 
+                (Vector3){ -100.0f, 0.0f, -100.0f }, 
+                (Vector3){ -100.0f, 0.0f,  100.0f }, 
+                (Vector3){  100.0f, 0.0f,  100.0f }, 
+                (Vector3){  100.0f, 0.0f, -100.0f });
+            
+            if (groundHit.hit)
+            {
+                position.x = groundHit.point.x;
+                position.z = groundHit.point.z;
+            }
+            
+            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) dragging = false;
+        }
+
+        mushroomScreenPosition = GetWorldToScreen((Vector3){position.x, position.y + (bounds.max.y * modelScale) + 1.0f, position.z}, camera);
 
         // Load new models/textures on drag&drop
         if (IsFileDropped())
@@ -115,9 +140,22 @@ int main(void)
         // Select model on mouse click
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
         {
+            // Calculate scaled and translated bounding box
+            BoundingBox scaledBounds = {
+                (Vector3){ position.x + bounds.min.x * modelScale, position.y + bounds.min.y * modelScale, position.z + bounds.min.z * modelScale },
+                (Vector3){ position.x + bounds.max.x * modelScale, position.y + bounds.max.y * modelScale, position.z + bounds.max.z * modelScale }
+            };
+
             // Check collision between ray and box
-            if (GetRayCollisionBox(GetScreenToWorldRay(GetMousePosition(), camera), bounds).hit) selected = !selected;
-            else selected = false;
+            if (GetRayCollisionBox(GetScreenToWorldRay(GetMousePosition(), camera), scaledBounds).hit) 
+            {
+                selected = true;
+                dragging = true;
+            }
+            else 
+            {
+                selected = false;
+            }
         }
         //----------------------------------------------------------------------------------
 
@@ -129,11 +167,19 @@ int main(void)
 
             BeginMode3D(camera);
 
-                DrawModel(model, position, 0.1f, WHITE);        // Draw 3d model with texture
+                DrawModel(model, position, modelScale, WHITE);        // Draw 3d model with texture
 
                 DrawGrid(20, 10.0f);         // Draw a grid
 
-                if (selected) DrawBoundingBox(bounds, GREEN);   // Draw selection box
+                if (selected) 
+                {
+                    // Draw scaled bounding box
+                    BoundingBox scaledBounds = {
+                        (Vector3){ position.x + bounds.min.x * modelScale, position.y + bounds.min.y * modelScale, position.z + bounds.min.z * modelScale },
+                        (Vector3){ position.x + bounds.max.x * modelScale, position.y + bounds.max.y * modelScale, position.z + bounds.max.z * modelScale }
+                    };
+                    DrawBoundingBox(scaledBounds, GREEN);
+                }
 
             EndMode3D();
 
