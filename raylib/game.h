@@ -149,6 +149,7 @@ typedef struct {
     bool active;
     bool selected;
     bool dragging;
+    float facingAngle;     // degrees around Y axis (for smooth turning)
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
     int nextAbilitySlot;   // index into ACTIVATION_ORDER for clockwise cycling
 } Unit;

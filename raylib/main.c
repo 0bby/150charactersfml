@@ -49,10 +49,10 @@ int main(void)
     UnitType unitTypes[MAX_UNIT_TYPES] = { 0 };
     unitTypes[0].name = "Mushroom";
     unitTypes[0].modelPath = "MUSHROOMmixamotest.obj";
-    unitTypes[0].scale = 0.1f;
+    unitTypes[0].scale = 0.07f;
     unitTypes[1].name = "Goblin";
     unitTypes[1].modelPath = "goblin.obj";
-    unitTypes[1].scale = 0.1f;
+    unitTypes[1].scale = 0.07f;
 
     for (int i = 0; i < unitTypeCount; i++)
     {
@@ -561,25 +561,28 @@ int main(void)
             for (int i = 0; i < unitCount; i++) {
                 if (!units[i].active) continue;
                 if (UnitHasModifier(modifiers, i, MOD_DIG_HEAL)) {
-                    // Spawn 2-3 brown dirt particles per frame
+                    UnitType *dtype = &unitTypes[units[i].typeIndex];
+                    float modelH = (dtype->baseBounds.max.y - dtype->baseBounds.min.y) * dtype->scale;
+                    float modelR = (dtype->baseBounds.max.x - dtype->baseBounds.min.x) * dtype->scale * 0.6f;
+                    // Spawn brown dirt particles around the model
                     for (int pp = 0; pp < 3; pp++) {
                         float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
-                        float spread = (float)GetRandomValue(10, 40) / 10.0f;
+                        float r = modelR + (float)GetRandomValue(5, 20) / 10.0f;
                         Vector3 pos = {
-                            units[i].position.x + cosf(angle) * spread * 0.5f,
-                            units[i].position.y + (float)GetRandomValue(0, 20) / 10.0f,
-                            units[i].position.z + sinf(angle) * spread * 0.5f
+                            units[i].position.x + cosf(angle) * r,
+                            units[i].position.y + (float)GetRandomValue(0, (int)(modelH * 10.0f)) / 10.0f,
+                            units[i].position.z + sinf(angle) * r
                         };
                         Vector3 vel = {
-                            cosf(angle) * spread * 2.0f,
-                            (float)GetRandomValue(30, 80) / 10.0f,
-                            sinf(angle) * spread * 2.0f
+                            cosf(angle) * 3.0f,
+                            (float)GetRandomValue(20, 60) / 10.0f,
+                            sinf(angle) * 3.0f
                         };
                         int shade = GetRandomValue(100, 180);
                         Color brown = { (unsigned char)shade, (unsigned char)(shade * 0.6f),
                                         (unsigned char)(shade * 0.3f), 255 };
                         float sz = (float)GetRandomValue(3, 8) / 10.0f;
-                        SpawnParticle(particles, pos, vel, 0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, brown);
+                        SpawnParticle(particles, pos, vel, 0.5f + (float)GetRandomValue(0, 3) / 10.0f, sz, brown);
                     }
                 }
             }
@@ -677,6 +680,22 @@ int main(void)
                 // Find target
                 int target = FindClosestEnemy(units, unitCount, i);
                 units[i].targetIndex = target;
+
+                // Smooth rotation towards target
+                if (target >= 0 && units[target].active) {
+                    float dx = units[target].position.x - units[i].position.x;
+                    float dz = units[target].position.z - units[i].position.z;
+                    float goalAngle = atan2f(dx, dz) * (180.0f / PI);
+                    float diff = goalAngle - units[i].facingAngle;
+                    // Normalize to [-180, 180]
+                    while (diff > 180.0f) diff -= 360.0f;
+                    while (diff < -180.0f) diff += 360.0f;
+                    float turnSpeed = 360.0f; // degrees per second
+                    if (fabsf(diff) < turnSpeed * dt)
+                        units[i].facingAngle = goalAngle;
+                    else
+                        units[i].facingAngle += (diff > 0 ? 1.0f : -1.0f) * turnSpeed * dt;
+                }
 
                 // Active ability casting — one per frame, clockwise rotation
                 bool castThisFrame = false;
@@ -803,6 +822,7 @@ int main(void)
                 currentRound++;
                 phase = PHASE_ROUND_OVER;
                 roundOverTimer = 2.5f;
+                ClearAllParticles(particles);
             }
         }
         //------------------------------------------------------------------------------
@@ -907,7 +927,8 @@ int main(void)
                 UnitType *type = &unitTypes[units[i].typeIndex];
                 if (!type->loaded) continue;
                 Color tint = GetTeamTint(units[i].team);
-                DrawModel(type->model, units[i].position, type->scale, tint);
+                DrawModelEx(type->model, units[i].position, (Vector3){0,1,0}, units[i].facingAngle,
+                    (Vector3){type->scale, type->scale, type->scale}, tint);
 
                 if (units[i].selected)
                 {
