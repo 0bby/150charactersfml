@@ -1,21 +1,24 @@
 /*******************************************************************************************
 *
-*   Unit Spawning System - raylib
+*   Unit Spawning System - raylib (Autochess)
 *
-*   Extensible unit spawning with click-and-drag movement.
-*   Two-team autochess-style system with per-unit stats.
-*   Currently supports: Mushroom, Goblin
+*   Two-team autochess with round-based combat.
+*   Prep phase: place units.  Combat phase: units fight automatically.
+*   Best-of-5 rounds.
 *
 ********************************************************************************************/
 
 #include "raylib.h"
 #include <string.h>
+#include <math.h>
 
 //------------------------------------------------------------------------------------
-// Data Structures
+// Data Structures & Constants
 //------------------------------------------------------------------------------------
 #define MAX_UNIT_TYPES 8
 #define MAX_UNITS 64
+#define TOTAL_ROUNDS 5
+#define ATTACK_RANGE 8.0f       // how close a unit needs to be to attack
 
 //------------------------------------------------------------------------------------
 // Unit Stats — "Master Library" for balancing.
@@ -23,25 +26,30 @@
 //------------------------------------------------------------------------------------
 typedef struct {
     float health;
-    float movementSpeed;
+    float movementSpeed;        // world-units per second
     float attackDamage;
-    float attackSpeed;     // seconds between attacks
+    float attackSpeed;          // seconds between attacks
 } UnitStats;
 
-// Indexed by unit-type index (same order as unitTypes[]).
-// To add a new unit type: add a row here AND a UnitType entry below.
 static const UnitStats UNIT_STATS[] = {
-    /* 0  Mushroom */ { .health = 15.0f, .movementSpeed = 2.0f, .attackDamage = 3.0f, .attackSpeed = 1.2f },
-    /* 1  Goblin   */ { .health =  5.0f, .movementSpeed = 5.0f, .attackDamage = 2.0f, .attackSpeed = 0.5f },
+    /* 0  Mushroom */ { .health = 15.0f, .movementSpeed = 12.0f, .attackDamage = 3.0f, .attackSpeed = 1.2f },
+    /* 1  Goblin   */ { .health =  5.0f, .movementSpeed = 20.0f, .attackDamage = 2.0f, .attackSpeed = 0.5f },
 };
 
 //------------------------------------------------------------------------------------
-// Team enum
+// Team
+//------------------------------------------------------------------------------------
+typedef enum { TEAM_BLUE = 0, TEAM_RED = 1 } Team;
+
+//------------------------------------------------------------------------------------
+// Game phases
 //------------------------------------------------------------------------------------
 typedef enum {
-    TEAM_BLUE = 0,
-    TEAM_RED  = 1,
-} Team;
+    PHASE_PREP,       // place / arrange units
+    PHASE_COMBAT,     // units fight automatically
+    PHASE_ROUND_OVER, // brief pause showing round result
+    PHASE_GAME_OVER,  // all rounds finished
+} GamePhase;
 
 //------------------------------------------------------------------------------------
 // Unit type (visual info — model, scale, name)
@@ -50,50 +58,56 @@ typedef struct {
     const char *name;
     const char *modelPath;
     Model model;
-    BoundingBox baseBounds;   // unscaled bounds from mesh
+    BoundingBox baseBounds;
     float scale;
-    bool loaded;              // whether the model loaded successfully
+    bool loaded;
 } UnitType;
 
 //------------------------------------------------------------------------------------
 // Runtime unit instance
 //------------------------------------------------------------------------------------
 typedef struct {
-    int typeIndex;            // index into unitTypes[]
+    int typeIndex;
     Vector3 position;
     Team team;
-    float currentHealth;      // starts at UNIT_STATS[typeIndex].health
-    float attackCooldown;     // counts down each frame (seconds)
+    float currentHealth;
+    float attackCooldown;     // counts down each frame
+    int targetIndex;          // index of current target (-1 = none)
     bool active;
     bool selected;
     bool dragging;
 } Unit;
 
 //------------------------------------------------------------------------------------
-// Spawn a new unit of the given type on the given team
+// Snapshot of a unit for round-reset
+//------------------------------------------------------------------------------------
+typedef struct {
+    int typeIndex;
+    Vector3 position;
+    Team team;
+} UnitSnapshot;
+
+//------------------------------------------------------------------------------------
+// Functions
 //------------------------------------------------------------------------------------
 void SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
 {
     if (*unitCount >= MAX_UNITS) return;
-
     const UnitStats *stats = &UNIT_STATS[typeIndex];
-
     units[*unitCount] = (Unit){
-        .typeIndex     = typeIndex,
-        .position      = (Vector3){ 0.0f, 0.0f, 0.0f },
-        .team          = team,
-        .currentHealth = stats->health,
+        .typeIndex      = typeIndex,
+        .position       = (Vector3){ 0.0f, 0.0f, 0.0f },
+        .team           = team,
+        .currentHealth  = stats->health,
         .attackCooldown = 0.0f,
-        .active        = true,
-        .selected      = false,
-        .dragging      = false,
+        .targetIndex    = -1,
+        .active         = true,
+        .selected       = false,
+        .dragging       = false,
     };
     (*unitCount)++;
 }
 
-//------------------------------------------------------------------------------------
-// Helper: get the world-space scaled bounding box for a unit
-//------------------------------------------------------------------------------------
 BoundingBox GetUnitBounds(Unit *unit, UnitType *type)
 {
     BoundingBox b = type->baseBounds;
@@ -105,57 +119,112 @@ BoundingBox GetUnitBounds(Unit *unit, UnitType *type)
     };
 }
 
-//------------------------------------------------------------------------------------
-// Helper: team colour tint
-//------------------------------------------------------------------------------------
 Color GetTeamTint(Team team)
 {
-    if (team == TEAM_BLUE) return (Color){ 150, 180, 255, 255 };  // light blue
-    else                   return (Color){ 255, 150, 150, 255 };  // light red
+    if (team == TEAM_BLUE) return (Color){ 150, 180, 255, 255 };
+    else                   return (Color){ 255, 150, 150, 255 };
+}
+
+// Distance on the XZ plane
+float DistXZ(Vector3 a, Vector3 b)
+{
+    float dx = a.x - b.x;
+    float dz = a.z - b.z;
+    return sqrtf(dx * dx + dz * dz);
+}
+
+// Find index of closest active enemy (-1 if none)
+int FindClosestEnemy(Unit units[], int unitCount, int selfIndex)
+{
+    Team myTeam = units[selfIndex].team;
+    float bestDist = 1e30f;
+    int bestIdx = -1;
+    for (int j = 0; j < unitCount; j++)
+    {
+        if (j == selfIndex || !units[j].active) continue;
+        if (units[j].team == myTeam) continue;
+        float d = DistXZ(units[selfIndex].position, units[j].position);
+        if (d < bestDist) { bestDist = d; bestIdx = j; }
+    }
+    return bestIdx;
+}
+
+// Count active units per team
+void CountTeams(Unit units[], int unitCount, int *blueAlive, int *redAlive)
+{
+    *blueAlive = 0;
+    *redAlive  = 0;
+    for (int i = 0; i < unitCount; i++)
+    {
+        if (!units[i].active) continue;
+        if (units[i].team == TEAM_BLUE) (*blueAlive)++;
+        else (*redAlive)++;
+    }
+}
+
+// Save unit layout for round-reset
+void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[], int *snapCount)
+{
+    *snapCount = unitCount;
+    for (int i = 0; i < unitCount; i++)
+    {
+        snaps[i].typeIndex = units[i].typeIndex;
+        snaps[i].position = units[i].position;
+        snaps[i].team     = units[i].team;
+    }
+}
+
+// Restore units from snapshot (full HP, ready to fight again)
+void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int snapCount)
+{
+    *unitCount = snapCount;
+    for (int i = 0; i < snapCount; i++)
+    {
+        const UnitStats *stats = &UNIT_STATS[snaps[i].typeIndex];
+        units[i] = (Unit){
+            .typeIndex      = snaps[i].typeIndex,
+            .position       = snaps[i].position,
+            .team           = snaps[i].team,
+            .currentHealth  = stats->health,
+            .attackCooldown = 0.0f,
+            .targetIndex    = -1,
+            .active         = true,
+            .selected       = false,
+            .dragging       = false,
+        };
+    }
 }
 
 //------------------------------------------------------------------------------------
-// Program main entry point
+// Main
 //------------------------------------------------------------------------------------
 int main(void)
 {
-    // Initialization
-    //--------------------------------------------------------------------------------------
     const int screenWidth = 800;
     const int screenHeight = 450;
+    InitWindow(screenWidth, screenHeight, "Autochess — Best of 5");
 
-    InitWindow(screenWidth, screenHeight, "Unit Spawner — Autochess");
-
-    // --- Camera Parameters for Adjustment ---
+    // Camera
     float camHeight = 102.0f;
     float camDistance = 104.0f;
     float camFOV = 52.0f;
-
-    // Define the camera to look into our 3d world
     Camera camera = { 0 };
     camera.position = (Vector3){ 0.0f, camHeight, camDistance };
-    camera.target = (Vector3){ 0.0f, 0.0f, 0.0f };
-    camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
-    camera.fovy = camFOV;
+    camera.target   = (Vector3){ 0.0f, 0.0f, 0.0f };
+    camera.up       = (Vector3){ 0.0f, 1.0f, 0.0f };
+    camera.fovy     = camFOV;
     camera.projection = CAMERA_PERSPECTIVE;
 
-    // --- Unit Type Registry ---
-    // To add a new unit type: add an entry here, a matching UNIT_STATS row above,
-    // and increment unitTypeCount.
+    // Unit types
     int unitTypeCount = 2;
     UnitType unitTypes[MAX_UNIT_TYPES] = { 0 };
-
-    // Mushroom
     unitTypes[0].name = "Mushroom";
     unitTypes[0].modelPath = "MUSHROOMmixamotest.obj";
     unitTypes[0].scale = 0.1f;
-
-    // Goblin
     unitTypes[1].name = "Goblin";
     unitTypes[1].modelPath = "goblin.obj";
     unitTypes[1].scale = 0.1f;
 
-    // Load all unit type models
     for (int i = 0; i < unitTypeCount; i++)
     {
         unitTypes[i].model = LoadModel(unitTypes[i].modelPath);
@@ -164,329 +233,424 @@ int main(void)
             unitTypes[i].baseBounds = GetMeshBoundingBox(unitTypes[i].model.meshes[0]);
             unitTypes[i].loaded = true;
         }
-        else
-        {
-            unitTypes[i].loaded = false;
-        }
+        else unitTypes[i].loaded = false;
     }
 
-    // --- Units array ---
+    // Units
     Unit units[MAX_UNITS] = { 0 };
     int unitCount = 0;
 
-    // --- UI Button definitions ---
+    // Snapshot for round-reset
+    UnitSnapshot snapshots[MAX_UNITS] = { 0 };
+    int snapshotCount = 0;
+
+    // Round / score state
+    GamePhase phase = PHASE_PREP;
+    int currentRound = 0;          // 0-indexed, displayed as 1-indexed
+    int blueWins = 0;
+    int redWins  = 0;
+    float roundOverTimer = 0.0f;   // brief pause after a round ends
+    const char *roundResultText = "";
+
+    // UI buttons
     const int btnWidth = 150;
     const int btnHeight = 30;
     const int btnMargin = 10;
-    // Blue-team buttons on the left, Red-team buttons on the right
     const int btnXBlue = btnMargin;
     const int btnXRed  = screenWidth - btnWidth - btnMargin;
     const int btnYStart = screenHeight - (unitTypeCount * (btnHeight + btnMargin));
 
-    SetTargetFPS(60);
-    //--------------------------------------------------------------------------------------
+    // Play button (centre)
+    const int playBtnW = 120;
+    const int playBtnH = 40;
+    Rectangle playBtn = {
+        (float)(screenWidth / 2 - playBtnW / 2),
+        (float)(screenHeight - playBtnH - btnMargin),
+        (float)playBtnW,
+        (float)playBtnH
+    };
 
-    // Main game loop
+    SetTargetFPS(60);
+
+    //==================================================================================
+    // MAIN LOOP
+    //==================================================================================
     while (!WindowShouldClose())
     {
-        // Update
-        //----------------------------------------------------------------------------------
+        float dt = GetFrameTime();
 
-        // Update camera from parameters
+        // Update camera
         camera.position.y = camHeight;
         camera.position.z = camDistance;
         camera.fovy = camFOV;
 
-        // Smooth Y lift for all units
-        for (int i = 0; i < unitCount; i++)
+        //------------------------------------------------------------------------------
+        // PHASE: PREP — place units, click Play to start
+        //------------------------------------------------------------------------------
+        if (phase == PHASE_PREP)
         {
-            if (!units[i].active) continue;
-            float targetY = units[i].dragging ? 5.0f : 0.0f;
-            units[i].position.y += (targetY - units[i].position.y) * 0.1f;
-        }
-
-        // Dragging logic
-        for (int i = 0; i < unitCount; i++)
-        {
-            if (!units[i].active || !units[i].dragging) continue;
-
-            Ray ray = GetScreenToWorldRay(GetMousePosition(), camera);
-            RayCollision groundHit = GetRayCollisionQuad(ray,
-                (Vector3){ -500.0f, 0.0f, -500.0f },
-                (Vector3){ -500.0f, 0.0f,  500.0f },
-                (Vector3){  500.0f, 0.0f,  500.0f },
-                (Vector3){  500.0f, 0.0f, -500.0f });
-
-            if (groundHit.hit)
+            // Smooth Y lift
+            for (int i = 0; i < unitCount; i++)
             {
-                units[i].position.x = groundHit.point.x;
-                units[i].position.z = groundHit.point.z;
+                if (!units[i].active) continue;
+                float targetY = units[i].dragging ? 5.0f : 0.0f;
+                units[i].position.y += (targetY - units[i].position.y) * 0.1f;
             }
 
-            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+            // Dragging
+            for (int i = 0; i < unitCount; i++)
             {
-                units[i].dragging = false;
-            }
-        }
-
-        // Click handling: check spawn buttons first, then unit selection
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
-        {
-            Vector2 mouse = GetMousePosition();
-            bool clickedButton = false;
-
-            // Check BLUE spawn buttons (bottom-left)
-            for (int i = 0; i < unitTypeCount; i++)
-            {
-                Rectangle btnRect = {
-                    (float)btnXBlue,
-                    (float)(btnYStart + i * (btnHeight + btnMargin)),
-                    (float)btnWidth,
-                    (float)btnHeight
-                };
-                if (CheckCollisionPointRec(mouse, btnRect) && unitTypes[i].loaded)
+                if (!units[i].active || !units[i].dragging) continue;
+                Ray ray = GetScreenToWorldRay(GetMousePosition(), camera);
+                RayCollision groundHit = GetRayCollisionQuad(ray,
+                    (Vector3){ -500, 0, -500 }, (Vector3){ -500, 0, 500 },
+                    (Vector3){  500, 0,  500 }, (Vector3){  500, 0, -500 });
+                if (groundHit.hit)
                 {
-                    SpawnUnit(units, &unitCount, i, TEAM_BLUE);
-                    clickedButton = true;
-                    break;
+                    units[i].position.x = groundHit.point.x;
+                    units[i].position.z = groundHit.point.z;
                 }
+                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) units[i].dragging = false;
             }
 
-            // Check RED spawn buttons (bottom-right)
-            if (!clickedButton)
+            // Clicks
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
             {
-                for (int i = 0; i < unitTypeCount; i++)
+                Vector2 mouse = GetMousePosition();
+                bool clickedButton = false;
+
+                // Play button
+                if (CheckCollisionPointRec(mouse, playBtn) && unitCount > 0)
                 {
-                    Rectangle btnRect = {
-                        (float)btnXRed,
-                        (float)(btnYStart + i * (btnHeight + btnMargin)),
-                        (float)btnWidth,
-                        (float)btnHeight
-                    };
-                    if (CheckCollisionPointRec(mouse, btnRect) && unitTypes[i].loaded)
+                    // Check both teams have units
+                    int ba, ra;
+                    CountTeams(units, unitCount, &ba, &ra);
+                    if (ba > 0 && ra > 0)
                     {
-                        SpawnUnit(units, &unitCount, i, TEAM_RED);
+                        SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
+                        phase = PHASE_COMBAT;
+                        // Deselect everything
+                        for (int j = 0; j < unitCount; j++) { units[j].selected = false; units[j].dragging = false; }
                         clickedButton = true;
-                        break;
                     }
                 }
-            }
 
-            // If no button was clicked, check unit selection
-            if (!clickedButton)
-            {
-                bool hitAny = false;
-                // Check in reverse order so top-drawn (later) units get priority
-                for (int i = unitCount - 1; i >= 0; i--)
+                // Blue spawn buttons
+                if (!clickedButton)
                 {
-                    if (!units[i].active) continue;
-                    UnitType *type = &unitTypes[units[i].typeIndex];
-                    BoundingBox sb = GetUnitBounds(&units[i], type);
-
-                    if (GetRayCollisionBox(GetScreenToWorldRay(mouse, camera), sb).hit)
+                    for (int i = 0; i < unitTypeCount; i++)
                     {
-                        units[i].selected = true;
-                        units[i].dragging = true;
-                        hitAny = true;
-                        // Deselect all others
-                        for (int j = 0; j < unitCount; j++)
-                        {
-                            if (j != i) units[j].selected = false;
-                        }
-                        break;
+                        Rectangle r = { (float)btnXBlue, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                        if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded)
+                        { SpawnUnit(units, &unitCount, i, TEAM_BLUE); clickedButton = true; break; }
                     }
                 }
-                if (!hitAny)
+                // Red spawn buttons
+                if (!clickedButton)
                 {
-                    for (int j = 0; j < unitCount; j++) units[j].selected = false;
+                    for (int i = 0; i < unitTypeCount; i++)
+                    {
+                        Rectangle r = { (float)btnXRed, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                        if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded)
+                        { SpawnUnit(units, &unitCount, i, TEAM_RED); clickedButton = true; break; }
+                    }
+                }
+                // Unit selection
+                if (!clickedButton)
+                {
+                    bool hitAny = false;
+                    for (int i = unitCount - 1; i >= 0; i--)
+                    {
+                        if (!units[i].active) continue;
+                        BoundingBox sb = GetUnitBounds(&units[i], &unitTypes[units[i].typeIndex]);
+                        if (GetRayCollisionBox(GetScreenToWorldRay(mouse, camera), sb).hit)
+                        {
+                            units[i].selected = true;
+                            units[i].dragging = true;
+                            hitAny = true;
+                            for (int j = 0; j < unitCount; j++) if (j != i) units[j].selected = false;
+                            break;
+                        }
+                    }
+                    if (!hitAny) for (int j = 0; j < unitCount; j++) units[j].selected = false;
                 }
             }
         }
-        //----------------------------------------------------------------------------------
+        //------------------------------------------------------------------------------
+        // PHASE: COMBAT — units seek + attack automatically
+        //------------------------------------------------------------------------------
+        else if (phase == PHASE_COMBAT)
+        {
+            for (int i = 0; i < unitCount; i++)
+            {
+                if (!units[i].active) continue;
+                const UnitStats *stats = &UNIT_STATS[units[i].typeIndex];
 
-        // Draw
-        //----------------------------------------------------------------------------------
-        BeginDrawing();
+                // Find target
+                int target = FindClosestEnemy(units, unitCount, i);
+                units[i].targetIndex = target;
+                if (target < 0) continue; // no enemies left
 
-            ClearBackground(RAYWHITE);
+                float dist = DistXZ(units[i].position, units[target].position);
 
-            BeginMode3D(camera);
-
-                DrawGrid(20, 10.0f);
-
-                // Draw all units
-                for (int i = 0; i < unitCount; i++)
+                if (dist > ATTACK_RANGE)
                 {
-                    if (!units[i].active) continue;
-                    UnitType *type = &unitTypes[units[i].typeIndex];
-                    if (!type->loaded) continue;
-
-                    // Tint the model by team colour
-                    Color tint = GetTeamTint(units[i].team);
-                    DrawModel(type->model, units[i].position, type->scale, tint);
-
-                    if (units[i].selected)
+                    // Move toward target
+                    float dx = units[target].position.x - units[i].position.x;
+                    float dz = units[target].position.z - units[i].position.z;
+                    float len = sqrtf(dx*dx + dz*dz);
+                    if (len > 0.001f)
                     {
-                        BoundingBox sb = GetUnitBounds(&units[i], type);
-                        DrawBoundingBox(sb, GREEN);
+                        dx /= len;
+                        dz /= len;
+                        units[i].position.x += dx * stats->movementSpeed * dt;
+                        units[i].position.z += dz * stats->movementSpeed * dt;
                     }
                 }
+                else
+                {
+                    // In range — attack on cooldown
+                    units[i].attackCooldown -= dt;
+                    if (units[i].attackCooldown <= 0.0f)
+                    {
+                        units[target].currentHealth -= stats->attackDamage;
+                        units[i].attackCooldown = stats->attackSpeed;
 
-            EndMode3D();
+                        // Kill check
+                        if (units[target].currentHealth <= 0.0f)
+                        {
+                            units[target].active = false;
+                        }
+                    }
+                }
+            }
 
-            // Draw unit labels + health bars above each unit (2D overlay)
+            // Smooth Y toward ground during combat
+            for (int i = 0; i < unitCount; i++)
+            {
+                if (!units[i].active) continue;
+                units[i].position.y += (0.0f - units[i].position.y) * 0.1f;
+            }
+
+            // Check round end
+            int ba, ra;
+            CountTeams(units, unitCount, &ba, &ra);
+            if (ba == 0 || ra == 0)
+            {
+                if (ba > 0) { blueWins++; roundResultText = "BLUE WINS THE ROUND!"; }
+                else if (ra > 0) { redWins++; roundResultText = "RED WINS THE ROUND!"; }
+                else { roundResultText = "DRAW — NO SURVIVORS!"; }
+
+                currentRound++;
+                phase = PHASE_ROUND_OVER;
+                roundOverTimer = 2.5f; // seconds to show result
+            }
+        }
+        //------------------------------------------------------------------------------
+        // PHASE: ROUND_OVER — brief pause, then back to prep or game over
+        //------------------------------------------------------------------------------
+        else if (phase == PHASE_ROUND_OVER)
+        {
+            roundOverTimer -= dt;
+            if (roundOverTimer <= 0.0f)
+            {
+                if (currentRound >= TOTAL_ROUNDS || blueWins > TOTAL_ROUNDS/2 || redWins > TOTAL_ROUNDS/2)
+                {
+                    phase = PHASE_GAME_OVER;
+                }
+                else
+                {
+                    // Restore units to pre-round positions & full HP
+                    RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
+                    phase = PHASE_PREP;
+                }
+            }
+        }
+        //------------------------------------------------------------------------------
+        // PHASE: GAME_OVER — show final result, press R to restart
+        //------------------------------------------------------------------------------
+        else if (phase == PHASE_GAME_OVER)
+        {
+            if (IsKeyPressed(KEY_R))
+            {
+                // Full reset
+                unitCount = 0;
+                snapshotCount = 0;
+                currentRound = 0;
+                blueWins = 0;
+                redWins = 0;
+                roundResultText = "";
+                phase = PHASE_PREP;
+            }
+        }
+
+        //==============================================================================
+        // DRAW
+        //==============================================================================
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+
+        BeginMode3D(camera);
+            DrawGrid(20, 10.0f);
+
+            // Draw units
             for (int i = 0; i < unitCount; i++)
             {
                 if (!units[i].active) continue;
                 UnitType *type = &unitTypes[units[i].typeIndex];
                 if (!type->loaded) continue;
+                Color tint = GetTeamTint(units[i].team);
+                DrawModel(type->model, units[i].position, type->scale, tint);
 
-                const UnitStats *stats = &UNIT_STATS[units[i].typeIndex];
-
-                // Project 3D position to screen
-                Vector2 screenPos = GetWorldToScreen(
-                    (Vector3){ units[i].position.x,
-                               units[i].position.y + (type->baseBounds.max.y * type->scale) + 1.0f,
-                               units[i].position.z },
-                    camera);
-
-                // --- Team + name label ---
-                const char *teamTag = (units[i].team == TEAM_BLUE) ? "BLUE" : "RED";
-                const char *label = TextFormat("[%s] %s", teamTag, type->name);
-                int textW = MeasureText(label, 14);
-                DrawText(label, (int)screenPos.x - textW / 2, (int)screenPos.y - 12, 14,
-                         (units[i].team == TEAM_BLUE) ? DARKBLUE : MAROON);
-
-                // --- Health bar ---
-                float hpRatio = units[i].currentHealth / stats->health;
-                if (hpRatio < 0.0f) hpRatio = 0.0f;
-                if (hpRatio > 1.0f) hpRatio = 1.0f;
-
-                int barWidth = 40;
-                int barHeight = 5;
-                int barX = (int)screenPos.x - barWidth / 2;
-                int barY = (int)screenPos.y + 4;
-
-                DrawRectangle(barX, barY, barWidth, barHeight, DARKGRAY);
-                Color hpColor = (hpRatio > 0.5f) ? GREEN : (hpRatio > 0.25f) ? ORANGE : RED;
-                DrawRectangle(barX, barY, (int)(barWidth * hpRatio), barHeight, hpColor);
-                DrawRectangleLines(barX, barY, barWidth, barHeight, BLACK);
-
-                // --- HP text ---
-                const char *hpText = TextFormat("%.0f/%.0f", units[i].currentHealth, stats->health);
-                int hpTextW = MeasureText(hpText, 10);
-                DrawText(hpText, (int)screenPos.x - hpTextW / 2, barY + barHeight + 2, 10, DARKGRAY);
+                if (units[i].selected)
+                {
+                    BoundingBox sb = GetUnitBounds(&units[i], type);
+                    DrawBoundingBox(sb, GREEN);
+                }
             }
+        EndMode3D();
 
-            // ── BLUE team spawn buttons (bottom-left) ──
+        // 2D overlay: labels + health bars
+        for (int i = 0; i < unitCount; i++)
+        {
+            if (!units[i].active) continue;
+            UnitType *type = &unitTypes[units[i].typeIndex];
+            if (!type->loaded) continue;
+            const UnitStats *stats = &UNIT_STATS[units[i].typeIndex];
+
+            Vector2 sp = GetWorldToScreen(
+                (Vector3){ units[i].position.x,
+                           units[i].position.y + (type->baseBounds.max.y * type->scale) + 1.0f,
+                           units[i].position.z }, camera);
+
+            const char *teamTag = (units[i].team == TEAM_BLUE) ? "BLUE" : "RED";
+            const char *label = TextFormat("[%s] %s", teamTag, type->name);
+            int tw = MeasureText(label, 14);
+            DrawText(label, (int)sp.x - tw/2, (int)sp.y - 12, 14,
+                     (units[i].team == TEAM_BLUE) ? DARKBLUE : MAROON);
+
+            // Health bar
+            float hpRatio = units[i].currentHealth / stats->health;
+            if (hpRatio < 0) hpRatio = 0;
+            if (hpRatio > 1) hpRatio = 1;
+            int bw = 40, bh = 5;
+            int bx = (int)sp.x - bw/2, by = (int)sp.y + 4;
+            DrawRectangle(bx, by, bw, bh, DARKGRAY);
+            Color hpC = (hpRatio > 0.5f) ? GREEN : (hpRatio > 0.25f) ? ORANGE : RED;
+            DrawRectangle(bx, by, (int)(bw * hpRatio), bh, hpC);
+            DrawRectangleLines(bx, by, bw, bh, BLACK);
+
+            const char *hpT = TextFormat("%.0f/%.0f", units[i].currentHealth, stats->health);
+            int htw = MeasureText(hpT, 10);
+            DrawText(hpT, (int)sp.x - htw/2, by + bh + 2, 10, DARKGRAY);
+        }
+
+        // ── BLUE spawn buttons (bottom-left) — only during prep ──
+        if (phase == PHASE_PREP)
+        {
             for (int i = 0; i < unitTypeCount; i++)
             {
-                Rectangle btnRect = {
-                    (float)btnXBlue,
-                    (float)(btnYStart + i * (btnHeight + btnMargin)),
-                    (float)btnWidth,
-                    (float)btnHeight
-                };
-                Color btnColor = unitTypes[i].loaded ? (Color){ 100, 140, 230, 255 } : LIGHTGRAY;
-                Color borderColor = unitTypes[i].loaded ? DARKBLUE : GRAY;
-
-                if (CheckCollisionPointRec(GetMousePosition(), btnRect) && unitTypes[i].loaded)
-                    btnColor = BLUE;
-
-                DrawRectangleRec(btnRect, btnColor);
-                DrawRectangleLinesEx(btnRect, 2, borderColor);
-
-                const char *label = TextFormat("BLUE %s", unitTypes[i].name);
-                int labelW = MeasureText(label, 14);
-                DrawText(label, btnRect.x + (btnWidth - labelW) / 2,
-                         btnRect.y + (btnHeight - 14) / 2, 14, WHITE);
+                Rectangle r = { (float)btnXBlue, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                Color c = unitTypes[i].loaded ? (Color){100,140,230,255} : LIGHTGRAY;
+                if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = BLUE;
+                DrawRectangleRec(r, c);
+                DrawRectangleLinesEx(r, 2, unitTypes[i].loaded ? DARKBLUE : GRAY);
+                const char *l = TextFormat("BLUE %s", unitTypes[i].name);
+                int lw = MeasureText(l, 14);
+                DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
             }
 
-            // ── RED team spawn buttons (bottom-right) ──
             for (int i = 0; i < unitTypeCount; i++)
             {
-                Rectangle btnRect = {
-                    (float)btnXRed,
-                    (float)(btnYStart + i * (btnHeight + btnMargin)),
-                    (float)btnWidth,
-                    (float)btnHeight
-                };
-                Color btnColor = unitTypes[i].loaded ? (Color){ 230, 100, 100, 255 } : LIGHTGRAY;
-                Color borderColor = unitTypes[i].loaded ? MAROON : GRAY;
-
-                if (CheckCollisionPointRec(GetMousePosition(), btnRect) && unitTypes[i].loaded)
-                    btnColor = RED;
-
-                DrawRectangleRec(btnRect, btnColor);
-                DrawRectangleLinesEx(btnRect, 2, borderColor);
-
-                const char *label = TextFormat("RED %s", unitTypes[i].name);
-                int labelW = MeasureText(label, 14);
-                DrawText(label, btnRect.x + (btnWidth - labelW) / 2,
-                         btnRect.y + (btnHeight - 14) / 2, 14, WHITE);
+                Rectangle r = { (float)btnXRed, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                Color c = unitTypes[i].loaded ? (Color){230,100,100,255} : LIGHTGRAY;
+                if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = RED;
+                DrawRectangleRec(r, c);
+                DrawRectangleLinesEx(r, 2, unitTypes[i].loaded ? MAROON : GRAY);
+                const char *l = TextFormat("RED %s", unitTypes[i].name);
+                int lw = MeasureText(l, 14);
+                DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
             }
 
-            // Info
-            DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
-
-            // --- Simple Sliders for Camera Debugging ---
-            // Height Slider
-            Rectangle hBar = { 10, 60, 150, 20 };
-            float hPerc = (camHeight / 150.0f);
-            if (hPerc > 1.0f) hPerc = 1.0f;
-            if (hPerc < 0.0f) hPerc = 0.0f;
-            DrawRectangleRec(hBar, LIGHTGRAY);
-            DrawRectangle(10, 60, (int)(150 * hPerc), 20, SKYBLUE);
-            DrawText(TextFormat("Height: %.1f", camHeight), 170, 60, 10, BLACK);
-            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), hBar))
+            // PLAY button (centre-bottom)
             {
-                camHeight = (GetMousePosition().x - 10) / 150.0f * 150.0f;
-                if (camHeight < 1.0f) camHeight = 1.0f;
+                int ba, ra;
+                CountTeams(units, unitCount, &ba, &ra);
+                bool canPlay = (ba > 0 && ra > 0);
+                Color pc = canPlay ? (Color){50,180,80,255} : LIGHTGRAY;
+                if (canPlay && CheckCollisionPointRec(GetMousePosition(), playBtn))
+                    pc = (Color){30,220,60,255};
+                DrawRectangleRec(playBtn, pc);
+                DrawRectangleLinesEx(playBtn, 2, canPlay ? DARKGREEN : GRAY);
+                const char *pt = TextFormat("PLAY Round %d", currentRound + 1);
+                int ptw = MeasureText(pt, 18);
+                DrawText(pt, playBtn.x + (playBtnW - ptw)/2, playBtn.y + (playBtnH - 18)/2, 18, WHITE);
             }
+        }
 
-            // Distance Slider
-            Rectangle dBar = { 10, 90, 150, 20 };
-            float dPerc = (camDistance / 150.0f);
-            if (dPerc > 1.0f) dPerc = 1.0f;
-            if (dPerc < 0.0f) dPerc = 0.0f;
-            DrawRectangleRec(dBar, LIGHTGRAY);
-            DrawRectangle(10, 90, (int)(150 * dPerc), 20, SKYBLUE);
-            DrawText(TextFormat("Distance: %.1f", camDistance), 170, 90, 10, BLACK);
-            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), dBar))
-            {
-                camDistance = (GetMousePosition().x - 10) / 150.0f * 150.0f;
-                if (camDistance < 1.0f) camDistance = 1.0f;
-            }
+        // ── HUD: round + score info ──
+        DrawText(TextFormat("Round: %d / %d", currentRound < TOTAL_ROUNDS ? currentRound + 1 : TOTAL_ROUNDS, TOTAL_ROUNDS),
+                 screenWidth/2 - 60, 10, 20, BLACK);
+        DrawText(TextFormat("BLUE: %d", blueWins), screenWidth/2 - 120, 35, 18, DARKBLUE);
+        DrawText(TextFormat("RED: %d", redWins),  screenWidth/2 + 60, 35, 18, MAROON);
+        DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
 
-            // FOV Slider
-            Rectangle fBar = { 10, 120, 150, 20 };
-            float fPerc = (camFOV / 120.0f);
-            if (fPerc > 1.0f) fPerc = 1.0f;
-            if (fPerc < 0.0f) fPerc = 0.0f;
-            DrawRectangleRec(fBar, LIGHTGRAY);
-            DrawRectangle(10, 120, (int)(150 * fPerc), 20, SKYBLUE);
-            DrawText(TextFormat("FOV: %.1f", camFOV), 170, 120, 10, BLACK);
-            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), fBar))
-            {
-                camFOV = (GetMousePosition().x - 10) / 150.0f * 120.0f;
-                if (camFOV < 1.0f) camFOV = 1.0f;
-            }
+        // Phase label
+        if (phase == PHASE_COMBAT)
+        {
+            const char *fightText = "⚔  FIGHT!  ⚔";
+            int ftw = MeasureText(fightText, 28);
+            DrawText(fightText, screenWidth/2 - ftw/2, screenHeight/2 - 60, 28, RED);
+        }
+        else if (phase == PHASE_ROUND_OVER)
+        {
+            int rtw = MeasureText(roundResultText, 26);
+            DrawText(roundResultText, screenWidth/2 - rtw/2, screenHeight/2 - 40, 26, DARKPURPLE);
+        }
+        else if (phase == PHASE_GAME_OVER)
+        {
+            const char *winner = (blueWins > redWins) ? "BLUE TEAM WINS!" :
+                                 (redWins > blueWins) ? "RED TEAM WINS!" : "IT'S A DRAW!";
+            int ww = MeasureText(winner, 36);
+            DrawText(winner, screenWidth/2 - ww/2, screenHeight/2 - 50, 36,
+                     (blueWins > redWins) ? DARKBLUE : (redWins > blueWins) ? MAROON : DARKGRAY);
 
-            DrawFPS(10, 10);
+            const char *restartMsg = "Press R to restart";
+            int rw = MeasureText(restartMsg, 20);
+            DrawText(restartMsg, screenWidth/2 - rw/2, screenHeight/2, 20, GRAY);
+        }
 
+        // Camera debug sliders
+        Rectangle hBar = { 10, 60, 150, 20 };
+        float hPerc = camHeight / 150.0f; if (hPerc > 1) hPerc = 1; if (hPerc < 0) hPerc = 0;
+        DrawRectangleRec(hBar, LIGHTGRAY);
+        DrawRectangle(10, 60, (int)(150*hPerc), 20, SKYBLUE);
+        DrawText(TextFormat("Height: %.1f", camHeight), 170, 60, 10, BLACK);
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), hBar))
+        { camHeight = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camHeight < 1) camHeight = 1; }
+
+        Rectangle dBar = { 10, 90, 150, 20 };
+        float dPerc = camDistance / 150.0f; if (dPerc > 1) dPerc = 1; if (dPerc < 0) dPerc = 0;
+        DrawRectangleRec(dBar, LIGHTGRAY);
+        DrawRectangle(10, 90, (int)(150*dPerc), 20, SKYBLUE);
+        DrawText(TextFormat("Distance: %.1f", camDistance), 170, 90, 10, BLACK);
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), dBar))
+        { camDistance = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camDistance < 1) camDistance = 1; }
+
+        Rectangle fBar = { 10, 120, 150, 20 };
+        float fPerc = camFOV / 120.0f; if (fPerc > 1) fPerc = 1; if (fPerc < 0) fPerc = 0;
+        DrawRectangleRec(fBar, LIGHTGRAY);
+        DrawRectangle(10, 120, (int)(150*fPerc), 20, SKYBLUE);
+        DrawText(TextFormat("FOV: %.1f", camFOV), 170, 120, 10, BLACK);
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), fBar))
+        { camFOV = (GetMousePosition().x - 10) / 150.0f * 120.0f; if (camFOV < 1) camFOV = 1; }
+
+        DrawFPS(10, 10);
         EndDrawing();
-        //----------------------------------------------------------------------------------
     }
 
-    // De-Initialization
-    //--------------------------------------------------------------------------------------
-    for (int i = 0; i < unitTypeCount; i++)
-    {
-        UnloadModel(unitTypes[i].model);
-    }
-
+    // Cleanup
+    for (int i = 0; i < unitTypeCount; i++) UnloadModel(unitTypes[i].model);
     CloseWindow();
-    //--------------------------------------------------------------------------------------
-
     return 0;
 }
