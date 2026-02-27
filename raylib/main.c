@@ -1,32 +1,67 @@
 /*******************************************************************************************
 *
-*   raylib [models] example - loading
+*   Unit Spawning System - raylib
 *
-*   Example complexity rating: [★☆☆☆] 1/4
-*
-*   NOTE: raylib supports multiple models file formats:
-*
-*     - OBJ  > Text file format. Must include vertex position-texcoords-normals information,
-*              if .obj references some .mtl materials file, it will be tried to be loaded
-*     - GLTF/GLB > Text/binary file formats. Includes lot of information and it could
-*              also reference external files, mesh and materials data will be tried to be loaded
-*     - IQM  > Binary file format. Includes mesh vertex data but also animation data,
-*              meshes and animation data can be loaded
-*     - VOX  > Binary file format. MagikaVoxel mesh format:
-*              https://github.com/ephtracy/voxel-model/blob/master/MagicaVoxel-file-format-vox.txt
-*     - M3D  > Binary file format. Model 3D format:
-*              https://bztsrc.gitlab.io/model3d
-*
-*   Example originally created with raylib 2.0, last time updated with raylib 4.2
-*
-*   Example licensed under an unmodified zlib/libpng license, which is an OSI-certified,
-*   BSD-like license that allows static linking with closed source software
-*
-*   Copyright (c) 2014-2025 Ramon Santamaria (@raysan5)
+*   Extensible unit spawning with click-and-drag movement.
+*   Currently supports: Mushroom, Goblin
 *
 ********************************************************************************************/
 
 #include "raylib.h"
+#include <string.h>
+
+//------------------------------------------------------------------------------------
+// Data Structures
+//------------------------------------------------------------------------------------
+#define MAX_UNIT_TYPES 8
+#define MAX_UNITS 64
+
+typedef struct {
+    const char *name;
+    const char *modelPath;
+    Model model;
+    BoundingBox baseBounds;   // unscaled bounds from mesh
+    float scale;
+    bool loaded;              // whether the model loaded successfully
+} UnitType;
+
+typedef struct {
+    int typeIndex;            // index into unitTypes[]
+    Vector3 position;
+    bool active;
+    bool selected;
+    bool dragging;
+} Unit;
+
+//------------------------------------------------------------------------------------
+// Spawn a new unit of the given type at the origin
+//------------------------------------------------------------------------------------
+void SpawnUnit(Unit units[], int *unitCount, int typeIndex)
+{
+    if (*unitCount >= MAX_UNITS) return;
+    units[*unitCount] = (Unit){
+        .typeIndex = typeIndex,
+        .position = (Vector3){ 0.0f, 0.0f, 0.0f },
+        .active = true,
+        .selected = false,
+        .dragging = false,
+    };
+    (*unitCount)++;
+}
+
+//------------------------------------------------------------------------------------
+// Helper: get the world-space scaled bounding box for a unit
+//------------------------------------------------------------------------------------
+BoundingBox GetUnitBounds(Unit *unit, UnitType *type)
+{
+    BoundingBox b = type->baseBounds;
+    float s = type->scale;
+    Vector3 p = unit->position;
+    return (BoundingBox){
+        (Vector3){ p.x + b.min.x * s, p.y + b.min.y * s, p.z + b.min.z * s },
+        (Vector3){ p.x + b.max.x * s, p.y + b.max.y * s, p.z + b.max.z * s }
+    };
+}
 
 //------------------------------------------------------------------------------------
 // Program main entry point
@@ -38,123 +73,143 @@ int main(void)
     const int screenWidth = 800;
     const int screenHeight = 450;
 
-    InitWindow(screenWidth, screenHeight, "raylib [models] example - loading");
+    InitWindow(screenWidth, screenHeight, "Unit Spawner");
 
     // Define the camera to look into our 3d world
     Camera camera = { 0 };
-    camera.position = (Vector3){ 50.0f, 50.0f, 50.0f }; // Camera position
-    camera.target = (Vector3){ 0.0f, 12.0f, 0.0f };     // Camera looking at point
-    camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };          // Camera up vector (rotation towards target)
-    camera.fovy = 45.0f;                                // Camera field-of-view Y
-    camera.projection = CAMERA_PERSPECTIVE;             // Camera mode type
+    camera.position = (Vector3){ 50.0f, 50.0f, 50.0f };
+    camera.target = (Vector3){ 0.0f, 12.0f, 0.0f };
+    camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+    camera.fovy = 45.0f;
+    camera.projection = CAMERA_PERSPECTIVE;
 
-    Model model = LoadModel("MUSHROOMmixamotest.obj");                 // Load model
-    Texture2D texture = LoadTexture(""); // Load model texture
-    model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = texture;            // Set map diffuse texture
+    // --- Unit Type Registry ---
+    // To add a new unit type: add an entry here and increment unitTypeCount.
+    int unitTypeCount = 2;
+    UnitType unitTypes[MAX_UNIT_TYPES] = { 0 };
 
-    Vector3 position = { 0.0f, 0.0f, 0.0f };                    // Set model position
+    // Mushroom
+    unitTypes[0].name = "Mushroom";
+    unitTypes[0].modelPath = "MUSHROOMmixamotest.obj";
+    unitTypes[0].scale = 0.1f;
 
-    BoundingBox bounds = GetMeshBoundingBox(model.meshes[0]);   // Set model bounds
+    // Goblin
+    unitTypes[1].name = "Goblin";
+    unitTypes[1].modelPath = "goblin.obj";
+    unitTypes[1].scale = 0.1f;
 
-    // NOTE: bounds are calculated from the original size of the model,
-    // if model is scaled on drawing, bounds must be also scaled
+    // Load all unit type models
+    for (int i = 0; i < unitTypeCount; i++)
+    {
+        unitTypes[i].model = LoadModel(unitTypes[i].modelPath);
+        if (unitTypes[i].model.meshCount > 0)
+        {
+            unitTypes[i].baseBounds = GetMeshBoundingBox(unitTypes[i].model.meshes[0]);
+            unitTypes[i].loaded = true;
+        }
+        else
+        {
+            unitTypes[i].loaded = false;
+        }
+    }
 
-    bool selected = false;          // Selected object flag
-    bool dragging = false;          // Dragging flag
-    float modelScale = 0.1f;        // Model scale factor
+    // --- Units array ---
+    Unit units[MAX_UNITS] = { 0 };
+    int unitCount = 0;
 
-    Vector2 mushroomScreenPosition = { 0.0f, 0.0f };
+    // --- UI Button definitions ---
+    const int btnWidth = 150;
+    const int btnHeight = 30;
+    const int btnMargin = 10;
+    const int btnX = screenWidth - btnWidth - btnMargin;
 
-    SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
+    SetTargetFPS(60);
     //--------------------------------------------------------------------------------------
 
     // Main game loop
-    while (!WindowShouldClose())    // Detect window close button or ESC key
+    while (!WindowShouldClose())
     {
         // Update
         //----------------------------------------------------------------------------------
-        // UpdateCamera(&camera, CAMERA_ORBITAL);
 
-        // Update mushroom position if dragging
-        float targetY = dragging ? 5.0f : 0.0f;
-        position.y += (targetY - position.y) * 0.1f; // Smooth lifting effect
-
-        if (dragging)
+        // Smooth Y lift for all units
+        for (int i = 0; i < unitCount; i++)
         {
+            if (!units[i].active) continue;
+            float targetY = units[i].dragging ? 5.0f : 0.0f;
+            units[i].position.y += (targetY - units[i].position.y) * 0.1f;
+        }
+
+        // Dragging logic
+        for (int i = 0; i < unitCount; i++)
+        {
+            if (!units[i].active || !units[i].dragging) continue;
+
             Ray ray = GetScreenToWorldRay(GetMousePosition(), camera);
-            // Check collision with ground plane (y=0)
-            RayCollision groundHit = GetRayCollisionQuad(ray, 
-                (Vector3){ -100.0f, 0.0f, -100.0f }, 
-                (Vector3){ -100.0f, 0.0f,  100.0f }, 
-                (Vector3){  100.0f, 0.0f,  100.0f }, 
-                (Vector3){  100.0f, 0.0f, -100.0f });
-            
+            RayCollision groundHit = GetRayCollisionQuad(ray,
+                (Vector3){ -500.0f, 0.0f, -500.0f },
+                (Vector3){ -500.0f, 0.0f,  500.0f },
+                (Vector3){  500.0f, 0.0f,  500.0f },
+                (Vector3){  500.0f, 0.0f, -500.0f });
+
             if (groundHit.hit)
             {
-                position.x = groundHit.point.x;
-                position.z = groundHit.point.z;
+                units[i].position.x = groundHit.point.x;
+                units[i].position.z = groundHit.point.z;
             }
-            
-            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) dragging = false;
-        }
 
-        mushroomScreenPosition = GetWorldToScreen((Vector3){position.x, position.y + (bounds.max.y * modelScale) + 1.0f, position.z}, camera);
-
-        // Load new models/textures on drag&drop
-        if (IsFileDropped())
-        {
-            FilePathList droppedFiles = LoadDroppedFiles();
-
-            if (droppedFiles.count == 1) // Only support one file dropped
+            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
             {
-                if (IsFileExtension(droppedFiles.paths[0], ".obj") ||
-                    IsFileExtension(droppedFiles.paths[0], ".gltf") ||
-                    IsFileExtension(droppedFiles.paths[0], ".glb") ||
-                    IsFileExtension(droppedFiles.paths[0], ".vox") ||
-                    IsFileExtension(droppedFiles.paths[0], ".iqm") ||
-                    IsFileExtension(droppedFiles.paths[0], ".m3d"))       // Model file formats supported
-                {
-                    UnloadModel(model);                         // Unload previous model
-                    model = LoadModel(droppedFiles.paths[0]);   // Load new model
-                    model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = texture; // Set current map diffuse texture
-
-                    bounds = GetMeshBoundingBox(model.meshes[0]);
-
-                    // Move camera position from target enough distance to visualize model properly
-                    camera.position.x = bounds.max.x + 10.0f;
-                    camera.position.y = bounds.max.y + 10.0f;
-                    camera.position.z = bounds.max.z + 10.0f;
-                }
-                else if (IsFileExtension(droppedFiles.paths[0], ".png"))  // Texture file formats supported
-                {
-                    // Unload current model texture and load new one
-                    UnloadTexture(texture);
-                    texture = LoadTexture(droppedFiles.paths[0]);
-                    model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = texture;
-                }
+                units[i].dragging = false;
             }
-
-            UnloadDroppedFiles(droppedFiles);    // Unload filepaths from memory
         }
 
-        // Select model on mouse click
+        // Click handling: check spawn buttons first, then unit selection
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
         {
-            // Calculate scaled and translated bounding box
-            BoundingBox scaledBounds = {
-                (Vector3){ position.x + bounds.min.x * modelScale, position.y + bounds.min.y * modelScale, position.z + bounds.min.z * modelScale },
-                (Vector3){ position.x + bounds.max.x * modelScale, position.y + bounds.max.y * modelScale, position.z + bounds.max.z * modelScale }
-            };
+            Vector2 mouse = GetMousePosition();
+            bool clickedButton = false;
 
-            // Check collision between ray and box
-            if (GetRayCollisionBox(GetScreenToWorldRay(GetMousePosition(), camera), scaledBounds).hit) 
+            // Check spawn buttons
+            for (int i = 0; i < unitTypeCount; i++)
             {
-                selected = true;
-                dragging = true;
+                Rectangle btnRect = { (float)btnX, (float)(btnMargin + i * (btnHeight + btnMargin)), (float)btnWidth, (float)btnHeight };
+                if (CheckCollisionPointRec(mouse, btnRect) && unitTypes[i].loaded)
+                {
+                    SpawnUnit(units, &unitCount, i);
+                    clickedButton = true;
+                    break;
+                }
             }
-            else 
+
+            // If no button was clicked, check unit selection
+            if (!clickedButton)
             {
-                selected = false;
+                bool hitAny = false;
+                // Check in reverse order so top-drawn (later) units get priority
+                for (int i = unitCount - 1; i >= 0; i--)
+                {
+                    if (!units[i].active) continue;
+                    UnitType *type = &unitTypes[units[i].typeIndex];
+                    BoundingBox sb = GetUnitBounds(&units[i], type);
+
+                    if (GetRayCollisionBox(GetScreenToWorldRay(mouse, camera), sb).hit)
+                    {
+                        units[i].selected = true;
+                        units[i].dragging = true;
+                        hitAny = true;
+                        // Deselect all others
+                        for (int j = 0; j < unitCount; j++)
+                        {
+                            if (j != i) units[j].selected = false;
+                        }
+                        break;
+                    }
+                }
+                if (!hitAny)
+                {
+                    for (int j = 0; j < unitCount; j++) units[j].selected = false;
+                }
             }
         }
         //----------------------------------------------------------------------------------
@@ -167,29 +222,65 @@ int main(void)
 
             BeginMode3D(camera);
 
-                DrawModel(model, position, modelScale, WHITE);        // Draw 3d model with texture
+                DrawGrid(20, 10.0f);
 
-                DrawGrid(20, 10.0f);         // Draw a grid
-
-                if (selected) 
+                // Draw all units
+                for (int i = 0; i < unitCount; i++)
                 {
-                    // Draw scaled bounding box
-                    BoundingBox scaledBounds = {
-                        (Vector3){ position.x + bounds.min.x * modelScale, position.y + bounds.min.y * modelScale, position.z + bounds.min.z * modelScale },
-                        (Vector3){ position.x + bounds.max.x * modelScale, position.y + bounds.max.y * modelScale, position.z + bounds.max.z * modelScale }
-                    };
-                    DrawBoundingBox(scaledBounds, GREEN);
+                    if (!units[i].active) continue;
+                    UnitType *type = &unitTypes[units[i].typeIndex];
+                    if (!type->loaded) continue;
+
+                    DrawModel(type->model, units[i].position, type->scale, WHITE);
+
+                    if (units[i].selected)
+                    {
+                        BoundingBox sb = GetUnitBounds(&units[i], type);
+                        DrawBoundingBox(sb, GREEN);
+                    }
                 }
 
             EndMode3D();
 
-            DrawText("Mushroom man", (int)mushroomScreenPosition.x - MeasureText("Mushroom man", 20)/2, (int)mushroomScreenPosition.y, 20, BLACK);
+            // Draw unit name labels above each unit
+            for (int i = 0; i < unitCount; i++)
+            {
+                if (!units[i].active) continue;
+                UnitType *type = &unitTypes[units[i].typeIndex];
+                if (!type->loaded) continue;
 
-            DrawText("Drag & drop model to load mesh/texture.", 10, GetScreenHeight() - 20, 10, DARKGRAY);
-            if (selected) DrawText("MODEL SELECTED", GetScreenWidth() - 110, 10, 10, GREEN);
+                Vector2 screenPos = GetWorldToScreen(
+                    (Vector3){ units[i].position.x,
+                               units[i].position.y + (type->baseBounds.max.y * type->scale) + 1.0f,
+                               units[i].position.z },
+                    camera);
+                int textW = MeasureText(type->name, 16);
+                DrawText(type->name, (int)screenPos.x - textW / 2, (int)screenPos.y, 16, BLACK);
+            }
 
-            DrawText("(c) Castle 3D model by Alberto Cano", screenWidth - 200, screenHeight - 20, 10, GRAY);
+            // Draw spawn buttons
+            for (int i = 0; i < unitTypeCount; i++)
+            {
+                Rectangle btnRect = { (float)btnX, (float)(btnMargin + i * (btnHeight + btnMargin)), (float)btnWidth, (float)btnHeight };
+                Color btnColor = unitTypes[i].loaded ? SKYBLUE : LIGHTGRAY;
+                Color borderColor = unitTypes[i].loaded ? DARKBLUE : GRAY;
+                
+                // Hover effect
+                if (CheckCollisionPointRec(GetMousePosition(), btnRect) && unitTypes[i].loaded)
+                {
+                    btnColor = BLUE;
+                }
 
+                DrawRectangleRec(btnRect, btnColor);
+                DrawRectangleLinesEx(btnRect, 2, borderColor);
+
+                const char *label = TextFormat("Spawn %s", unitTypes[i].name);
+                int labelW = MeasureText(label, 14);
+                DrawText(label, btnRect.x + (btnWidth - labelW) / 2, btnRect.y + (btnHeight - 14) / 2, 14, WHITE);
+            }
+
+            // Info
+            DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
             DrawFPS(10, 10);
 
         EndDrawing();
@@ -198,10 +289,12 @@ int main(void)
 
     // De-Initialization
     //--------------------------------------------------------------------------------------
-    UnloadTexture(texture);     // Unload texture
-    UnloadModel(model);         // Unload model
+    for (int i = 0; i < unitTypeCount; i++)
+    {
+        UnloadModel(unitTypes[i].model);
+    }
 
-    CloseWindow();              // Close window and OpenGL context
+    CloseWindow();
     //--------------------------------------------------------------------------------------
 
     return 0;
