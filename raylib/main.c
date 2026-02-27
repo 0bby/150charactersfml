@@ -22,6 +22,7 @@
 #define MAX_UNITS 64
 #define TOTAL_ROUNDS 5
 #define ATTACK_RANGE 8.0f       // how close a unit needs to be to attack
+#define BLUE_TEAM_MAX_SIZE 4   // player team cap (change this to rebalance)
 
 //------------------------------------------------------------------------------------
 // Unit Stats — "Master Library" for balancing.
@@ -93,9 +94,22 @@ typedef struct {
 //------------------------------------------------------------------------------------
 // Functions
 //------------------------------------------------------------------------------------
-void SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
+// Count active units for a specific team
+int CountTeamUnits(Unit units[], int unitCount, Team team)
 {
-    if (*unitCount >= MAX_UNITS) return;
+    int count = 0;
+    for (int i = 0; i < unitCount; i++)
+        if (units[i].active && units[i].team == team) count++;
+    return count;
+}
+
+// Returns true if spawn succeeded
+bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
+{
+    if (*unitCount >= MAX_UNITS) return false;
+    // Enforce blue team cap
+    if (team == TEAM_BLUE && CountTeamUnits(units, *unitCount, TEAM_BLUE) >= BLUE_TEAM_MAX_SIZE)
+        return false;
     const UnitStats *stats = &UNIT_STATS[typeIndex];
     units[*unitCount] = (Unit){
         .typeIndex      = typeIndex,
@@ -109,6 +123,7 @@ void SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
         .dragging       = false,
     };
     (*unitCount)++;
+    return true;
 }
 
 BoundingBox GetUnitBounds(Unit *unit, UnitType *type)
@@ -203,9 +218,9 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
 //------------------------------------------------------------------------------------
 int main(void)
 {
-    const int screenWidth = 800;
-    const int screenHeight = 450;
-    InitWindow(screenWidth, screenHeight, "Autochess — Best of 5");
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    InitWindow(1280, 720, "Autochess — Best of 5");
+    SetWindowMinSize(640, 360);
 
     // Camera
     float camHeight = 102.0f;
@@ -255,23 +270,12 @@ int main(void)
     float roundOverTimer = 0.0f;   // brief pause after a round ends
     const char *roundResultText = "";
 
-    // UI buttons
+    // UI button sizes (positions computed each frame for resize support)
     const int btnWidth = 150;
     const int btnHeight = 30;
     const int btnMargin = 10;
-    const int btnXBlue = btnMargin;
-    const int btnXRed  = screenWidth - btnWidth - btnMargin;
-    const int btnYStart = screenHeight - (unitTypeCount * (btnHeight + btnMargin));
-
-    // Play button (centre)
     const int playBtnW = 120;
     const int playBtnH = 40;
-    Rectangle playBtn = {
-        (float)(screenWidth / 2 - playBtnW / 2),
-        (float)(screenHeight - playBtnH - btnMargin),
-        (float)playBtnW,
-        (float)playBtnH
-    };
 
     SetTargetFPS(60);
 
@@ -304,11 +308,15 @@ int main(void)
             if (fgets(nfcBuf, sizeof(nfcBuf), nfcPipe)) {
                 nfcBuf[strcspn(nfcBuf, "\r\n")] = '\0';
                 if (strcmp(nfcBuf, "0") == 0) {
-                    SpawnUnit(units, &unitCount, 1, TEAM_BLUE);
-                    printf("[NFC] Tag '0' -> Spawning Goblin (Blue)\n");
+                    if (SpawnUnit(units, &unitCount, 1, TEAM_BLUE))
+                        printf("[NFC] Tag '0' -> Spawning Goblin (Blue)\n");
+                    else
+                        printf("[NFC] Tag '0' -> Blue team full (%d/%d)\n", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
                 } else if (strcmp(nfcBuf, "1") == 0) {
-                    SpawnUnit(units, &unitCount, 0, TEAM_BLUE);
-                    printf("[NFC] Tag '1' -> Spawning Mushroom (Blue)\n");
+                    if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE))
+                        printf("[NFC] Tag '1' -> Spawning Mushroom (Blue)\n");
+                    else
+                        printf("[NFC] Tag '1' -> Blue team full (%d/%d)\n", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
                 } else {
                     printf("[NFC] Unknown payload: '%s'\n", nfcBuf);
                 }
@@ -348,6 +356,12 @@ int main(void)
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
             {
                 Vector2 mouse = GetMousePosition();
+                int sw = GetScreenWidth();
+                int sh = GetScreenHeight();
+                int btnXBlue = btnMargin;
+                int btnXRed  = sw - btnWidth - btnMargin;
+                int btnYStart = sh - (unitTypeCount * (btnHeight + btnMargin));
+                Rectangle playBtn = { (float)(sw/2 - playBtnW/2), (float)(sh - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 bool clickedButton = false;
 
                 // Play button
@@ -541,6 +555,24 @@ int main(void)
             }
         EndMode3D();
 
+        // --- Floor label: Blue team unit count (projected from 3D floor position) ---
+        {
+            int blueCount = CountTeamUnits(units, unitCount, TEAM_BLUE);
+            int redCount  = CountTeamUnits(units, unitCount, TEAM_RED);
+
+            // Project a ground-level point to screen for Blue side
+            Vector2 blueFloorPos = GetWorldToScreen((Vector3){ -60.0f, 0.5f, 30.0f }, camera);
+            const char *blueSizeText = TextFormat("BLUE  %d / %d", blueCount, BLUE_TEAM_MAX_SIZE);
+            int bstw = MeasureText(blueSizeText, 28);
+            DrawText(blueSizeText, (int)blueFloorPos.x - bstw/2, (int)blueFloorPos.y, 28, (Color){80,120,220,180});
+
+            // Red side (no cap, just show count)
+            Vector2 redFloorPos = GetWorldToScreen((Vector3){ 60.0f, 0.5f, 30.0f }, camera);
+            const char *redSizeText = TextFormat("RED  %d", redCount);
+            int rstw = MeasureText(redSizeText, 28);
+            DrawText(redSizeText, (int)redFloorPos.x - rstw/2, (int)redFloorPos.y, 28, (Color){220,80,80,180});
+        }
+
         // 2D overlay: labels + health bars
         for (int i = 0; i < unitCount; i++)
         {
@@ -576,12 +608,18 @@ int main(void)
             DrawText(hpT, (int)sp.x - htw/2, by + bh + 2, 10, DARKGRAY);
         }
 
-        // ── BLUE spawn buttons (bottom-left) — only during prep ──
+        // ── Spawn buttons + Play — only during prep ──
         if (phase == PHASE_PREP)
         {
+            int sw = GetScreenWidth();
+            int sh = GetScreenHeight();
+            int dBtnXBlue = btnMargin;
+            int dBtnXRed  = sw - btnWidth - btnMargin;
+            int dBtnYStart = sh - (unitTypeCount * (btnHeight + btnMargin));
+
             for (int i = 0; i < unitTypeCount; i++)
             {
-                Rectangle r = { (float)btnXBlue, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                Rectangle r = { (float)dBtnXBlue, (float)(dBtnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
                 Color c = unitTypes[i].loaded ? (Color){100,140,230,255} : LIGHTGRAY;
                 if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = BLUE;
                 DrawRectangleRec(r, c);
@@ -593,7 +631,7 @@ int main(void)
 
             for (int i = 0; i < unitTypeCount; i++)
             {
-                Rectangle r = { (float)btnXRed, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                Rectangle r = { (float)dBtnXRed, (float)(dBtnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
                 Color c = unitTypes[i].loaded ? (Color){230,100,100,255} : LIGHTGRAY;
                 if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = RED;
                 DrawRectangleRec(r, c);
@@ -605,50 +643,55 @@ int main(void)
 
             // PLAY button (centre-bottom)
             {
+                Rectangle dPlayBtn = { (float)(sw/2 - playBtnW/2), (float)(sh - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 int ba, ra;
                 CountTeams(units, unitCount, &ba, &ra);
                 bool canPlay = (ba > 0 && ra > 0);
                 Color pc = canPlay ? (Color){50,180,80,255} : LIGHTGRAY;
-                if (canPlay && CheckCollisionPointRec(GetMousePosition(), playBtn))
+                if (canPlay && CheckCollisionPointRec(GetMousePosition(), dPlayBtn))
                     pc = (Color){30,220,60,255};
-                DrawRectangleRec(playBtn, pc);
-                DrawRectangleLinesEx(playBtn, 2, canPlay ? DARKGREEN : GRAY);
+                DrawRectangleRec(dPlayBtn, pc);
+                DrawRectangleLinesEx(dPlayBtn, 2, canPlay ? DARKGREEN : GRAY);
                 const char *pt = TextFormat("PLAY Round %d", currentRound + 1);
                 int ptw = MeasureText(pt, 18);
-                DrawText(pt, playBtn.x + (playBtnW - ptw)/2, playBtn.y + (playBtnH - 18)/2, 18, WHITE);
+                DrawText(pt, dPlayBtn.x + (playBtnW - ptw)/2, dPlayBtn.y + (playBtnH - 18)/2, 18, WHITE);
             }
         }
 
         // ── HUD: round + score info ──
-        DrawText(TextFormat("Round: %d / %d", currentRound < TOTAL_ROUNDS ? currentRound + 1 : TOTAL_ROUNDS, TOTAL_ROUNDS),
-                 screenWidth/2 - 60, 10, 20, BLACK);
-        DrawText(TextFormat("BLUE: %d", blueWins), screenWidth/2 - 120, 35, 18, DARKBLUE);
-        DrawText(TextFormat("RED: %d", redWins),  screenWidth/2 + 60, 35, 18, MAROON);
-        DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
+        {
+            int sw = GetScreenWidth();
+            int sh = GetScreenHeight();
+            DrawText(TextFormat("Round: %d / %d", currentRound < TOTAL_ROUNDS ? currentRound + 1 : TOTAL_ROUNDS, TOTAL_ROUNDS),
+                     sw/2 - 60, 10, 20, BLACK);
+            DrawText(TextFormat("BLUE: %d", blueWins), sw/2 - 120, 35, 18, DARKBLUE);
+            DrawText(TextFormat("RED: %d", redWins),  sw/2 + 60, 35, 18, MAROON);
+            DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
 
-        // Phase label
-        if (phase == PHASE_COMBAT)
-        {
-            const char *fightText = "⚔  FIGHT!  ⚔";
-            int ftw = MeasureText(fightText, 28);
-            DrawText(fightText, screenWidth/2 - ftw/2, screenHeight/2 - 60, 28, RED);
-        }
-        else if (phase == PHASE_ROUND_OVER)
-        {
-            int rtw = MeasureText(roundResultText, 26);
-            DrawText(roundResultText, screenWidth/2 - rtw/2, screenHeight/2 - 40, 26, DARKPURPLE);
-        }
-        else if (phase == PHASE_GAME_OVER)
-        {
-            const char *winner = (blueWins > redWins) ? "BLUE TEAM WINS!" :
-                                 (redWins > blueWins) ? "RED TEAM WINS!" : "IT'S A DRAW!";
-            int ww = MeasureText(winner, 36);
-            DrawText(winner, screenWidth/2 - ww/2, screenHeight/2 - 50, 36,
-                     (blueWins > redWins) ? DARKBLUE : (redWins > blueWins) ? MAROON : DARKGRAY);
+            // Phase label
+            if (phase == PHASE_COMBAT)
+            {
+                const char *fightText = "FIGHT!";
+                int ftw = MeasureText(fightText, 28);
+                DrawText(fightText, sw/2 - ftw/2, sh/2 - 60, 28, RED);
+            }
+            else if (phase == PHASE_ROUND_OVER)
+            {
+                int rtw = MeasureText(roundResultText, 26);
+                DrawText(roundResultText, sw/2 - rtw/2, sh/2 - 40, 26, DARKPURPLE);
+            }
+            else if (phase == PHASE_GAME_OVER)
+            {
+                const char *winner = (blueWins > redWins) ? "BLUE TEAM WINS!" :
+                                     (redWins > blueWins) ? "RED TEAM WINS!" : "IT'S A DRAW!";
+                int ww = MeasureText(winner, 36);
+                DrawText(winner, sw/2 - ww/2, sh/2 - 50, 36,
+                         (blueWins > redWins) ? DARKBLUE : (redWins > blueWins) ? MAROON : DARKGRAY);
 
-            const char *restartMsg = "Press R to restart";
-            int rw = MeasureText(restartMsg, 20);
-            DrawText(restartMsg, screenWidth/2 - rw/2, screenHeight/2, 20, GRAY);
+                const char *restartMsg = "Press R to restart";
+                int rw = MeasureText(restartMsg, 20);
+                DrawText(restartMsg, sw/2 - rw/2, sh/2, 20, GRAY);
+            }
         }
 
         // Camera debug sliders
