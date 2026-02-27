@@ -62,6 +62,7 @@ typedef enum {
 #define MAX_SHOP_SLOTS 3
 #define MAX_MODIFIERS 128
 #define MAX_PROJECTILES 32
+#define MAX_PARTICLES 256
 #define MAX_INVENTORY_SLOTS 6
 #define ABILITY_MAX_LEVELS 3
 #define ABILITY_MAX_VALUES 10
@@ -128,9 +129,9 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .range    = { 50.0f, 58.0f, 66.0f },
         .cooldown = { 10.0f, 9.0f, 8.0f },
         .values = {
-            { [AV_MM_DAMAGE]=100.0f, [AV_MM_STUN_DUR]=1.5f, [AV_MM_PROJ_SPEED]=60.0f },
-            { [AV_MM_DAMAGE]=175.0f, [AV_MM_STUN_DUR]=1.75f,[AV_MM_PROJ_SPEED]=60.0f },
-            { [AV_MM_DAMAGE]=250.0f, [AV_MM_STUN_DUR]=2.0f, [AV_MM_PROJ_SPEED]=60.0f },
+            { [AV_MM_DAMAGE]=0.30f, [AV_MM_STUN_DUR]=1.5f, [AV_MM_PROJ_SPEED]=60.0f },
+            { [AV_MM_DAMAGE]=0.40f, [AV_MM_STUN_DUR]=1.75f,[AV_MM_PROJ_SPEED]=60.0f },
+            { [AV_MM_DAMAGE]=0.50f, [AV_MM_STUN_DUR]=2.0f, [AV_MM_PROJ_SPEED]=60.0f },
         },
     },
     [ABILITY_DIG] = {
@@ -232,6 +233,19 @@ typedef struct {
     Color color;
     bool active;
 } Projectile;
+
+//------------------------------------------------------------------------------------
+// Particle (simple visual effect)
+//------------------------------------------------------------------------------------
+typedef struct {
+    Vector3 position;
+    Vector3 velocity;
+    float life;       // seconds remaining
+    float maxLife;
+    Color color;
+    float size;
+    bool active;
+} Particle;
 
 //------------------------------------------------------------------------------------
 // Shop & Inventory
@@ -542,6 +556,44 @@ void ClearAllProjectiles(Projectile projectiles[])
 }
 
 //------------------------------------------------------------------------------------
+// Particle Helpers
+//------------------------------------------------------------------------------------
+void ClearAllParticles(Particle particles[])
+{
+    for (int i = 0; i < MAX_PARTICLES; i++) particles[i].active = false;
+}
+
+void SpawnParticle(Particle particles[], Vector3 pos, Vector3 vel, float life, float size, Color color)
+{
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        if (particles[i].active) continue;
+        particles[i] = (Particle){
+            .position = pos, .velocity = vel,
+            .life = life, .maxLife = life,
+            .color = color, .size = size, .active = true
+        };
+        return;
+    }
+}
+
+void UpdateParticles(Particle particles[], float dt)
+{
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        if (!particles[i].active) continue;
+        particles[i].life -= dt;
+        if (particles[i].life <= 0) { particles[i].active = false; continue; }
+        particles[i].position.x += particles[i].velocity.x * dt;
+        particles[i].position.y += particles[i].velocity.y * dt;
+        particles[i].position.z += particles[i].velocity.z * dt;
+        // Gravity
+        particles[i].velocity.y -= 15.0f * dt;
+        // Fade out
+        float alpha = particles[i].life / particles[i].maxLife;
+        particles[i].color.a = (unsigned char)(255.0f * alpha);
+    }
+}
+
+//------------------------------------------------------------------------------------
 // Shop & Inventory Helpers
 //------------------------------------------------------------------------------------
 void RollShop(ShopSlot shopSlots[], int *gold, int cost)
@@ -670,6 +722,7 @@ int main(void)
     // Modifiers, projectiles, economy
     Modifier modifiers[MAX_MODIFIERS] = { 0 };
     Projectile projectiles[MAX_PROJECTILES] = { 0 };
+    Particle particles[MAX_PARTICLES] = { 0 };
     int playerGold = 10;
     int goldPerRound = 5;
     int rollCost = 2;
@@ -678,6 +731,7 @@ int main(void)
     InventorySlot inventory[MAX_INVENTORY_SLOTS];
     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
     DragState dragState = { 0 };
+    int removeConfirmUnit = -1;  // unit index awaiting removal confirmation (-1 = none)
 
     // Initial free shop roll
     RollShop(shopSlots, &playerGold, 0);
@@ -785,6 +839,41 @@ int main(void)
                 Rectangle playBtn = { (float)(sw/2 - playBtnW/2), (float)(hudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 bool clickedButton = false;
 
+                // Confirm removal popup (takes priority over everything)
+                if (removeConfirmUnit >= 0) {
+                    int popW = 220, popH = 80;
+                    int popX = sw / 2 - popW / 2;
+                    int popY = sh / 2 - popH / 2;
+                    Rectangle yesBtn = { (float)(popX + 20), (float)(popY + popH - 32), 80, 24 };
+                    Rectangle noBtn  = { (float)(popX + popW - 100), (float)(popY + popH - 32), 80, 24 };
+                    if (CheckCollisionPointRec(mouse, yesBtn)) {
+                        // Remove the unit: return abilities to inventory, deactivate
+                        int ri = removeConfirmUnit;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            if (units[ri].abilities[a].abilityId < 0) continue;
+                            // Find empty inventory slot
+                            for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
+                                if (inventory[inv].abilityId < 0) {
+                                    inventory[inv].abilityId = units[ri].abilities[a].abilityId;
+                                    inventory[inv].level = units[ri].abilities[a].level;
+                                    break;
+                                }
+                            }
+                            units[ri].abilities[a].abilityId = -1;
+                        }
+                        units[ri].active = false;
+                        removeConfirmUnit = -1;
+                        clickedButton = true;
+                    } else if (CheckCollisionPointRec(mouse, noBtn)) {
+                        removeConfirmUnit = -1;
+                        clickedButton = true;
+                    } else {
+                        // Click outside popup = cancel
+                        removeConfirmUnit = -1;
+                        clickedButton = true;
+                    }
+                }
+
                 // Play button
                 if (CheckCollisionPointRec(mouse, playBtn) && unitCount > 0)
                 {
@@ -797,7 +886,9 @@ int main(void)
                         phase = PHASE_COMBAT;
                         ClearAllModifiers(modifiers);
                         ClearAllProjectiles(projectiles);
+                        ClearAllParticles(particles);
                         dragState.dragging = false;
+                        removeConfirmUnit = -1;
                         // Reset ability state for combat start
                         for (int j = 0; j < unitCount; j++) {
                             units[j].selected = false;
@@ -911,6 +1002,26 @@ int main(void)
                         }
                     }
                 }
+                // --- X button on unit cards to remove ---
+                if (!clickedButton && !dragState.dragging) {
+                    int tmpBlue2[BLUE_TEAM_MAX_SIZE]; int tmpCount2 = 0;
+                    for (int i2 = 0; i2 < unitCount && tmpCount2 < BLUE_TEAM_MAX_SIZE; i2++)
+                        if (units[i2].active && units[i2].team == TEAM_BLUE) tmpBlue2[tmpCount2++] = i2;
+                    int totalCardsW2 = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+                    int cardsStartX2 = (sw - totalCardsW2) / 2;
+                    int cardsY2 = hudTop + HUD_SHOP_HEIGHT + 5;
+                    for (int h = 0; h < tmpCount2; h++) {
+                        int cardX = cardsStartX2 + h * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
+                        int xBtnSize = 16;
+                        Rectangle xBtn = { (float)(cardX + HUD_CARD_WIDTH - xBtnSize - 2),
+                                           (float)(cardsY2 + 2), (float)xBtnSize, (float)xBtnSize };
+                        if (CheckCollisionPointRec(mouse, xBtn)) {
+                            removeConfirmUnit = tmpBlue2[h];
+                            clickedButton = true;
+                            break;
+                        }
+                    }
+                }
                 // Unit selection (skip if clicking inside HUD area)
                 if (!clickedButton && mouse.y < hudTop)
                 {
@@ -962,6 +1073,12 @@ int main(void)
                         Rectangle r = { (float)ax, (float)ay, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
                         if (CheckCollisionPointRec(mouse, r)) {
                             int ui = dropBlue[h];
+                            // Dropping on the same slot we picked from — just restore it
+                            if (dragState.sourceType == 1 && dragState.sourceUnitIndex == ui && dragState.sourceIndex == a) {
+                                units[ui].abilities[a].abilityId = dragState.abilityId;
+                                units[ui].abilities[a].level = dragState.level;
+                                placed = true; break;
+                            }
                             // Swap
                             int oldId = units[ui].abilities[a].abilityId;
                             int oldLv = units[ui].abilities[a].level;
@@ -992,6 +1109,12 @@ int main(void)
                         int iy = invStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
                         Rectangle r = { (float)ix, (float)iy, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
                         if (CheckCollisionPointRec(mouse, r)) {
+                            // Dropping on the same inventory slot we picked from — just restore it
+                            if (dragState.sourceType == 0 && dragState.sourceIndex == inv) {
+                                inventory[inv].abilityId = dragState.abilityId;
+                                inventory[inv].level = dragState.level;
+                                placed = true; break;
+                            }
                             int oldId = inventory[inv].abilityId;
                             int oldLv = inventory[inv].level;
                             inventory[inv].abilityId = dragState.abilityId;
@@ -1044,6 +1167,34 @@ int main(void)
                 }
             }
 
+            // === STEP 1b: Spawn dig particles + update all particles ===
+            for (int i = 0; i < unitCount; i++) {
+                if (!units[i].active) continue;
+                if (UnitHasModifier(modifiers, i, MOD_DIG_HEAL)) {
+                    // Spawn 2-3 brown dirt particles per frame
+                    for (int pp = 0; pp < 3; pp++) {
+                        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                        float spread = (float)GetRandomValue(10, 40) / 10.0f;
+                        Vector3 pos = {
+                            units[i].position.x + cosf(angle) * spread * 0.5f,
+                            units[i].position.y + (float)GetRandomValue(0, 20) / 10.0f,
+                            units[i].position.z + sinf(angle) * spread * 0.5f
+                        };
+                        Vector3 vel = {
+                            cosf(angle) * spread * 2.0f,
+                            (float)GetRandomValue(30, 80) / 10.0f,
+                            sinf(angle) * spread * 2.0f
+                        };
+                        int shade = GetRandomValue(100, 180);
+                        Color brown = { (unsigned char)shade, (unsigned char)(shade * 0.6f),
+                                        (unsigned char)(shade * 0.3f), 255 };
+                        float sz = (float)GetRandomValue(3, 8) / 10.0f;
+                        SpawnParticle(particles, pos, vel, 0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, brown);
+                    }
+                }
+            }
+            UpdateParticles(particles, dt);
+
             // === STEP 2: Update projectiles ===
             for (int p = 0; p < MAX_PROJECTILES; p++) {
                 if (!projectiles[p].active) continue;
@@ -1068,7 +1219,11 @@ int main(void)
                 if (pdist <= pstep) {
                     // HIT
                     if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
-                        units[ti].currentHealth -= projectiles[p].damage;
+                        float hitDmg = projectiles[p].damage;
+                        // Magic Missile: damage is a fraction of target max HP
+                        if (projectiles[p].type == PROJ_MAGIC_MISSILE)
+                            hitDmg *= UNIT_STATS[units[ti].typeIndex].health;
+                        units[ti].currentHealth -= hitDmg;
                         if (projectiles[p].stunDuration > 0)
                             AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
                         if (units[ti].currentHealth <= 0) units[ti].active = false;
@@ -1107,24 +1262,27 @@ int main(void)
                         units[i].abilities[a].cooldownRemaining -= dt;
                 }
 
-                // Passive triggers (Dig) — even when stunned
-                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                    AbilitySlot *slot = &units[i].abilities[a];
-                    if (slot->abilityId != ABILITY_DIG) continue;
-                    if (slot->triggered || slot->cooldownRemaining > 0) continue;
-                    const AbilityDef *def = &ABILITY_DEFS[ABILITY_DIG];
-                    float threshold = def->values[slot->level][AV_DIG_HP_THRESH];
-                    if (units[i].currentHealth > 0 && units[i].currentHealth <= stats->health * threshold) {
-                        slot->triggered = true;
-                        slot->cooldownRemaining = def->cooldown[slot->level];
-                        float healDur = def->values[slot->level][AV_DIG_HEAL_DUR];
-                        float healPerSec = stats->health / healDur;
-                        AddModifier(modifiers, i, MOD_INVULNERABLE, healDur, 0);
-                        AddModifier(modifiers, i, MOD_DIG_HEAL, healDur, healPerSec);
+                // Passive triggers (Dig) — blocked by stun
+                if (!stunned) {
+                    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                        AbilitySlot *slot = &units[i].abilities[a];
+                        if (slot->abilityId != ABILITY_DIG) continue;
+                        if (slot->triggered || slot->cooldownRemaining > 0) continue;
+                        const AbilityDef *def = &ABILITY_DEFS[ABILITY_DIG];
+                        float threshold = def->values[slot->level][AV_DIG_HP_THRESH];
+                        if (units[i].currentHealth > 0 && units[i].currentHealth <= stats->health * threshold) {
+                            slot->triggered = true;
+                            slot->cooldownRemaining = def->cooldown[slot->level];
+                            float healDur = def->values[slot->level][AV_DIG_HEAL_DUR];
+                            float healPerSec = stats->health / healDur;
+                            AddModifier(modifiers, i, MOD_INVULNERABLE, healDur, 0);
+                            AddModifier(modifiers, i, MOD_DIG_HEAL, healDur, healPerSec);
+                        }
                     }
                 }
 
-                if (stunned) continue;
+                bool digging = UnitHasModifier(modifiers, i, MOD_DIG_HEAL);
+                if (stunned || digging) continue;
 
                 // Find target
                 int target = FindClosestEnemy(units, unitCount, i);
@@ -1305,6 +1463,7 @@ int main(void)
                 roundResultText = "";
                 ClearAllModifiers(modifiers);
                 ClearAllProjectiles(projectiles);
+                ClearAllParticles(particles);
                 playerGold = 10;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 RollShop(shopSlots, &playerGold, 0);
@@ -1367,10 +1526,26 @@ int main(void)
                 }
             }
 
+            // Draw stun indicator (yellow ring at feet)
+            for (int i = 0; i < unitCount; i++) {
+                if (!units[i].active) continue;
+                if (UnitHasModifier(modifiers, i, MOD_STUN)) {
+                    Vector3 ringPos = { units[i].position.x, units[i].position.y + 0.3f, units[i].position.z };
+                    DrawCircle3D(ringPos, 4.0f, (Vector3){1,0,0}, 90.0f, YELLOW);
+                    DrawCircle3D(ringPos, 3.5f, (Vector3){1,0,0}, 90.0f, YELLOW);
+                }
+            }
+
             // Draw projectiles
             for (int p = 0; p < MAX_PROJECTILES; p++) {
                 if (!projectiles[p].active) continue;
                 DrawSphere(projectiles[p].position, 1.5f, projectiles[p].color);
+            }
+
+            // Draw particles
+            for (int p = 0; p < MAX_PARTICLES; p++) {
+                if (!particles[p].active) continue;
+                DrawSphere(particles[p].position, particles[p].size, particles[p].color);
             }
         EndMode3D();
 
@@ -1600,6 +1775,21 @@ int main(void)
                                         (float)(HUD_CARD_WIDTH + 2), (float)(HUD_CARD_HEIGHT + 2) },
                             2, (Color){ 100, 255, 100, 255 });
 
+                    // X button (remove unit) — prep phase only
+                    if (phase == PHASE_PREP) {
+                        int xBtnSize = 16;
+                        int xBtnX = cardX + HUD_CARD_WIDTH - xBtnSize - 2;
+                        int xBtnY = cardsY + 2;
+                        Color xBg = (Color){ 180, 50, 50, 200 };
+                        if (CheckCollisionPointRec(GetMousePosition(),
+                            (Rectangle){ (float)xBtnX, (float)xBtnY, (float)xBtnSize, (float)xBtnSize }))
+                            xBg = (Color){ 230, 70, 70, 255 };
+                        DrawRectangle(xBtnX, xBtnY, xBtnSize, xBtnSize, xBg);
+                        DrawRectangleLines(xBtnX, xBtnY, xBtnSize, xBtnSize, (Color){100,30,30,255});
+                        int xw = MeasureText("X", 12);
+                        DrawText("X", xBtnX + (xBtnSize - xw) / 2, xBtnY + 2, 12, WHITE);
+                    }
+
                     // Portrait (left side of card) — Y-flipped for RenderTexture
                     Rectangle srcRect = { 0, 0, (float)HUD_PORTRAIT_SIZE, -(float)HUD_PORTRAIT_SIZE };
                     Rectangle dstRect = { (float)(cardX + 4), (float)(cardsY + 4),
@@ -1793,6 +1983,37 @@ int main(void)
                 int gw = MeasureText(goldText, 18);
                 DrawText(goldText, hudSw - gw - 20, shopY + 16, 18, (Color){ 240, 200, 60, 255 });
             }
+        }
+
+        // --- Confirm removal popup (drawn on top of everything) ---
+        if (removeConfirmUnit >= 0 && phase == PHASE_PREP) {
+            int sw2 = GetScreenWidth(), sh2 = GetScreenHeight();
+            DrawRectangle(0, 0, sw2, sh2, (Color){ 0, 0, 0, 120 }); // dim overlay
+            int popW = 220, popH = 80;
+            int popX = sw2 / 2 - popW / 2;
+            int popY = sh2 / 2 - popH / 2;
+            DrawRectangle(popX, popY, popW, popH, (Color){ 40, 40, 55, 240 });
+            DrawRectangleLinesEx((Rectangle){ (float)popX, (float)popY, (float)popW, (float)popH },
+                                2, (Color){ 180, 60, 60, 255 });
+            const char *confirmText = "Remove this unit?";
+            int ctw = MeasureText(confirmText, 16);
+            DrawText(confirmText, popX + (popW - ctw) / 2, popY + 12, 16, WHITE);
+            // Abilities returned note
+            DrawText("(abilities return to inventory)", popX + 14, popY + 32, 9, (Color){160,160,180,255});
+            // Yes / No buttons
+            Rectangle yesBtn = { (float)(popX + 20), (float)(popY + popH - 32), 80, 24 };
+            Rectangle noBtn  = { (float)(popX + popW - 100), (float)(popY + popH - 32), 80, 24 };
+            Color yesBg = (Color){ 180, 50, 50, 255 };
+            Color noBg  = (Color){ 60, 60, 80, 255 };
+            if (CheckCollisionPointRec(GetMousePosition(), yesBtn)) yesBg = (Color){ 230, 70, 70, 255 };
+            if (CheckCollisionPointRec(GetMousePosition(), noBtn))  noBg  = (Color){ 80, 80, 110, 255 };
+            DrawRectangleRec(yesBtn, yesBg);
+            DrawRectangleRec(noBtn, noBg);
+            DrawRectangleLinesEx(yesBtn, 1, (Color){120,40,40,255});
+            DrawRectangleLinesEx(noBtn, 1, (Color){80,80,100,255});
+            int yw = MeasureText("YES", 14), nw = MeasureText("NO", 14);
+            DrawText("YES", (int)(yesBtn.x + (80 - yw) / 2), (int)(yesBtn.y + 5), 14, WHITE);
+            DrawText("NO",  (int)(noBtn.x + (80 - nw) / 2), (int)(noBtn.y + 5), 14, WHITE);
         }
 
         DrawFPS(10, 10);
