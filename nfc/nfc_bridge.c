@@ -9,6 +9,8 @@
 #define SERIAL_PORT "/dev/ttyACM0"
 #define BAUD_RATE B115200
 #define BUF_SIZE 256
+#define PREFIX "PAYLOAD:"
+#define PREFIX_LEN 8
 
 int main(void)
 {
@@ -44,7 +46,7 @@ int main(void)
         return 1;
     }
 
-    printf("Waiting for NFC cards...\n");
+    fprintf(stderr, "Waiting for NFC cards...\n");
 
     char buf[BUF_SIZE];
     int pos = 0;
@@ -62,8 +64,10 @@ int main(void)
         if (c == '\n' || c == '\r') {
             if (pos > 0) {
                 buf[pos] = '\0';
-                printf("%s\n", buf);
-                fflush(stdout);
+                if (strncmp(buf, PREFIX, PREFIX_LEN) == 0) {
+                    printf("%s\n", buf + PREFIX_LEN);
+                    fflush(stdout);
+                }
                 pos = 0;
             }
         } else if (pos < BUF_SIZE - 1) {

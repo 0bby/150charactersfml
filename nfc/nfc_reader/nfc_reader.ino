@@ -113,6 +113,95 @@ void loop(void) {
       Serial.print("Seems to be a Mifare Classic card #");
       Serial.println(cardid);
     }
+
+    if (uidLength == 7)
+    {
+      // NTAG215 (Ultralight-compatible, 7-byte UID)
+      Serial.println("Detected NTAG2xx tag");
+
+      // Read user pages 4-48 into buffer (180 bytes, enough for ~150 char payloads)
+      uint8_t data[180];
+      uint8_t pageBuf[16]; // ReadPage returns up to 16 bytes
+      bool readOk = true;
+
+      for (uint8_t page = 4; page < 49; page++) {
+        if (!nfc.mifareultralight_ReadPage(page, pageBuf)) {
+          readOk = false;
+          break;
+        }
+        memcpy(&data[(page - 4) * 4], pageBuf, 4);
+      }
+
+      if (readOk) {
+        // Walk TLV blocks to find NDEF message (type 0x03)
+        int off = 0;
+        while (off < (int)sizeof(data)) {
+          uint8_t tlvType = data[off++];
+          if (tlvType == 0x00) continue;   // NULL TLV
+          if (tlvType == 0xFE) break;      // Terminator
+
+          // Read TLV length (1 or 3 bytes)
+          uint16_t tlvLen;
+          if (data[off] == 0xFF) {
+            off++;
+            tlvLen = ((uint16_t)data[off] << 8) | data[off + 1];
+            off += 2;
+          } else {
+            tlvLen = data[off++];
+          }
+
+          if (tlvType != 0x03) {
+            off += tlvLen; // skip non-NDEF TLVs
+            continue;
+          }
+
+          // Parse NDEF record header
+          uint8_t flags   = data[off];
+          uint8_t typeLen  = data[off + 1];
+          bool    sr       = flags & 0x10;
+          bool    il       = flags & 0x08;
+          uint8_t tnf      = flags & 0x07;
+          int     pos      = off + 2;
+
+          uint32_t payloadLen;
+          if (sr) {
+            payloadLen = data[pos++];
+          } else {
+            payloadLen = ((uint32_t)data[pos] << 24) | ((uint32_t)data[pos+1] << 16) |
+                         ((uint32_t)data[pos+2] << 8) | data[pos+3];
+            pos += 4;
+          }
+
+          uint8_t idLen = 0;
+          if (il) idLen = data[pos++];
+
+          uint8_t recType = data[pos];
+          pos += typeLen; // skip type field
+          pos += idLen;   // skip ID field
+
+          // Strip NDEF record overhead to get raw text
+          if (tnf == 0x01 && typeLen == 1 && recType == 'T') {
+            // NFC Forum Text Record: skip status byte + language code
+            uint8_t langLen = data[pos] & 0x3F;
+            pos += 1 + langLen;
+            payloadLen -= 1 + langLen;
+          } else if (tnf == 0x01 && typeLen == 1 && recType == 'U') {
+            // NFC Forum URI Record: skip URI prefix byte
+            pos += 1;
+            payloadLen -= 1;
+          }
+
+          Serial.print("PAYLOAD:");
+          for (uint32_t j = 0; j < payloadLen && (pos + (int)j) < (int)sizeof(data); j++) {
+            Serial.print((char)data[pos + j]);
+          }
+          Serial.println();
+          break;
+        }
+      } else {
+        Serial.println("Failed to read tag pages");
+      }
+    }
     Serial.println("");
   }
 }

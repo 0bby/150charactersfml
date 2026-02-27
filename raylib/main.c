@@ -11,6 +11,9 @@
 #include "raylib.h"
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 //------------------------------------------------------------------------------------
 // Data Structures & Constants
@@ -272,6 +275,17 @@ int main(void)
 
     SetTargetFPS(60);
 
+    // --- NFC Bridge Subprocess ---
+    FILE *nfcPipe = popen("../nfc/build/bridge", "r");
+    if (nfcPipe) {
+        int nfcFd = fileno(nfcPipe);
+        int flags = fcntl(nfcFd, F_GETFL, 0);
+        fcntl(nfcFd, F_SETFL, flags | O_NONBLOCK);
+        printf("[NFC] Bridge launched\n");
+    } else {
+        printf("[NFC] Failed to launch bridge\n");
+    }
+
     //==================================================================================
     // MAIN LOOP
     //==================================================================================
@@ -283,6 +297,23 @@ int main(void)
         camera.position.y = camHeight;
         camera.position.z = camDistance;
         camera.fovy = camFOV;
+
+        // Poll NFC bridge for tag scans (only spawn during prep)
+        if (nfcPipe && phase == PHASE_PREP) {
+            char nfcBuf[64];
+            if (fgets(nfcBuf, sizeof(nfcBuf), nfcPipe)) {
+                nfcBuf[strcspn(nfcBuf, "\r\n")] = '\0';
+                if (strcmp(nfcBuf, "0") == 0) {
+                    SpawnUnit(units, &unitCount, 1, TEAM_BLUE);
+                    printf("[NFC] Tag '0' -> Spawning Goblin (Blue)\n");
+                } else if (strcmp(nfcBuf, "1") == 0) {
+                    SpawnUnit(units, &unitCount, 0, TEAM_BLUE);
+                    printf("[NFC] Tag '1' -> Spawning Mushroom (Blue)\n");
+                } else {
+                    printf("[NFC] Unknown payload: '%s'\n", nfcBuf);
+                }
+            }
+        }
 
         //------------------------------------------------------------------------------
         // PHASE: PREP — place units, click Play to start
@@ -650,6 +681,10 @@ int main(void)
     }
 
     // Cleanup
+    if (nfcPipe) {
+        pclose(nfcPipe);
+        printf("[NFC] Bridge closed\n");
+    }
     for (int i = 0; i < unitTypeCount; i++) UnloadModel(unitTypes[i].model);
     CloseWindow();
     return 0;
