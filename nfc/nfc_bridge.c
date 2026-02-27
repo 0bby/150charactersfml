@@ -6,17 +6,26 @@
 #include <termios.h>
 #include <errno.h>
 
-#define SERIAL_PORT "/dev/ttyACM0"
 #define BAUD_RATE B115200
 #define BUF_SIZE 256
 #define PREFIX "PAYLOAD:"
 #define PREFIX_LEN 8
+#define MAX_ACM 10
 
 int main(void)
 {
-    int fd = open(SERIAL_PORT, O_RDONLY | O_NOCTTY);
+    int fd = -1;
+    char port[32];
+    for (int i = 0; i < MAX_ACM; i++) {
+        snprintf(port, sizeof(port), "/dev/ttyACM%d", i);
+        fd = open(port, O_RDONLY | O_NOCTTY);
+        if (fd >= 0) {
+            fprintf(stderr, "Opened %s\n", port);
+            break;
+        }
+    }
     if (fd < 0) {
-        fprintf(stderr, "Failed to open %s: %s\n", SERIAL_PORT, strerror(errno));
+        fprintf(stderr, "No /dev/ttyACM* port found\n");
         return 1;
     }
 
