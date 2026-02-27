@@ -9,11 +9,17 @@
 ********************************************************************************************/
 
 #include "raylib.h"
+#include "raymath.h"
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
+
+#define RLIGHTS_IMPLEMENTATION
+#include "rlights.h"
+
+#define GLSL_VERSION 330
 
 //------------------------------------------------------------------------------------
 // Data Structures & Constants
@@ -659,6 +665,27 @@ int main(void)
     portraitCam.fovy = 30.0f;
     portraitCam.projection = CAMERA_PERSPECTIVE;
 
+    // --- Lighting setup ---
+    Shader lightShader = LoadShader(
+        TextFormat("resources/shaders/glsl%i/lighting.vs", GLSL_VERSION),
+        TextFormat("resources/shaders/glsl%i/lighting.fs", GLSL_VERSION));
+    lightShader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(lightShader, "viewPos");
+
+    int ambientLoc = GetShaderLocation(lightShader, "ambient");
+    SetShaderValue(lightShader, ambientLoc, (float[4]){ 0.15f, 0.15f, 0.18f, 1.0f }, SHADER_UNIFORM_VEC4);
+
+    Light lights[MAX_LIGHTS] = { 0 };
+    lights[0] = CreateLight(LIGHT_DIRECTIONAL, (Vector3){ 50, 80, 50 }, Vector3Zero(), (Color){255, 245, 220, 255}, lightShader);
+    lights[1] = CreateLight(LIGHT_POINT, (Vector3){ 0, 40, 0 }, Vector3Zero(), (Color){240, 240, 255, 255}, lightShader);
+
+    // Assign lighting shader to all loaded models
+    for (int i = 0; i < unitTypeCount; i++)
+    {
+        if (!unitTypes[i].loaded) continue;
+        for (int m = 0; m < unitTypes[i].model.materialCount; m++)
+            unitTypes[i].model.materials[m].shader = lightShader;
+    }
+
     // Units
     Unit units[MAX_UNITS] = { 0 };
     int unitCount = 0;
@@ -721,6 +748,10 @@ int main(void)
         camera.position.y = camHeight;
         camera.position.z = camDistance;
         camera.fovy = camFOV;
+
+        // Update lighting shader with camera position
+        float cameraPos[3] = { camera.position.x, camera.position.y, camera.position.z };
+        SetShaderValue(lightShader, lightShader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
 
         // Poll NFC bridge for tag scans (only spawn during prep)
         if (nfcPipe && phase == PHASE_PREP) {
@@ -1805,6 +1836,7 @@ int main(void)
         printf("[NFC] Bridge closed\n");
     }
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
+    UnloadShader(lightShader);
     for (int i = 0; i < unitTypeCount; i++) UnloadModel(unitTypes[i].model);
     CloseWindow();
     return 0;
