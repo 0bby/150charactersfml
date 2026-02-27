@@ -56,14 +56,204 @@ typedef enum {
 } GamePhase;
 
 //------------------------------------------------------------------------------------
-// Ability System (placeholder for future)
+// Ability System
 //------------------------------------------------------------------------------------
 #define MAX_ABILITIES_PER_UNIT 4
 #define MAX_SHOP_SLOTS 3
+#define MAX_MODIFIERS 128
+#define MAX_PROJECTILES 32
+#define MAX_INVENTORY_SLOTS 6
+#define ABILITY_MAX_LEVELS 3
+#define ABILITY_MAX_VALUES 10
+
+typedef enum {
+    ABILITY_MAGIC_MISSILE = 0,
+    ABILITY_DIG,
+    ABILITY_VACUUM,
+    ABILITY_CHAIN_FROST,
+    ABILITY_BLOOD_RAGE,
+    ABILITY_COUNT,
+} AbilityId;
+
+typedef enum {
+    TARGET_NONE = 0,          // passive / self-cast
+    TARGET_CLOSEST_ENEMY,     // auto-targets closest enemy
+    TARGET_SELF_AOE,          // AoE centered on caster
+} AbilityTargetType;
+
+typedef enum {
+    MOD_STUN = 0,
+    MOD_INVULNERABLE,
+    MOD_LIFESTEAL,
+    MOD_SPEED_MULT,
+    MOD_ARMOR,
+    MOD_DIG_HEAL,
+} ModifierType;
+
+typedef enum {
+    PROJ_MAGIC_MISSILE = 0,
+    PROJ_CHAIN_FROST,
+} ProjectileType;
+
+// Named value indices into AbilityDef.values[level][]
+#define AV_MM_DAMAGE      0
+#define AV_MM_STUN_DUR    1
+#define AV_MM_PROJ_SPEED  2
+#define AV_DIG_HP_THRESH  0
+#define AV_DIG_HEAL_DUR   1
+#define AV_VAC_RADIUS     0
+#define AV_VAC_STUN_DUR   1
+#define AV_VAC_PULL_DUR   2
+#define AV_CF_DAMAGE      0
+#define AV_CF_BOUNCES     1
+#define AV_CF_PROJ_SPEED  2
+#define AV_CF_BOUNCE_RANGE 3
+#define AV_BR_LIFESTEAL   0
+#define AV_BR_DURATION    1
 
 typedef struct {
-    int abilityId;        // -1 = empty, >= 0 = ability index (future)
+    const char *name;
+    const char *description;
+    AbilityTargetType targetType;
+    int goldCost;
+    float range[ABILITY_MAX_LEVELS];
+    float cooldown[ABILITY_MAX_LEVELS];
+    float values[ABILITY_MAX_LEVELS][ABILITY_MAX_VALUES];
+} AbilityDef;
+
+static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
+    [ABILITY_MAGIC_MISSILE] = {
+        .name = "Magic Missile", .description = "Ranged stun projectile",
+        .targetType = TARGET_CLOSEST_ENEMY, .goldCost = 3,
+        .range    = { 50.0f, 58.0f, 66.0f },
+        .cooldown = { 10.0f, 9.0f, 8.0f },
+        .values = {
+            { [AV_MM_DAMAGE]=100.0f, [AV_MM_STUN_DUR]=1.5f, [AV_MM_PROJ_SPEED]=60.0f },
+            { [AV_MM_DAMAGE]=175.0f, [AV_MM_STUN_DUR]=1.75f,[AV_MM_PROJ_SPEED]=60.0f },
+            { [AV_MM_DAMAGE]=250.0f, [AV_MM_STUN_DUR]=2.0f, [AV_MM_PROJ_SPEED]=60.0f },
+        },
+    },
+    [ABILITY_DIG] = {
+        .name = "Dig", .description = "Invuln + heal at low HP",
+        .targetType = TARGET_NONE, .goldCost = 4,
+        .range    = { 0 },
+        .cooldown = { 30.0f, 25.0f, 20.0f },
+        .values = {
+            { [AV_DIG_HP_THRESH]=0.25f, [AV_DIG_HEAL_DUR]=4.0f },
+            { [AV_DIG_HP_THRESH]=0.25f, [AV_DIG_HEAL_DUR]=3.5f },
+            { [AV_DIG_HP_THRESH]=0.25f, [AV_DIG_HEAL_DUR]=3.0f },
+        },
+    },
+    [ABILITY_VACUUM] = {
+        .name = "Vacuum", .description = "Pull + stun enemies in AoE",
+        .targetType = TARGET_SELF_AOE, .goldCost = 5,
+        .range    = { 0 },
+        .cooldown = { 22.0f, 18.0f, 14.0f },
+        .values = {
+            { [AV_VAC_RADIUS]=30.0f, [AV_VAC_STUN_DUR]=1.0f, [AV_VAC_PULL_DUR]=0.5f },
+            { [AV_VAC_RADIUS]=38.0f, [AV_VAC_STUN_DUR]=1.5f, [AV_VAC_PULL_DUR]=0.5f },
+            { [AV_VAC_RADIUS]=46.0f, [AV_VAC_STUN_DUR]=2.0f, [AV_VAC_PULL_DUR]=0.5f },
+        },
+    },
+    [ABILITY_CHAIN_FROST] = {
+        .name = "Chain Frost", .description = "Bouncing damage projectile",
+        .targetType = TARGET_CLOSEST_ENEMY, .goldCost = 5,
+        .range    = { 50.0f, 58.0f, 66.0f },
+        .cooldown = { 20.0f, 17.0f, 14.0f },
+        .values = {
+            { [AV_CF_DAMAGE]=100.0f, [AV_CF_BOUNCES]=5.0f, [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f },
+            { [AV_CF_DAMAGE]=150.0f, [AV_CF_BOUNCES]=7.0f, [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f },
+            { [AV_CF_DAMAGE]=200.0f, [AV_CF_BOUNCES]=10.0f,[AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f },
+        },
+    },
+    [ABILITY_BLOOD_RAGE] = {
+        .name = "Blood Rage", .description = "Grants lifesteal on attacks",
+        .targetType = TARGET_NONE, .goldCost = 3,
+        .range    = { 0 },
+        .cooldown = { 18.0f, 15.0f, 12.0f },
+        .values = {
+            { [AV_BR_LIFESTEAL]=0.20f, [AV_BR_DURATION]=5.0f },
+            { [AV_BR_LIFESTEAL]=0.35f, [AV_BR_DURATION]=6.0f },
+            { [AV_BR_LIFESTEAL]=0.50f, [AV_BR_DURATION]=7.0f },
+        },
+    },
+};
+
+static const Color ABILITY_COLORS[ABILITY_COUNT] = {
+    { 120, 80, 255, 255 },   // Magic Missile — purple
+    { 160, 120, 60, 255 },   // Dig — brown
+    { 60, 180, 180, 255 },   // Vacuum — cyan
+    { 80, 140, 255, 255 },   // Chain Frost — blue
+    { 220, 40, 40, 255 },    // Blood Rage — red
+};
+
+static const char *ABILITY_ABBREV[ABILITY_COUNT] = { "MM", "DG", "VC", "CF", "BR" };
+
+// Clockwise activation order: TL(0) → TR(1) → BR(3) → BL(2)
+static const int ACTIVATION_ORDER[MAX_ABILITIES_PER_UNIT] = { 0, 1, 3, 2 };
+
+//------------------------------------------------------------------------------------
+// Ability Slot (on units)
+//------------------------------------------------------------------------------------
+typedef struct {
+    int abilityId;            // -1 = empty
+    int level;                // 0-2 (displayed as 1-3)
+    float cooldownRemaining;
+    bool triggered;           // for passives like Dig
 } AbilitySlot;
+
+//------------------------------------------------------------------------------------
+// Modifier
+//------------------------------------------------------------------------------------
+typedef struct {
+    ModifierType type;
+    int unitIndex;
+    float duration;
+    float value;
+    bool active;
+} Modifier;
+
+//------------------------------------------------------------------------------------
+// Projectile
+//------------------------------------------------------------------------------------
+typedef struct {
+    ProjectileType type;
+    Vector3 position;
+    int targetIndex;
+    int sourceIndex;
+    Team sourceTeam;
+    float speed;
+    float damage;
+    float stunDuration;
+    int bouncesRemaining;
+    float bounceRange;
+    int lastHitUnit;
+    int level;
+    Color color;
+    bool active;
+} Projectile;
+
+//------------------------------------------------------------------------------------
+// Shop & Inventory
+//------------------------------------------------------------------------------------
+typedef struct {
+    int abilityId;
+    int level;
+} ShopSlot;
+
+typedef struct {
+    int abilityId;
+    int level;
+} InventorySlot;
+
+typedef struct {
+    bool dragging;
+    int sourceType;       // 0 = inventory, 1 = unit ability slot
+    int sourceIndex;      // slot index
+    int sourceUnitIndex;  // unit index (when sourceType == 1)
+    int abilityId;
+    int level;
+} DragState;
 
 //------------------------------------------------------------------------------------
 // HUD Layout Constants
@@ -77,6 +267,8 @@ typedef struct {
 #define HUD_PORTRAIT_SIZE 80
 #define HUD_ABILITY_SLOT_SIZE 32
 #define HUD_ABILITY_SLOT_GAP 4
+#define HUD_INVENTORY_COLS 3
+#define HUD_INVENTORY_ROWS 2
 
 //------------------------------------------------------------------------------------
 // Unit type (visual info — model, scale, name)
@@ -98,12 +290,13 @@ typedef struct {
     Vector3 position;
     Team team;
     float currentHealth;
-    float attackCooldown;     // counts down each frame
-    int targetIndex;          // index of current target (-1 = none)
+    float attackCooldown;
+    int targetIndex;
     bool active;
     bool selected;
     bool dragging;
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
+    int nextAbilitySlot;   // index into ACTIVATION_ORDER for clockwise cycling
 } Unit;
 
 //------------------------------------------------------------------------------------
@@ -128,6 +321,9 @@ int CountTeamUnits(Unit units[], int unitCount, Team team)
     return count;
 }
 
+// Forward declaration
+void AssignRandomAbilities(Unit *unit, int numAbilities);
+
 // Returns true if spawn succeeded
 bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
 {
@@ -147,8 +343,13 @@ bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
         .selected       = false,
         .dragging       = false,
     };
-    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
-        units[*unitCount].abilities[a].abilityId = -1;
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+        units[*unitCount].abilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
+            .cooldownRemaining = 0, .triggered = false };
+    }
+    units[*unitCount].nextAbilitySlot = 0;
+    // Red team AI: assign random abilities
+    if (team == TEAM_RED) AssignRandomAbilities(&units[*unitCount], GetRandomValue(1, 2));
     (*unitCount)++;
     return true;
 }
@@ -245,6 +446,168 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
 }
 
 //------------------------------------------------------------------------------------
+// Modifier Helpers
+//------------------------------------------------------------------------------------
+bool UnitHasModifier(Modifier modifiers[], int unitIndex, ModifierType type)
+{
+    for (int m = 0; m < MAX_MODIFIERS; m++)
+        if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type)
+            return true;
+    return false;
+}
+
+float GetModifierValue(Modifier modifiers[], int unitIndex, ModifierType type)
+{
+    float best = 0.0f;
+    for (int m = 0; m < MAX_MODIFIERS; m++)
+        if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type)
+            if (modifiers[m].value > best) best = modifiers[m].value;
+    return best;
+}
+
+void AddModifier(Modifier modifiers[], int unitIndex, ModifierType type, float duration, float value)
+{
+    for (int m = 0; m < MAX_MODIFIERS; m++) {
+        if (!modifiers[m].active) {
+            modifiers[m] = (Modifier){ .type = type, .unitIndex = unitIndex,
+                .duration = duration, .value = value, .active = true };
+            return;
+        }
+    }
+}
+
+void ClearAllModifiers(Modifier modifiers[])
+{
+    for (int m = 0; m < MAX_MODIFIERS; m++) modifiers[m].active = false;
+}
+
+//------------------------------------------------------------------------------------
+// Projectile Helpers
+//------------------------------------------------------------------------------------
+void SpawnProjectile(Projectile projectiles[], ProjectileType type,
+    Vector3 startPos, int targetIndex, int sourceIndex, Team sourceTeam, int level,
+    float speed, float damage, float stunDur, Color color)
+{
+    for (int p = 0; p < MAX_PROJECTILES; p++) {
+        if (!projectiles[p].active) {
+            projectiles[p] = (Projectile){
+                .type = type, .position = (Vector3){ startPos.x, startPos.y + 3.0f, startPos.z },
+                .targetIndex = targetIndex, .sourceIndex = sourceIndex, .sourceTeam = sourceTeam,
+                .speed = speed, .damage = damage, .stunDuration = stunDur,
+                .bouncesRemaining = 0, .bounceRange = 0, .lastHitUnit = -1,
+                .level = level, .color = color, .active = true,
+            };
+            return;
+        }
+    }
+}
+
+void SpawnChainFrostProjectile(Projectile projectiles[],
+    Vector3 startPos, int targetIndex, int sourceIndex, Team sourceTeam, int level,
+    float speed, float damage, int bounces, float bounceRange)
+{
+    for (int p = 0; p < MAX_PROJECTILES; p++) {
+        if (!projectiles[p].active) {
+            projectiles[p] = (Projectile){
+                .type = PROJ_CHAIN_FROST,
+                .position = (Vector3){ startPos.x, startPos.y + 3.0f, startPos.z },
+                .targetIndex = targetIndex, .sourceIndex = sourceIndex, .sourceTeam = sourceTeam,
+                .speed = speed, .damage = damage, .stunDuration = 0,
+                .bouncesRemaining = bounces, .bounceRange = bounceRange, .lastHitUnit = -1,
+                .level = level, .color = (Color){ 80, 140, 255, 255 }, .active = true,
+            };
+            return;
+        }
+    }
+}
+
+int FindChainFrostTarget(Unit units[], int unitCount, Vector3 fromPos,
+    Team sourceTeam, int excludeIndex, float range)
+{
+    float bestDist = 1e30f;
+    int bestIdx = -1;
+    for (int j = 0; j < unitCount; j++) {
+        if (!units[j].active || j == excludeIndex) continue;
+        if (units[j].team == sourceTeam) continue;
+        float d = sqrtf((units[j].position.x - fromPos.x) * (units[j].position.x - fromPos.x) +
+                        (units[j].position.z - fromPos.z) * (units[j].position.z - fromPos.z));
+        if (d <= range && d < bestDist) { bestDist = d; bestIdx = j; }
+    }
+    return bestIdx;
+}
+
+void ClearAllProjectiles(Projectile projectiles[])
+{
+    for (int p = 0; p < MAX_PROJECTILES; p++) projectiles[p].active = false;
+}
+
+//------------------------------------------------------------------------------------
+// Shop & Inventory Helpers
+//------------------------------------------------------------------------------------
+void RollShop(ShopSlot shopSlots[], int *gold, int cost)
+{
+    if (*gold < cost) return;
+    *gold -= cost;
+    for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
+        shopSlots[i].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
+        shopSlots[i].level = 0;
+    }
+}
+
+void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold)
+{
+    if (slot->abilityId < 0) return;
+    int cost = ABILITY_DEFS[slot->abilityId].goldCost;
+    if (*gold < cost) return;
+
+    // Auto-combine: check if this ability already exists on a blue unit or in inventory
+    // Upgrade existing instance instead of creating duplicate
+    for (int i = 0; i < unitCount; i++) {
+        if (!units[i].active || units[i].team != TEAM_BLUE) continue;
+        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+            if (units[i].abilities[a].abilityId == slot->abilityId &&
+                units[i].abilities[a].level < ABILITY_MAX_LEVELS - 1) {
+                units[i].abilities[a].level++;
+                *gold -= cost;
+                slot->abilityId = -1;
+                return;
+            }
+        }
+    }
+    for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) {
+        if (inventory[i].abilityId == slot->abilityId &&
+            inventory[i].level < ABILITY_MAX_LEVELS - 1) {
+            inventory[i].level++;
+            *gold -= cost;
+            slot->abilityId = -1;
+            return;
+        }
+    }
+
+    // No existing copy — place in first empty inventory slot
+    for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) {
+        if (inventory[i].abilityId < 0) {
+            inventory[i].abilityId = slot->abilityId;
+            inventory[i].level = slot->level;
+            *gold -= cost;
+            slot->abilityId = -1;
+            return;
+        }
+    }
+    // Inventory full — do nothing
+}
+
+void AssignRandomAbilities(Unit *unit, int numAbilities)
+{
+    for (int a = 0; a < numAbilities && a < MAX_ABILITIES_PER_UNIT; a++) {
+        unit->abilities[a].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
+        unit->abilities[a].level = GetRandomValue(0, 1);
+        unit->abilities[a].cooldownRemaining = 0;
+        unit->abilities[a].triggered = false;
+    }
+}
+
+//------------------------------------------------------------------------------------
 // Main
 //------------------------------------------------------------------------------------
 int main(void)
@@ -303,6 +666,21 @@ int main(void)
     // Snapshot for round-reset
     UnitSnapshot snapshots[MAX_UNITS] = { 0 };
     int snapshotCount = 0;
+
+    // Modifiers, projectiles, economy
+    Modifier modifiers[MAX_MODIFIERS] = { 0 };
+    Projectile projectiles[MAX_PROJECTILES] = { 0 };
+    int playerGold = 10;
+    int goldPerRound = 5;
+    int rollCost = 2;
+    ShopSlot shopSlots[MAX_SHOP_SLOTS];
+    for (int i = 0; i < MAX_SHOP_SLOTS; i++) shopSlots[i].abilityId = -1;
+    InventorySlot inventory[MAX_INVENTORY_SLOTS];
+    for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
+    DragState dragState = { 0 };
+
+    // Initial free shop roll
+    RollShop(shopSlots, &playerGold, 0);
 
     // Round / score state
     GamePhase phase = PHASE_PREP;
@@ -417,8 +795,19 @@ int main(void)
                     {
                         SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
                         phase = PHASE_COMBAT;
-                        // Deselect everything
-                        for (int j = 0; j < unitCount; j++) { units[j].selected = false; units[j].dragging = false; }
+                        ClearAllModifiers(modifiers);
+                        ClearAllProjectiles(projectiles);
+                        dragState.dragging = false;
+                        // Reset ability state for combat start
+                        for (int j = 0; j < unitCount; j++) {
+                            units[j].selected = false;
+                            units[j].dragging = false;
+                            units[j].nextAbilitySlot = 0;
+                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                units[j].abilities[a].cooldownRemaining = 0;
+                                units[j].abilities[a].triggered = false;
+                            }
+                        }
                         clickedButton = true;
                     }
                 }
@@ -443,6 +832,85 @@ int main(void)
                         { SpawnUnit(units, &unitCount, i, TEAM_RED); clickedButton = true; break; }
                     }
                 }
+                // --- Shop: ROLL button click ---
+                if (!clickedButton) {
+                    int shopY = hudTop + 2;
+                    Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
+                    if (CheckCollisionPointRec(mouse, rollBtn)) {
+                        RollShop(shopSlots, &playerGold, rollCost);
+                        clickedButton = true;
+                    }
+                }
+                // --- Shop: Buy ability card click ---
+                if (!clickedButton) {
+                    int shopY = hudTop + 2;
+                    int shopCardW = 100, shopCardH = 34, shopCardGap = 10;
+                    int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
+                    int shopCardsX = (sw - totalShopW) / 2;
+                    // Collect blue units for auto-combine
+                    for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
+                        int scx = shopCardsX + s * (shopCardW + shopCardGap);
+                        Rectangle r = { (float)scx, (float)(shopY + 8), (float)shopCardW, (float)shopCardH };
+                        if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
+                            BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
+                            clickedButton = true;
+                            break;
+                        }
+                    }
+                }
+                // --- Drag start: inventory slots ---
+                if (!clickedButton && !dragState.dragging) {
+                    int totalCardsW = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+                    int cardsStartX = (sw - totalCardsW) / 2;
+                    int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP)) - 20;
+                    int invStartY = hudTop + HUD_SHOP_HEIGHT + 15;
+                    for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
+                        int col = inv % HUD_INVENTORY_COLS;
+                        int row = inv / HUD_INVENTORY_COLS;
+                        int ix = invStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                        int iy = invStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                        Rectangle r = { (float)ix, (float)iy, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
+                        if (CheckCollisionPointRec(mouse, r) && inventory[inv].abilityId >= 0) {
+                            dragState = (DragState){ .dragging = true, .sourceType = 0,
+                                .sourceIndex = inv, .sourceUnitIndex = -1,
+                                .abilityId = inventory[inv].abilityId, .level = inventory[inv].level };
+                            inventory[inv].abilityId = -1;
+                            clickedButton = true;
+                            break;
+                        }
+                    }
+                }
+                // --- Drag start: unit ability slots on HUD ---
+                if (!clickedButton && !dragState.dragging) {
+                    // Need blueHudUnits — build it here too
+                    int tmpBlue[BLUE_TEAM_MAX_SIZE]; int tmpCount = 0;
+                    for (int i2 = 0; i2 < unitCount && tmpCount < BLUE_TEAM_MAX_SIZE; i2++)
+                        if (units[i2].active && units[i2].team == TEAM_BLUE) tmpBlue[tmpCount++] = i2;
+                    int totalCardsW = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+                    int cardsStartX = (sw - totalCardsW) / 2;
+                    int cardsY = hudTop + HUD_SHOP_HEIGHT + 5;
+                    for (int h = 0; h < tmpCount && !clickedButton; h++) {
+                        int cardX = cardsStartX + h * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
+                        int abilStartX = cardX + HUD_PORTRAIT_SIZE + 12;
+                        int abilStartY = cardsY + 8;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            int col = a % 2, row = a / 2;
+                            int ax = abilStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                            int ay = abilStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                            Rectangle r = { (float)ax, (float)ay, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
+                            int ui = tmpBlue[h];
+                            if (CheckCollisionPointRec(mouse, r) && units[ui].abilities[a].abilityId >= 0) {
+                                dragState = (DragState){ .dragging = true, .sourceType = 1,
+                                    .sourceIndex = a, .sourceUnitIndex = ui,
+                                    .abilityId = units[ui].abilities[a].abilityId,
+                                    .level = units[ui].abilities[a].level };
+                                units[ui].abilities[a].abilityId = -1;
+                                clickedButton = true;
+                                break;
+                            }
+                        }
+                    }
+                }
                 // Unit selection (skip if clicking inside HUD area)
                 if (!clickedButton && mouse.y < hudTop)
                 {
@@ -463,59 +931,316 @@ int main(void)
                     if (!hitAny) for (int j = 0; j < unitCount; j++) units[j].selected = false;
                 }
             }
+
+            // --- Drag-and-drop release handling ---
+            if (dragState.dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+            {
+                Vector2 mouse = GetMousePosition();
+                int sw = GetScreenWidth();
+                int sh = GetScreenHeight();
+                int hudTop2 = sh - HUD_TOTAL_HEIGHT;
+                bool placed = false;
+
+                // Collect blue units
+                int dropBlue[BLUE_TEAM_MAX_SIZE]; int dropCount = 0;
+                for (int i2 = 0; i2 < unitCount && dropCount < BLUE_TEAM_MAX_SIZE; i2++)
+                    if (units[i2].active && units[i2].team == TEAM_BLUE) dropBlue[dropCount++] = i2;
+
+                int totalCardsW = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+                int cardsStartX = (sw - totalCardsW) / 2;
+                int cardsY = hudTop2 + HUD_SHOP_HEIGHT + 5;
+
+                // Check drop on unit ability slot
+                for (int h = 0; h < dropCount && !placed; h++) {
+                    int cardX = cardsStartX + h * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
+                    int abilStartX = cardX + HUD_PORTRAIT_SIZE + 12;
+                    int abilStartY = cardsY + 8;
+                    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                        int col = a % 2, row = a / 2;
+                        int ax = abilStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                        int ay = abilStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                        Rectangle r = { (float)ax, (float)ay, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
+                        if (CheckCollisionPointRec(mouse, r)) {
+                            int ui = dropBlue[h];
+                            // Swap
+                            int oldId = units[ui].abilities[a].abilityId;
+                            int oldLv = units[ui].abilities[a].level;
+                            units[ui].abilities[a].abilityId = dragState.abilityId;
+                            units[ui].abilities[a].level = dragState.level;
+                            units[ui].abilities[a].cooldownRemaining = 0;
+                            units[ui].abilities[a].triggered = false;
+                            // Put old ability back to source
+                            if (dragState.sourceType == 0) {
+                                inventory[dragState.sourceIndex].abilityId = oldId;
+                                inventory[dragState.sourceIndex].level = oldLv;
+                            } else {
+                                units[dragState.sourceUnitIndex].abilities[dragState.sourceIndex].abilityId = oldId;
+                                units[dragState.sourceUnitIndex].abilities[dragState.sourceIndex].level = oldLv;
+                            }
+                            placed = true; break;
+                        }
+                    }
+                }
+                // Check drop on inventory slot
+                if (!placed) {
+                    int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP)) - 20;
+                    int invStartY = hudTop2 + HUD_SHOP_HEIGHT + 15;
+                    for (int inv = 0; inv < MAX_INVENTORY_SLOTS && !placed; inv++) {
+                        int col = inv % HUD_INVENTORY_COLS;
+                        int row = inv / HUD_INVENTORY_COLS;
+                        int ix = invStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                        int iy = invStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                        Rectangle r = { (float)ix, (float)iy, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
+                        if (CheckCollisionPointRec(mouse, r)) {
+                            int oldId = inventory[inv].abilityId;
+                            int oldLv = inventory[inv].level;
+                            inventory[inv].abilityId = dragState.abilityId;
+                            inventory[inv].level = dragState.level;
+                            if (dragState.sourceType == 0) {
+                                inventory[dragState.sourceIndex].abilityId = oldId;
+                                inventory[dragState.sourceIndex].level = oldLv;
+                            } else {
+                                units[dragState.sourceUnitIndex].abilities[dragState.sourceIndex].abilityId = oldId;
+                                units[dragState.sourceUnitIndex].abilities[dragState.sourceIndex].level = oldLv;
+                            }
+                            placed = true;
+                        }
+                    }
+                }
+                // Not placed — return to source
+                if (!placed) {
+                    if (dragState.sourceType == 0) {
+                        inventory[dragState.sourceIndex].abilityId = dragState.abilityId;
+                        inventory[dragState.sourceIndex].level = dragState.level;
+                    } else {
+                        units[dragState.sourceUnitIndex].abilities[dragState.sourceIndex].abilityId = dragState.abilityId;
+                        units[dragState.sourceUnitIndex].abilities[dragState.sourceIndex].level = dragState.level;
+                    }
+                }
+                dragState.dragging = false;
+            }
         }
         //------------------------------------------------------------------------------
-        // PHASE: COMBAT — units seek + attack automatically
+        // PHASE: COMBAT — abilities, modifiers, projectiles, movement, attack
         //------------------------------------------------------------------------------
         else if (phase == PHASE_COMBAT)
         {
+            // === STEP 1: Tick modifiers ===
+            for (int m = 0; m < MAX_MODIFIERS; m++) {
+                if (!modifiers[m].active) continue;
+                int ui = modifiers[m].unitIndex;
+                if (ui < 0 || ui >= unitCount || !units[ui].active) {
+                    modifiers[m].active = false; continue;
+                }
+                if (modifiers[m].duration > 0) {
+                    modifiers[m].duration -= dt;
+                    if (modifiers[m].duration <= 0) { modifiers[m].active = false; continue; }
+                }
+                // Per-tick effects
+                if (modifiers[m].type == MOD_DIG_HEAL) {
+                    const UnitStats *s = &UNIT_STATS[units[ui].typeIndex];
+                    units[ui].currentHealth += modifiers[m].value * dt;
+                    if (units[ui].currentHealth > s->health) units[ui].currentHealth = s->health;
+                }
+            }
+
+            // === STEP 2: Update projectiles ===
+            for (int p = 0; p < MAX_PROJECTILES; p++) {
+                if (!projectiles[p].active) continue;
+                int ti = projectiles[p].targetIndex;
+                // Target gone?
+                if (ti < 0 || ti >= unitCount || !units[ti].active) {
+                    if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
+                        int next = FindChainFrostTarget(units, unitCount, projectiles[p].position,
+                            projectiles[p].sourceTeam, projectiles[p].lastHitUnit, projectiles[p].bounceRange);
+                        if (next >= 0) { projectiles[p].targetIndex = next; continue; }
+                    }
+                    projectiles[p].active = false; continue;
+                }
+                // Move toward target
+                Vector3 tgt = { units[ti].position.x, units[ti].position.y + 3.0f, units[ti].position.z };
+                float pdx = tgt.x - projectiles[p].position.x;
+                float pdy = tgt.y - projectiles[p].position.y;
+                float pdz = tgt.z - projectiles[p].position.z;
+                float pdist = sqrtf(pdx*pdx + pdy*pdy + pdz*pdz);
+                float pstep = projectiles[p].speed * dt;
+
+                if (pdist <= pstep) {
+                    // HIT
+                    if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
+                        units[ti].currentHealth -= projectiles[p].damage;
+                        if (projectiles[p].stunDuration > 0)
+                            AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
+                        if (units[ti].currentHealth <= 0) units[ti].active = false;
+                    }
+                    // Chain Frost bounce
+                    if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
+                        projectiles[p].bouncesRemaining--;
+                        projectiles[p].lastHitUnit = ti;
+                        projectiles[p].position = units[ti].position;
+                        projectiles[p].position.y += 3.0f;
+                        int next = FindChainFrostTarget(units, unitCount, units[ti].position,
+                            projectiles[p].sourceTeam, ti, projectiles[p].bounceRange);
+                        if (next >= 0) projectiles[p].targetIndex = next;
+                        else projectiles[p].active = false;
+                    } else {
+                        projectiles[p].active = false;
+                    }
+                } else {
+                    projectiles[p].position.x += (pdx / pdist) * pstep;
+                    projectiles[p].position.y += (pdy / pdist) * pstep;
+                    projectiles[p].position.z += (pdz / pdist) * pstep;
+                }
+            }
+
+            // === STEP 3: Process each unit ===
             for (int i = 0; i < unitCount; i++)
             {
                 if (!units[i].active) continue;
                 const UnitStats *stats = &UNIT_STATS[units[i].typeIndex];
+                bool stunned = UnitHasModifier(modifiers, i, MOD_STUN);
+
+                // Tick ability cooldowns
+                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                    if (units[i].abilities[a].abilityId < 0) continue;
+                    if (units[i].abilities[a].cooldownRemaining > 0)
+                        units[i].abilities[a].cooldownRemaining -= dt;
+                }
+
+                // Passive triggers (Dig) — even when stunned
+                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                    AbilitySlot *slot = &units[i].abilities[a];
+                    if (slot->abilityId != ABILITY_DIG) continue;
+                    if (slot->triggered || slot->cooldownRemaining > 0) continue;
+                    const AbilityDef *def = &ABILITY_DEFS[ABILITY_DIG];
+                    float threshold = def->values[slot->level][AV_DIG_HP_THRESH];
+                    if (units[i].currentHealth > 0 && units[i].currentHealth <= stats->health * threshold) {
+                        slot->triggered = true;
+                        slot->cooldownRemaining = def->cooldown[slot->level];
+                        float healDur = def->values[slot->level][AV_DIG_HEAL_DUR];
+                        float healPerSec = stats->health / healDur;
+                        AddModifier(modifiers, i, MOD_INVULNERABLE, healDur, 0);
+                        AddModifier(modifiers, i, MOD_DIG_HEAL, healDur, healPerSec);
+                    }
+                }
+
+                if (stunned) continue;
 
                 // Find target
                 int target = FindClosestEnemy(units, unitCount, i);
                 units[i].targetIndex = target;
-                if (target < 0) continue; // no enemies left
+
+                // Active ability casting — one per frame, clockwise rotation
+                bool castThisFrame = false;
+                for (int attempt = 0; attempt < MAX_ABILITIES_PER_UNIT && !castThisFrame; attempt++) {
+                    int slotIdx = ACTIVATION_ORDER[units[i].nextAbilitySlot];
+                    units[i].nextAbilitySlot = (units[i].nextAbilitySlot + 1) % MAX_ABILITIES_PER_UNIT;
+
+                    AbilitySlot *slot = &units[i].abilities[slotIdx];
+                    if (slot->abilityId < 0 || slot->cooldownRemaining > 0) continue;
+                    if (slot->abilityId == ABILITY_DIG) continue; // passive
+
+                    const AbilityDef *def = &ABILITY_DEFS[slot->abilityId];
+
+                    switch (slot->abilityId) {
+                    case ABILITY_MAGIC_MISSILE: {
+                        if (target < 0) break;
+                        float d = DistXZ(units[i].position, units[target].position);
+                        if (d > def->range[slot->level]) break;
+                        SpawnProjectile(projectiles, PROJ_MAGIC_MISSILE,
+                            units[i].position, target, i, units[i].team, slot->level,
+                            def->values[slot->level][AV_MM_PROJ_SPEED],
+                            def->values[slot->level][AV_MM_DAMAGE],
+                            def->values[slot->level][AV_MM_STUN_DUR],
+                            (Color){120, 80, 255, 255});
+                        slot->cooldownRemaining = def->cooldown[slot->level];
+                        castThisFrame = true;
+                    } break;
+                    case ABILITY_VACUUM: {
+                        float radius = def->values[slot->level][AV_VAC_RADIUS];
+                        float stunDur = def->values[slot->level][AV_VAC_STUN_DUR];
+                        bool hitAny = false;
+                        for (int j = 0; j < unitCount; j++) {
+                            if (!units[j].active || units[j].team == units[i].team) continue;
+                            if (UnitHasModifier(modifiers, j, MOD_INVULNERABLE)) continue;
+                            float d = DistXZ(units[i].position, units[j].position);
+                            if (d <= radius) {
+                                units[j].position.x = units[i].position.x;
+                                units[j].position.z = units[i].position.z;
+                                AddModifier(modifiers, j, MOD_STUN, stunDur, 0);
+                                hitAny = true;
+                            }
+                        }
+                        slot->cooldownRemaining = def->cooldown[slot->level];
+                        castThisFrame = true;
+                    } break;
+                    case ABILITY_CHAIN_FROST: {
+                        if (target < 0) break;
+                        float d = DistXZ(units[i].position, units[target].position);
+                        if (d > def->range[slot->level]) break;
+                        SpawnChainFrostProjectile(projectiles,
+                            units[i].position, target, i, units[i].team, slot->level,
+                            def->values[slot->level][AV_CF_PROJ_SPEED],
+                            def->values[slot->level][AV_CF_DAMAGE],
+                            (int)def->values[slot->level][AV_CF_BOUNCES],
+                            def->values[slot->level][AV_CF_BOUNCE_RANGE]);
+                        slot->cooldownRemaining = def->cooldown[slot->level];
+                        castThisFrame = true;
+                    } break;
+                    case ABILITY_BLOOD_RAGE: {
+                        float dur = def->values[slot->level][AV_BR_DURATION];
+                        float ls = def->values[slot->level][AV_BR_LIFESTEAL];
+                        AddModifier(modifiers, i, MOD_LIFESTEAL, dur, ls);
+                        slot->cooldownRemaining = def->cooldown[slot->level];
+                        castThisFrame = true;
+                    } break;
+                    }
+                }
+
+                // Movement + basic attack
+                if (target < 0) continue;
+                float moveSpeed = stats->movementSpeed;
+                float speedMult = GetModifierValue(modifiers, i, MOD_SPEED_MULT);
+                if (speedMult > 0) moveSpeed *= speedMult;
 
                 float dist = DistXZ(units[i].position, units[target].position);
-
                 if (dist > ATTACK_RANGE)
                 {
-                    // Move toward target
                     float dx = units[target].position.x - units[i].position.x;
                     float dz = units[target].position.z - units[i].position.z;
                     float len = sqrtf(dx*dx + dz*dz);
-                    if (len > 0.001f)
-                    {
-                        dx /= len;
-                        dz /= len;
-                        units[i].position.x += dx * stats->movementSpeed * dt;
-                        units[i].position.z += dz * stats->movementSpeed * dt;
+                    if (len > 0.001f) {
+                        units[i].position.x += (dx/len) * moveSpeed * dt;
+                        units[i].position.z += (dz/len) * moveSpeed * dt;
                     }
                 }
                 else
                 {
-                    // In range — attack on cooldown
                     units[i].attackCooldown -= dt;
                     if (units[i].attackCooldown <= 0.0f)
                     {
-                        units[target].currentHealth -= stats->attackDamage;
-                        units[i].attackCooldown = stats->attackSpeed;
-
-                        // Kill check
-                        if (units[target].currentHealth <= 0.0f)
-                        {
-                            units[target].active = false;
+                        if (!UnitHasModifier(modifiers, target, MOD_INVULNERABLE)) {
+                            float dmg = stats->attackDamage;
+                            float armor = GetModifierValue(modifiers, target, MOD_ARMOR);
+                            dmg -= armor;
+                            if (dmg < 0) dmg = 0;
+                            units[target].currentHealth -= dmg;
+                            // Lifesteal
+                            float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
+                            if (ls > 0) {
+                                units[i].currentHealth += dmg * ls;
+                                if (units[i].currentHealth > stats->health)
+                                    units[i].currentHealth = stats->health;
+                            }
+                            if (units[target].currentHealth <= 0) units[target].active = false;
                         }
+                        units[i].attackCooldown = stats->attackSpeed;
                     }
                 }
             }
 
             // Smooth Y toward ground during combat
-            for (int i = 0; i < unitCount; i++)
-            {
+            for (int i = 0; i < unitCount; i++) {
                 if (!units[i].active) continue;
                 units[i].position.y += (0.0f - units[i].position.y) * 0.1f;
             }
@@ -523,15 +1248,13 @@ int main(void)
             // Check round end
             int ba, ra;
             CountTeams(units, unitCount, &ba, &ra);
-            if (ba == 0 || ra == 0)
-            {
+            if (ba == 0 || ra == 0) {
                 if (ba > 0) { blueWins++; roundResultText = "BLUE WINS THE ROUND!"; }
                 else if (ra > 0) { redWins++; roundResultText = "RED WINS THE ROUND!"; }
                 else { roundResultText = "DRAW — NO SURVIVORS!"; }
-
                 currentRound++;
                 phase = PHASE_ROUND_OVER;
-                roundOverTimer = 2.5f; // seconds to show result
+                roundOverTimer = 2.5f;
             }
         }
         //------------------------------------------------------------------------------
@@ -550,6 +1273,18 @@ int main(void)
                 {
                     // Restore units to pre-round positions & full HP
                     RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
+                    // Reset transient ability state
+                    for (int i = 0; i < unitCount; i++) {
+                        units[i].nextAbilitySlot = 0;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            units[i].abilities[a].cooldownRemaining = 0;
+                            units[i].abilities[a].triggered = false;
+                        }
+                    }
+                    ClearAllModifiers(modifiers);
+                    ClearAllProjectiles(projectiles);
+                    playerGold += goldPerRound;
+                    RollShop(shopSlots, &playerGold, 0); // free roll
                     phase = PHASE_PREP;
                 }
             }
@@ -568,6 +1303,12 @@ int main(void)
                 blueWins = 0;
                 redWins = 0;
                 roundResultText = "";
+                ClearAllModifiers(modifiers);
+                ClearAllProjectiles(projectiles);
+                playerGold = 10;
+                for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
+                RollShop(shopSlots, &playerGold, 0);
+                dragState.dragging = false;
                 phase = PHASE_PREP;
             }
         }
@@ -625,6 +1366,12 @@ int main(void)
                     DrawBoundingBox(sb, GREEN);
                 }
             }
+
+            // Draw projectiles
+            for (int p = 0; p < MAX_PROJECTILES; p++) {
+                if (!projectiles[p].active) continue;
+                DrawSphere(projectiles[p].position, 1.5f, projectiles[p].color);
+            }
         EndMode3D();
 
         // --- Floor label: Blue team unit count (projected from 3D floor position) ---
@@ -678,6 +1425,27 @@ int main(void)
             const char *hpT = TextFormat("%.0f/%.0f", units[i].currentHealth, stats->health);
             int htw = MeasureText(hpT, 10);
             DrawText(hpT, (int)sp.x - htw/2, by + bh + 2, 10, DARKGRAY);
+
+            // Modifier labels
+            int modY = by + bh + 14;
+            for (int m = 0; m < MAX_MODIFIERS; m++) {
+                if (!modifiers[m].active || modifiers[m].unitIndex != i) continue;
+                const char *modLabel = NULL;
+                Color modColor = WHITE;
+                switch (modifiers[m].type) {
+                    case MOD_STUN:         modLabel = "STUNNED";   modColor = YELLOW;  break;
+                    case MOD_INVULNERABLE: modLabel = "INVULN";    modColor = SKYBLUE; break;
+                    case MOD_LIFESTEAL:    modLabel = "LIFESTEAL"; modColor = RED;     break;
+                    case MOD_SPEED_MULT:   modLabel = "SPEED";     modColor = GREEN;   break;
+                    case MOD_ARMOR:        modLabel = "ARMOR";     modColor = GRAY;    break;
+                    case MOD_DIG_HEAL:     modLabel = "DIGGING";   modColor = BROWN;   break;
+                }
+                if (modLabel) {
+                    int mlw = MeasureText(modLabel, 9);
+                    DrawText(modLabel, (int)sp.x - mlw/2, modY, 9, modColor);
+                    modY += 10;
+                }
+            }
         }
 
         // ── Spawn buttons + Play — only during prep ──
@@ -873,20 +1641,51 @@ int main(void)
                         int ax = abilStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
                         int ay = abilStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
 
-                        DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE,
-                                     HUD_ABILITY_SLOT_SIZE, (Color){ 40, 40, 55, 255 });
-                        DrawRectangleLines(ax, ay, HUD_ABILITY_SLOT_SIZE,
-                                          HUD_ABILITY_SLOT_SIZE, (Color){ 90, 90, 110, 255 });
-
-                        // Placeholder "?" in empty slots
-                        if (units[ui].abilities[a].abilityId < 0)
-                        {
+                        AbilitySlot *aslot = &units[ui].abilities[a];
+                        if (aslot->abilityId >= 0 && aslot->abilityId < ABILITY_COUNT) {
+                            // Filled slot — colored background
+                            DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
+                                         ABILITY_COLORS[aslot->abilityId]);
+                            // Abbreviation
+                            const char *abbr = ABILITY_ABBREV[aslot->abilityId];
+                            int aw2 = MeasureText(abbr, 11);
+                            DrawText(abbr, ax + (HUD_ABILITY_SLOT_SIZE - aw2) / 2,
+                                    ay + (HUD_ABILITY_SLOT_SIZE - 11) / 2, 11, WHITE);
+                            // Level indicator (bottom-left)
+                            const char *lvl = TextFormat("L%d", aslot->level + 1);
+                            DrawText(lvl, ax + 2, ay + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
+                            // Cooldown overlay (combat only)
+                            if (aslot->cooldownRemaining > 0 && phase == PHASE_COMBAT) {
+                                const AbilityDef *adef = &ABILITY_DEFS[aslot->abilityId];
+                                float cdFrac = aslot->cooldownRemaining / adef->cooldown[aslot->level];
+                                if (cdFrac > 1) cdFrac = 1;
+                                int overlayH = (int)(HUD_ABILITY_SLOT_SIZE * cdFrac);
+                                DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, overlayH, (Color){0,0,0,150});
+                                const char *cdTxt = TextFormat("%.0f", aslot->cooldownRemaining);
+                                int cdw = MeasureText(cdTxt, 12);
+                                DrawText(cdTxt, ax + (HUD_ABILITY_SLOT_SIZE - cdw)/2,
+                                        ay + (HUD_ABILITY_SLOT_SIZE - 12)/2, 12, WHITE);
+                            }
+                        } else {
+                            // Empty slot
+                            DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
+                                         (Color){ 40, 40, 55, 255 });
                             const char *q = "?";
                             int qw = MeasureText(q, 16);
                             DrawText(q, ax + (HUD_ABILITY_SLOT_SIZE - qw) / 2,
-                                    ay + (HUD_ABILITY_SLOT_SIZE - 16) / 2,
-                                    16, (Color){ 80, 80, 100, 255 });
+                                    ay + (HUD_ABILITY_SLOT_SIZE - 16) / 2, 16, (Color){ 80, 80, 100, 255 });
                         }
+                        DrawRectangleLines(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
+                                          (Color){ 90, 90, 110, 255 });
+                        // Activation order number (top-right corner)
+                        // Find which activation position this slot is
+                        int orderNum = 0;
+                        for (int o = 0; o < MAX_ABILITIES_PER_UNIT; o++)
+                            if (ACTIVATION_ORDER[o] == a) { orderNum = o + 1; break; }
+                        Color orderCol = (Color){100,100,120,255};
+                        if (phase == PHASE_COMBAT && ACTIVATION_ORDER[units[ui].nextAbilitySlot] == a)
+                            orderCol = YELLOW;
+                        DrawText(TextFormat("%d", orderNum), ax + HUD_ABILITY_SLOT_SIZE - 8, ay + 1, 8, orderCol);
                     }
                 }
                 else
@@ -901,6 +1700,42 @@ int main(void)
                 }
             }
 
+            // --- Inventory (left of unit cards) ---
+            {
+                int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP)) - 20;
+                int invStartY = cardsY + 15;
+                DrawText("INV", invStartX, invStartY - 14, 10, (Color){160,160,180,255});
+                for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
+                    int icol = inv % HUD_INVENTORY_COLS;
+                    int irow = inv / HUD_INVENTORY_COLS;
+                    int ix = invStartX + icol * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                    int iy = invStartY + irow * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                    DrawRectangle(ix, iy, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE, (Color){40,40,55,255});
+                    DrawRectangleLines(ix, iy, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE, (Color){90,90,110,255});
+                    if (inventory[inv].abilityId >= 0 && inventory[inv].abilityId < ABILITY_COUNT) {
+                        DrawRectangle(ix+1, iy+1, HUD_ABILITY_SLOT_SIZE-2, HUD_ABILITY_SLOT_SIZE-2,
+                                      ABILITY_COLORS[inventory[inv].abilityId]);
+                        const char *iabbr = ABILITY_ABBREV[inventory[inv].abilityId];
+                        int iaw = MeasureText(iabbr, 11);
+                        DrawText(iabbr, ix + (HUD_ABILITY_SLOT_SIZE-iaw)/2,
+                                 iy + (HUD_ABILITY_SLOT_SIZE-11)/2, 11, WHITE);
+                        const char *ilvl = TextFormat("L%d", inventory[inv].level + 1);
+                        DrawText(ilvl, ix + 2, iy + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
+                    }
+                }
+            }
+
+            // --- Drag ghost ---
+            if (dragState.dragging && dragState.abilityId >= 0 && dragState.abilityId < ABILITY_COUNT) {
+                Vector2 dmouse = GetMousePosition();
+                DrawRectangle((int)dmouse.x - 16, (int)dmouse.y - 16, 32, 32,
+                              ABILITY_COLORS[dragState.abilityId]);
+                DrawRectangleLines((int)dmouse.x - 16, (int)dmouse.y - 16, 32, 32, WHITE);
+                const char *dabbr = ABILITY_ABBREV[dragState.abilityId];
+                int daw = MeasureText(dabbr, 11);
+                DrawText(dabbr, (int)dmouse.x - daw/2, (int)dmouse.y - 5, 11, WHITE);
+            }
+
             // --- Shop panel (only during PREP, above unit bar) ---
             if (phase == PHASE_PREP)
             {
@@ -909,20 +1744,21 @@ int main(void)
                 DrawRectangle(0, shopY, hudSw, shopH, (Color){ 20, 20, 28, 240 });
                 DrawRectangle(0, shopY + shopH - 1, hudSw, 1, (Color){ 60, 60, 80, 255 });
 
-                // ROLL button (left)
+                // ROLL button (left) — show cost
                 Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
-                Color rollColor = (Color){ 180, 140, 40, 255 };
-                if (CheckCollisionPointRec(GetMousePosition(), rollBtn))
+                bool canRoll = (playerGold >= rollCost);
+                Color rollColor = canRoll ? (Color){ 180, 140, 40, 255 } : (Color){ 80, 70, 40, 255 };
+                if (canRoll && CheckCollisionPointRec(GetMousePosition(), rollBtn))
                     rollColor = (Color){ 220, 180, 60, 255 };
                 DrawRectangleRec(rollBtn, rollColor);
                 DrawRectangleLinesEx(rollBtn, 2, (Color){ 120, 90, 20, 255 });
-                const char *rollText = "ROLL";
-                int rollW = MeasureText(rollText, 16);
+                const char *rollText = TextFormat("ROLL %dg", rollCost);
+                int rollW = MeasureText(rollText, 14);
                 DrawText(rollText, (int)(rollBtn.x + (80 - rollW) / 2),
-                        (int)(rollBtn.y + (30 - 16) / 2), 16, WHITE);
+                        (int)(rollBtn.y + (30 - 14) / 2), 14, WHITE);
 
-                // Placeholder ability cards in shop (3 slots, centered)
-                int shopCardW = 100;
+                // Shop ability cards (3 slots, centered)
+                int shopCardW = 120;
                 int shopCardH = 34;
                 int shopCardGap = 10;
                 int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
@@ -931,16 +1767,29 @@ int main(void)
                 {
                     int scx = shopCardsX + s * (shopCardW + shopCardGap);
                     int scy = shopY + 8;
-                    DrawRectangle(scx, scy, shopCardW, shopCardH, (Color){ 50, 50, 65, 255 });
-                    DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){ 90, 90, 110, 255 });
-                    const char *placeholder = "???";
-                    int pw = MeasureText(placeholder, 14);
-                    DrawText(placeholder, scx + (shopCardW - pw) / 2,
-                            scy + (shopCardH - 14) / 2, 14, (Color){ 100, 100, 120, 255 });
+                    if (shopSlots[s].abilityId >= 0 && shopSlots[s].abilityId < ABILITY_COUNT) {
+                        const AbilityDef *sdef = &ABILITY_DEFS[shopSlots[s].abilityId];
+                        bool canAfford = (playerGold >= sdef->goldCost);
+                        Color cardBg = canAfford ? ABILITY_COLORS[shopSlots[s].abilityId] : (Color){50,50,65,255};
+                        if (canAfford && CheckCollisionPointRec(GetMousePosition(),
+                            (Rectangle){(float)scx,(float)scy,(float)shopCardW,(float)shopCardH}))
+                            cardBg = (Color){ cardBg.r + 30, cardBg.g + 30, cardBg.b + 30, 255 };
+                        DrawRectangle(scx, scy, shopCardW, shopCardH, cardBg);
+                        DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){90,90,110,255});
+                        const char *sname = TextFormat("%s %dg", sdef->name, sdef->goldCost);
+                        int snw = MeasureText(sname, 12);
+                        DrawText(sname, scx + (shopCardW - snw)/2, scy + (shopCardH - 12)/2, 12,
+                                canAfford ? WHITE : (Color){100,100,120,255});
+                    } else {
+                        DrawRectangle(scx, scy, shopCardW, shopCardH, (Color){35,35,45,255});
+                        DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){60,60,80,255});
+                        DrawText("SOLD", scx + (shopCardW - MeasureText("SOLD",12))/2,
+                                scy + (shopCardH - 12)/2, 12, (Color){60,60,80,255});
+                    }
                 }
 
                 // Gold display (right side)
-                const char *goldText = TextFormat("Gold: %d", 10);
+                const char *goldText = TextFormat("Gold: %d", playerGold);
                 int gw = MeasureText(goldText, 18);
                 DrawText(goldText, hudSw - gw - 20, shopY + 16, 18, (Color){ 240, 200, 60, 255 });
             }
