@@ -61,6 +61,8 @@ int main(void)
 
     bool selected = false;          // Selected object flag
 
+    Vector2 mushroomScreenPosition = { 0.0f, 0.0f };
+
     SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
     //--------------------------------------------------------------------------------------
 
@@ -70,6 +72,8 @@ int main(void)
         // Update
         //----------------------------------------------------------------------------------
         UpdateCamera(&camera, CAMERA_ORBITAL);
+
+        mushroomScreenPosition = GetWorldToScreen((Vector3){position.x, position.y + (bounds.max.y * 0.1f) + 1.0f, position.z}, camera);
 
         // Load new models/textures on drag&drop
         if (IsFileDropped())
@@ -125,13 +129,15 @@ int main(void)
 
             BeginMode3D(camera);
 
-                DrawModel(model, position, 1.0f, WHITE);        // Draw 3d model with texture
+                DrawModel(model, position, 0.1f, WHITE);        // Draw 3d model with texture
 
                 DrawGrid(20, 10.0f);         // Draw a grid
 
                 if (selected) DrawBoundingBox(bounds, GREEN);   // Draw selection box
 
             EndMode3D();
+
+            DrawText("Mushroom man", (int)mushroomScreenPosition.x - MeasureText("Mushroom man", 20)/2, (int)mushroomScreenPosition.y, 20, BLACK);
 
             DrawText("Drag & drop model to load mesh/texture.", 10, GetScreenHeight() - 20, 10, DARKGRAY);
             if (selected) DrawText("MODEL SELECTED", GetScreenWidth() - 110, 10, 10, GREEN);
