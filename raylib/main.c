@@ -482,7 +482,9 @@ int main(void)
     {
         float dt = GetFrameTime();
         UpdateMusicStream(bgm);
-        if (!IsMusicStreamPlaying(bgm)) { PlayMusicStream(bgm); SeekMusicStream(bgm, 29.091f); }
+        if (IsMusicStreamPlaying(bgm) && GetMusicTimePlayed(bgm) >= GetMusicTimeLength(bgm) - 0.05f) {
+            SeekMusicStream(bgm, 29.091f);
+        }
         GamePhase prevPhase = phase;
         UpdateShake(&shake, dt);
         if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
@@ -2357,6 +2359,7 @@ int main(void)
                 PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
                 plazaState = PLAZA_ROAMING;
                 phase = PHASE_PLAZA;
+                PlayMusicStream(bgm);
             }
 
             // Solo: existing game over logic
@@ -2418,6 +2421,7 @@ int main(void)
                     PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
                     plazaState = PLAZA_ROAMING;
                     phase = PHASE_PLAZA;
+                    PlayMusicStream(bgm);
                 }
             }
 
@@ -2445,6 +2449,7 @@ int main(void)
                 PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
                 plazaState = PLAZA_ROAMING;
                 phase = PHASE_PLAZA;
+                PlayMusicStream(bgm);
             }
         }
 
@@ -2494,6 +2499,7 @@ int main(void)
         // WIN/LOSS SFX
         //==============================================================================
         if (phase != prevPhase && phase == PHASE_GAME_OVER) {
+            StopMusicStream(bgm);
             StopSound(sfxWin);
             StopSound(sfxLoss);
             PlaySound(lastOutcomeWin ? sfxWin : sfxLoss);
