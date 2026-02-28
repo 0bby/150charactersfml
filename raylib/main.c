@@ -494,6 +494,10 @@ int main(void)
                     units[si].currentAnim = ANIM_IDLE;
                     units[si].animFrame = 0;
                     statueSpawn.phase = SSPAWN_INACTIVE;
+                    // Trigger plaza scared on impact
+                    if (phase == PHASE_PLAZA && plazaState == PLAZA_ROAMING) {
+                        PlazaTriggerScared(units, unitCount, plazaData, &plazaState, &plazaTimer);
+                    }
                 }
             }
         }
@@ -564,10 +568,6 @@ int main(void)
                             nfcReader, nfcCode, unitTypes[nfcTypeIndex].name);
                         intro = (UnitIntro){ .active = true, .timer = 0.0f,
                             .typeIndex = nfcTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
-                        // Trigger plaza scared if we're in plaza mode
-                        if (phase == PHASE_PLAZA && plazaState == PLAZA_ROAMING) {
-                            PlazaTriggerScared(units, unitCount, plazaData, &plazaState, &plazaTimer);
-                        }
                     } else {
                         printf("[NFC] Reader %d: '%s' -> Blue team full or unknown type\n", nfcReader, nfcCode);
                     }
@@ -764,10 +764,8 @@ int main(void)
                             // Place on blue side
                             units[unitCount-1].position.x = (float)GetRandomValue(-50, 50);
                             units[unitCount-1].position.z = (float)GetRandomValue(10, 80);
-                            // Trigger scared
-                            if (plazaState == PLAZA_ROAMING) {
-                                PlazaTriggerScared(units, unitCount, plazaData, &plazaState, &plazaTimer);
-                            }
+                            intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                .typeIndex = i, .unitIndex = unitCount - 1, .animFrame = 0 };
                         }
                         break;
                     }
