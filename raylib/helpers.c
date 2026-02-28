@@ -2,6 +2,7 @@
 #include "helpers.h"
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
 
 //------------------------------------------------------------------------------------
 // Unit Utilities
@@ -943,4 +944,109 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
             }
         }
     }
+}
+
+//------------------------------------------------------------------------------------
+// NFC Unit Code Parse / Format
+//------------------------------------------------------------------------------------
+
+// Look up ability ID by 2-char abbreviation, returns -1 if not found
+static int LookupAbilityAbbrev(const char *abbrev)
+{
+    for (int i = 0; i < ABILITY_COUNT; i++) {
+        if (ABILITY_DEFS[i].abbrev[0] == abbrev[0] && ABILITY_DEFS[i].abbrev[1] == abbrev[1])
+            return i;
+    }
+    return -1;
+}
+
+// Parse a unit code string into type index and abilities.
+// Format: {type_digit}{slot1}{slot2}{slot3}{slot4}
+// Each slot is 3 chars (abbrev + level 1-3) or 2 chars "XX" (empty).
+// Single-digit input = legacy format (type with no abilities).
+// Returns true on success.
+bool ParseUnitCode(const char *code, int *outTypeIndex, AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT])
+{
+    if (!code || !code[0]) {
+        fprintf(stderr, "[ParseUnitCode] Empty input\n");
+        return false;
+    }
+
+    // Initialize abilities to empty
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+        outAbilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
+            .cooldownRemaining = 0, .triggered = false };
+    }
+
+    // Type digit
+    if (code[0] < '0' || code[0] > '5') {
+        fprintf(stderr, "[ParseUnitCode] Invalid type digit '%c'\n", code[0]);
+        return false;
+    }
+    *outTypeIndex = code[0] - '0';
+
+    // Legacy format: single digit = type with no abilities
+    if (code[1] == '\0') return true;
+
+    // Parse 4 ability slots
+    const char *p = code + 1;
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+        if (*p == '\0') break;  // fewer than 4 slots is OK
+
+        // Check for empty slot "XX"
+        if (p[0] == 'X' && p[1] == 'X') {
+            p += 2;
+            continue;
+        }
+
+        // Need at least 3 chars: 2-char abbrev + 1-digit level
+        if (!p[0] || !p[1] || !p[2]) {
+            fprintf(stderr, "[ParseUnitCode] Truncated ability at slot %d\n", a);
+            return false;
+        }
+
+        char abbrev[3] = { p[0], p[1], '\0' };
+        int abilityId = LookupAbilityAbbrev(abbrev);
+        if (abilityId < 0) {
+            fprintf(stderr, "[ParseUnitCode] Unknown ability '%s' at slot %d\n", abbrev, a);
+            return false;
+        }
+
+        int level = p[2] - '0';
+        if (level < 1 || level > 3) {
+            fprintf(stderr, "[ParseUnitCode] Invalid level '%c' at slot %d\n", p[2], a);
+            return false;
+        }
+
+        outAbilities[a].abilityId = abilityId;
+        outAbilities[a].level = level - 1;  // displayed 1-3, stored 0-2
+        p += 3;
+    }
+
+    return true;
+}
+
+// Format a unit's type and abilities into a unit code string.
+// Returns the number of characters written (excluding null terminator).
+// buf must be at least 14 bytes.
+int FormatUnitCode(int typeIndex, const AbilitySlot abilities[MAX_ABILITIES_PER_UNIT], char *buf, int bufSize)
+{
+    if (bufSize < 14) { buf[0] = '\0'; return 0; }
+
+    int pos = 0;
+    buf[pos++] = '0' + (typeIndex % 6);
+
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+        if (abilities[a].abilityId >= 0 && abilities[a].abilityId < ABILITY_COUNT) {
+            const char *abbrev = ABILITY_DEFS[abilities[a].abilityId].abbrev;
+            buf[pos++] = abbrev[0];
+            buf[pos++] = abbrev[1];
+            buf[pos++] = '1' + abilities[a].level;  // stored 0-2, displayed 1-3
+        } else {
+            buf[pos++] = 'X';
+            buf[pos++] = 'X';
+        }
+    }
+    buf[pos] = '\0';
+    return pos;
 }

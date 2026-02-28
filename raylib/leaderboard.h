@@ -1,10 +1,12 @@
 #pragma once
 #include "game.h"
+#include "helpers.h"
 
 #define MAX_LEADERBOARD_ENTRIES 50
-#define LEADERBOARD_FILE "leaderboard.dat"
-#define LEADERBOARD_MAGIC 0x4C445242  // "LDRB"
-#define LEADERBOARD_VERSION 1
+#define LEADERBOARD_FILE "leaderboard.json"
+#define LEADERBOARD_FILE_LEGACY "leaderboard.dat"
+#define LEADERBOARD_MAGIC_LEGACY 0x4C445242  // "LDRB" (for migration)
+#define LEADERBOARD_VERSION 2
 
 typedef struct {
     int abilityId;  // -1 = empty

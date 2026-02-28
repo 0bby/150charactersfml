@@ -203,12 +203,18 @@ int main(void)
     bool showLeaderboard = false;
     int leaderboardScroll = 0;
     int lastMilestoneRound = 0;
-    bool milestoneSelection[BLUE_TEAM_MAX_SIZE] = {0};
     bool blueLostLastRound = false;
     bool deathPenalty = false;
     char playerName[32] = "Player";
     int playerNameLen = 6;
     bool nameInputActive = false;
+
+    // NFC emulation input
+    char nfcInputBuf[32] = "";
+    int nfcInputLen = 0;
+    bool nfcInputActive = false;
+    char nfcInputError[64] = "";
+    float nfcInputErrorTimer = 0.0f;
 
     // UI button sizes (positions computed each frame for resize support)
     const int btnWidth = 150;
@@ -285,24 +291,21 @@ int main(void)
             char nfcBuf[64];
             if (fgets(nfcBuf, sizeof(nfcBuf), nfcPipe)) {
                 nfcBuf[strcspn(nfcBuf, "\r\n")] = '\0';
-                if (strcmp(nfcBuf, "0") == 0) {
-                    if (SpawnUnit(units, &unitCount, 1, TEAM_BLUE)) {
-                        printf("[NFC] Tag '0' -> Spawning Goblin (Blue)\n");
+                int nfcTypeIndex;
+                AbilitySlot nfcAbilities[MAX_ABILITIES_PER_UNIT];
+                if (ParseUnitCode(nfcBuf, &nfcTypeIndex, nfcAbilities)) {
+                    if (nfcTypeIndex < unitTypeCount && SpawnUnit(units, &unitCount, nfcTypeIndex, TEAM_BLUE)) {
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+                            units[unitCount - 1].abilities[a] = nfcAbilities[a];
+                        printf("[NFC] Tag '%s' -> Spawning %s (Blue)\n", nfcBuf, unitTypes[nfcTypeIndex].name);
                         intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                            .typeIndex = 1, .unitIndex = unitCount - 1, .animFrame = 0 };
+                            .typeIndex = nfcTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
                         TriggerShake(&shake, 8.0f, 0.4f);
-                    } else
-                        printf("[NFC] Tag '0' -> Blue team full (%d/%d)\n", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
-                } else if (strcmp(nfcBuf, "1") == 0) {
-                    if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE)) {
-                        printf("[NFC] Tag '1' -> Spawning Mushroom (Blue)\n");
-                        intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                            .typeIndex = 0, .unitIndex = unitCount - 1, .animFrame = 0 };
-                        TriggerShake(&shake, 8.0f, 0.4f);
-                    } else
-                        printf("[NFC] Tag '1' -> Blue team full (%d/%d)\n", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
+                    } else {
+                        printf("[NFC] Tag '%s' -> Blue team full or unknown type\n", nfcBuf);
+                    }
                 } else {
-                    printf("[NFC] Unknown payload: '%s'\n", nfcBuf);
+                    printf("[NFC] Invalid unit code: '%s'\n", nfcBuf);
                 }
             }
         }
@@ -403,6 +406,59 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_PREP)
         {
+            // NFC input error timer countdown
+            if (nfcInputErrorTimer > 0.0f) {
+                nfcInputErrorTimer -= dt;
+                if (nfcInputErrorTimer <= 0.0f) nfcInputError[0] = '\0';
+            }
+
+            // NFC emulation text input handling
+            if (nfcInputActive && !intro.active) {
+                int key = GetCharPressed();
+                while (key > 0) {
+                    // Uppercase the character
+                    if (key >= 'a' && key <= 'z') key = key - 'a' + 'A';
+                    if (((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9')) && nfcInputLen < 13) {
+                        nfcInputBuf[nfcInputLen] = (char)key;
+                        nfcInputLen++;
+                        nfcInputBuf[nfcInputLen] = '\0';
+                    }
+                    key = GetCharPressed();
+                }
+                if (IsKeyPressed(KEY_BACKSPACE) && nfcInputLen > 0) {
+                    nfcInputLen--;
+                    nfcInputBuf[nfcInputLen] = '\0';
+                }
+                if (IsKeyPressed(KEY_ESCAPE)) {
+                    nfcInputActive = false;
+                }
+                if (IsKeyPressed(KEY_ENTER) && nfcInputLen > 0) {
+                    int emTypeIndex;
+                    AbilitySlot emAbilities[MAX_ABILITIES_PER_UNIT];
+                    if (ParseUnitCode(nfcInputBuf, &emTypeIndex, emAbilities)) {
+                        if (emTypeIndex >= unitTypeCount) {
+                            snprintf(nfcInputError, sizeof(nfcInputError), "Unknown unit type %d", emTypeIndex);
+                            nfcInputErrorTimer = 2.0f;
+                        } else if (!SpawnUnit(units, &unitCount, emTypeIndex, TEAM_BLUE)) {
+                            snprintf(nfcInputError, sizeof(nfcInputError), "Team full (%d/%d)", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
+                            nfcInputErrorTimer = 2.0f;
+                        } else {
+                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+                                units[unitCount - 1].abilities[a] = emAbilities[a];
+                            intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                .typeIndex = emTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
+                            TriggerShake(&shake, 8.0f, 0.4f);
+                            nfcInputBuf[0] = '\0';
+                            nfcInputLen = 0;
+                            nfcInputActive = false;
+                        }
+                    } else {
+                        snprintf(nfcInputError, sizeof(nfcInputError), "Bad format: %s", nfcInputBuf);
+                        nfcInputErrorTimer = 2.0f;
+                    }
+                }
+            }
+
             // Smooth Y lift
             for (int i = 0; i < unitCount; i++)
             {
@@ -455,6 +511,20 @@ int main(void)
                 int btnYStart = hudTop - (unitTypeCount * (btnHeight + btnMargin)) - btnMargin;
                 Rectangle playBtn = { (float)(sw/2 - playBtnW/2), (float)(hudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 bool clickedButton = false;
+
+                // NFC input box click check
+                {
+                    int nfcBoxW = 200, nfcBoxH = 28;
+                    int nfcBoxX = sw/2 - nfcBoxW/2;
+                    int nfcBoxY = btnYStart - 55;
+                    Rectangle nfcRect = { (float)nfcBoxX, (float)nfcBoxY, (float)nfcBoxW, (float)nfcBoxH };
+                    if (CheckCollisionPointRec(mouse, nfcRect)) {
+                        nfcInputActive = true;
+                        clickedButton = true;
+                    } else if (nfcInputActive) {
+                        nfcInputActive = false;
+                    }
+                }
 
                 // Confirm removal popup (takes priority over everything)
                 if (removeConfirmUnit >= 0) {
@@ -1150,7 +1220,6 @@ int main(void)
                     phase = PHASE_GAME_OVER;
                 } else if (currentRound > 0 && currentRound % 5 == 0) {
                     // Milestone reached — go to selection screen
-                    for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) milestoneSelection[i] = false;
                     // Restore blue units for milestone screen
                     RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
                     for (int i = 0; i < unitCount; i++) {
@@ -1208,7 +1277,7 @@ int main(void)
                 int totalW = msCount * cardW + (msCount > 1 ? (msCount - 1) * cardGap : 0);
                 int startX = (sw - totalW) / 2;
                 int cardY = sh / 2 - cardH / 2 - 20;
-                (void)startX; (void)cardY; // used only for button positioning
+                (void)totalW; (void)startX; // positioning computed for drawing code below
 
                 // Buttons (two: SET IN STONE, CONTINUE)
                 int btnW = 180, btnH = 44;
@@ -1733,6 +1802,48 @@ int main(void)
                 DrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, 16, WHITE);
             }
 
+            // NFC emulation input box
+            {
+                int nfcBoxW = 200, nfcBoxH = 28;
+                int nfcBoxX = sw/2 - nfcBoxW/2;
+                int nfcBoxY = dBtnYStart - 55;
+                int labelW = MeasureText("NFC Code:", 14);
+
+                // Label
+                DrawText("NFC Code:", nfcBoxX - labelW - 8, nfcBoxY + 6, 14, (Color){180,180,200,255});
+
+                // Input field background
+                Color boxBg = nfcInputActive ? (Color){50,50,70,255} : (Color){30,30,45,255};
+                Color boxBorder = nfcInputActive ? (Color){100,140,255,255} : (Color){70,70,90,255};
+                DrawRectangle(nfcBoxX, nfcBoxY, nfcBoxW, nfcBoxH, boxBg);
+                DrawRectangleLinesEx((Rectangle){(float)nfcBoxX,(float)nfcBoxY,(float)nfcBoxW,(float)nfcBoxH}, 1, boxBorder);
+
+                // Text content or placeholder
+                if (nfcInputLen > 0) {
+                    DrawText(nfcInputBuf, nfcBoxX + 6, nfcBoxY + 6, 14, WHITE);
+                    // Blinking cursor when active
+                    if (nfcInputActive && ((int)(GetTime() * 2.0) % 2 == 0)) {
+                        int tw = MeasureText(nfcInputBuf, 14);
+                        DrawText("|", nfcBoxX + 6 + tw, nfcBoxY + 5, 14, (Color){200,200,255,255});
+                    }
+                } else {
+                    if (nfcInputActive) {
+                        // Blinking cursor
+                        if ((int)(GetTime() * 2.0) % 2 == 0)
+                            DrawText("|", nfcBoxX + 6, nfcBoxY + 5, 14, (Color){200,200,255,255});
+                    } else {
+                        DrawText("e.g. 1MM1DG2XXCF3", nfcBoxX + 6, nfcBoxY + 6, 12, (Color){100,100,120,255});
+                    }
+                }
+
+                // Error message below
+                if (nfcInputErrorTimer > 0.0f) {
+                    float alpha = nfcInputErrorTimer > 1.0f ? 1.0f : nfcInputErrorTimer;
+                    Color errColor = { 255, 80, 80, (unsigned char)(255 * alpha) };
+                    DrawText(nfcInputError, nfcBoxX, nfcBoxY + nfcBoxH + 4, 12, errColor);
+                }
+            }
+
             // Danger zone indicator (pushing past a milestone)
             if (lastMilestoneRound > 0) {
                 const char *dangerText = "DANGER ZONE - Losing means permanent death!";
@@ -1795,22 +1906,14 @@ int main(void)
                     DrawText(deathMsg, sw/2 - dw/2, sh/2 - 50, 30, RED);
 
                     const char *deathSub = "Defeated! Your units are lost forever!";
-                    int dsw = MeasureText(deathSub, 18);
-                    DrawText(deathSub, sw/2 - dsw/2, sh/2 - 10, 18, (Color){255,100,100,255});
-                } else {
-                    const char *winner = (blueWins > redWins) ? "BLUE TEAM WINS!" :
-                                         (redWins > blueWins) ? "RED TEAM WINS!" : "GAME OVER";
-                    int ww = MeasureText(winner, 36);
-                    DrawText(winner, sw/2 - ww/2, sh/2 - 50, 36,
-                             (blueWins > redWins) ? DARKBLUE : (redWins > blueWins) ? MAROON : DARKGRAY);
+                    int dsw2 = MeasureText(deathSub, 18);
+                    DrawText(deathSub, sw/2 - dsw2/2, sh/2 - 10, 18, (Color){255,100,100,255});
 
-                    const char *roundInfo = TextFormat("Reached Wave %d  |  Score: %d - %d", currentRound, blueWins, redWins);
-                    int riw = MeasureText(roundInfo, 18);
-                    DrawText(roundInfo, sw/2 - riw/2, sh/2 - 10, 18, WHITE);
+                    const char *restartMsg = "Press R to return to menu";
+                    int rw2 = MeasureText(restartMsg, 20);
+                    DrawText(restartMsg, sw/2 - rw2/2, sh/2 + 30, 20, GRAY);
                 }
-                const char *restartMsg = "Press R to return to menu";
-                int rw = MeasureText(restartMsg, 20);
-                DrawText(restartMsg, sw/2 - rw/2, sh/2 + 30, 20, GRAY);
+                // Non-death game over is drawn as a full overlay below
             }
         }
 
@@ -2423,6 +2526,20 @@ int main(void)
                                 DrawRectangle(ax, ay, miniSize, miniSize, (Color){40,40,55,255});
                             }
                         }
+                        // Unit code string below grid
+                        {
+                            char ucBuf[16];
+                            AbilitySlot ucSlots[MAX_ABILITIES_PER_UNIT];
+                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                ucSlots[a] = (AbilitySlot){
+                                    .abilityId = su->abilities[a].abilityId,
+                                    .level = su->abilities[a].level,
+                                    .cooldownRemaining = 0, .triggered = false
+                                };
+                            }
+                            FormatUnitCode(su->typeIndex, ucSlots, ucBuf, sizeof(ucBuf));
+                            DrawText(ucBuf, ux, uy + 2 * (miniSize + miniGap) + 2, 8, (Color){120,120,140,255});
+                        }
                         ux += nameW + 6 + 2 * (miniSize + miniGap) + 12;
                     }
                 }
@@ -2552,6 +2669,137 @@ int main(void)
             const char *riskText = "CONTINUE risks everything - losing past this point means permanent death!";
             int riskW = MeasureText(riskText, 12);
             DrawText(riskText, msw/2 - riskW/2, btnY2 + btnH2 + 26, 12, (Color){255,100,80,200});
+        }
+
+        //==============================================================================
+        // PHASE_GAME_OVER DRAWING — non-death: withdraw units + reset
+        //==============================================================================
+        if (phase == PHASE_GAME_OVER && !deathPenalty)
+        {
+            int gosw = GetScreenWidth();
+            int gosh = GetScreenHeight();
+
+            // Full dark overlay
+            DrawRectangle(0, 0, gosw, gosh, (Color){20,20,30,240});
+
+            // Title
+            const char *goTitle = "SET IN STONE";
+            int gotw = MeasureText(goTitle, 36);
+            DrawText(goTitle, gosw/2 - gotw/2, 40, 36, GOLD);
+
+            const char *goRound = TextFormat("Reached Wave %d  |  Score: %d - %d", currentRound, blueWins, redWins);
+            int gorw = MeasureText(goRound, 18);
+            DrawText(goRound, gosw/2 - gorw/2, 85, 18, WHITE);
+
+            // Collect surviving blue units
+            int goBlue[BLUE_TEAM_MAX_SIZE]; int goCount = 0;
+            for (int i = 0; i < unitCount && goCount < BLUE_TEAM_MAX_SIZE; i++)
+                if (units[i].active && units[i].team == TEAM_BLUE) goBlue[goCount++] = i;
+
+            // Subtitle
+            if (goCount > 0) {
+                const char *goSub = "Withdraw units before resetting (placeholder for NFC export)";
+                int gosub = MeasureText(goSub, 14);
+                DrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){180,180,200,180});
+            } else {
+                const char *goSub = "All units have been set in stone!";
+                int gosub = MeasureText(goSub, 14);
+                DrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){180,180,200,180});
+            }
+
+            // Unit cards with WITHDRAW button
+            int goCardW = 200, goCardH = 140, goCardGap = 20;
+            int goTotalW = goCount * goCardW + (goCount > 1 ? (goCount - 1) * goCardGap : 0);
+            int goStartX = (gosw - goTotalW) / 2;
+            int goCardY = gosh / 2 - 40;
+
+            // Re-render portraits for game-over screen
+            for (int h = 0; h < goCount; h++) {
+                int ui = goBlue[h];
+                UnitType *type = &unitTypes[units[ui].typeIndex];
+                if (!type->loaded) continue;
+                BoundingBox bb = type->baseBounds;
+                float centerY = (bb.min.y + bb.max.y) / 2.0f * type->scale;
+                float extent = (bb.max.y - bb.min.y) * type->scale;
+                portraitCam.target = (Vector3){ 0.0f, centerY, 0.0f };
+                portraitCam.position = (Vector3){ 0.0f, centerY, extent * 2.5f };
+                BeginTextureMode(portraits[h]);
+                    ClearBackground((Color){ 30, 30, 40, 255 });
+                    BeginMode3D(portraitCam);
+                        if (type->hasAnimations && type->animIndex[ANIM_IDLE] >= 0)
+                            UpdateModelAnimation(type->model, type->idleAnims[type->animIndex[ANIM_IDLE]], 0);
+                        DrawModel(type->model, (Vector3){ 0, 0, 0 }, type->scale, GetTeamTint(TEAM_BLUE));
+                    EndMode3D();
+                EndTextureMode();
+            }
+
+            for (int h = 0; h < goCount; h++) {
+                int cx = goStartX + h * (goCardW + goCardGap);
+                int ui = goBlue[h];
+                UnitType *type = &unitTypes[units[ui].typeIndex];
+
+                DrawRectangle(cx, goCardY, goCardW, goCardH, (Color){35,35,50,240});
+                DrawRectangleLinesEx((Rectangle){(float)cx,(float)goCardY,(float)goCardW,(float)goCardH}, 2, (Color){60,60,80,255});
+
+                // Portrait
+                if (h < BLUE_TEAM_MAX_SIZE) {
+                    int portSize = 80;
+                    Rectangle srcRect = { 0, 0, (float)HUD_PORTRAIT_SIZE, -(float)HUD_PORTRAIT_SIZE };
+                    Rectangle dstRect = { (float)(cx + 10), (float)(goCardY + 6), (float)portSize, (float)portSize };
+                    DrawTexturePro(portraits[h].texture, srcRect, dstRect, (Vector2){0,0}, 0.0f, WHITE);
+                    DrawRectangleLines(cx + 10, goCardY + 6, portSize, portSize, (Color){60,60,80,255});
+                }
+
+                // Unit name
+                DrawText(type->name, cx + 10, goCardY + 90, 14, (Color){200,200,220,255});
+
+                // 2x2 ability grid
+                int goAbilX = cx + 100;
+                int goAbilY = goCardY + 10;
+                int goSlotSize = 28;
+                int goSlotGap = 4;
+                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                    int col = a % 2, row = a / 2;
+                    int ax = goAbilX + col * (goSlotSize + goSlotGap);
+                    int ay = goAbilY + row * (goSlotSize + goSlotGap);
+                    AbilitySlot *aslot = &units[ui].abilities[a];
+                    if (aslot->abilityId >= 0 && aslot->abilityId < ABILITY_COUNT) {
+                        DrawRectangle(ax, ay, goSlotSize, goSlotSize, ABILITY_DEFS[aslot->abilityId].color);
+                        const char *abbr = ABILITY_DEFS[aslot->abilityId].abbrev;
+                        int aw = MeasureText(abbr, 10);
+                        DrawText(abbr, ax + (goSlotSize - aw)/2, ay + (goSlotSize - 10)/2, 10, WHITE);
+                        const char *lvl = TextFormat("L%d", aslot->level + 1);
+                        DrawText(lvl, ax + 2, ay + goSlotSize - 8, 7, (Color){220,220,220,200});
+                    } else {
+                        DrawRectangle(ax, ay, goSlotSize, goSlotSize, (Color){40,40,55,255});
+                    }
+                    DrawRectangleLines(ax, ay, goSlotSize, goSlotSize, (Color){90,90,110,255});
+                }
+
+                // WITHDRAW button
+                Rectangle wdBtn = { (float)(cx + 10), (float)(goCardY + goCardH - 34), (float)(goCardW - 20), 28 };
+                Color wdBg = (Color){60,50,120,255};
+                if (CheckCollisionPointRec(GetMousePosition(), wdBtn))
+                    wdBg = (Color){90,70,180,255};
+                DrawRectangleRec(wdBtn, wdBg);
+                DrawRectangleLinesEx(wdBtn, 1, (Color){100,80,160,255});
+                const char *wdText = "WITHDRAW";
+                int wdw = MeasureText(wdText, 12);
+                DrawText(wdText, (int)(wdBtn.x + (goCardW - 20)/2 - wdw/2), (int)(wdBtn.y + 8), 12, WHITE);
+            }
+
+            // RESET button
+            int resetBtnW = 180, resetBtnH = 44;
+            int resetBtnY = goCardY + goCardH + 30;
+            Rectangle resetBtn = { (float)(gosw/2 - resetBtnW/2), (float)resetBtnY, (float)resetBtnW, (float)resetBtnH };
+            Color resetBg = (Color){180,50,50,255};
+            if (CheckCollisionPointRec(GetMousePosition(), resetBtn))
+                resetBg = (Color){220,70,70,255};
+            DrawRectangleRec(resetBtn, resetBg);
+            DrawRectangleLinesEx(resetBtn, 2, (Color){120,40,40,255});
+            const char *resetText = "RESET";
+            int rstw = MeasureText(resetText, 18);
+            DrawText(resetText, (int)(resetBtn.x + resetBtnW/2 - rstw/2), (int)(resetBtn.y + 13), 18, WHITE);
         }
 
         //==============================================================================

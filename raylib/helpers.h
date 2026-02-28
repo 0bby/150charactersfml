@@ -84,3 +84,7 @@ Vector3 FindValidSpawnPos(Unit units[], int unitCount, float minDist);
 void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount);
 void ClearRedUnits(Unit units[], int *unitCount);
 void CompactBlueUnits(Unit units[], int *unitCount);
+
+// NFC unit code parse/format
+bool ParseUnitCode(const char *code, int *outTypeIndex, AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT]);
+int FormatUnitCode(int typeIndex, const AbilitySlot abilities[MAX_ABILITIES_PER_UNIT], char *buf, int bufSize);
