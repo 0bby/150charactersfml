@@ -454,6 +454,7 @@ int main(void)
     {
         float dt = GetFrameTime();
         UpdateMusicStream(bgm);
+        if (GetMusicTimePlayed(bgm) >= 29.091f) SeekMusicStream(bgm, 0.0f);
         GamePhase prevPhase = phase;
         UpdateShake(&shake, dt);
         if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
