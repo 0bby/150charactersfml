@@ -93,6 +93,9 @@ int main(void)
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++)
         portraits[i] = LoadRenderTexture(HUD_PORTRAIT_SIZE, HUD_PORTRAIT_SIZE);
 
+    // Intro screen render texture (larger for cinematic model display)
+    RenderTexture2D introModelRT = LoadRenderTexture(512, 512);
+
     // Dedicated camera for portrait rendering
     Camera portraitCam = { 0 };
     portraitCam.up = (Vector3){ 0.0f, 1.0f, 0.0f };
@@ -143,6 +146,7 @@ int main(void)
     int removeConfirmUnit = -1;  // unit index awaiting removal confirmation (-1 = none)
     ScreenShake shake = {0};
     FloatingText floatingTexts[MAX_FLOATING_TEXTS] = {0};
+    UnitIntro intro = { .active = false, .timer = 0.0f };
     int hoverAbilityId = -1;
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
@@ -186,6 +190,17 @@ int main(void)
         float dt = GetFrameTime();
         UpdateShake(&shake, dt);
 
+        // Update unit intro animation
+        if (intro.active) {
+            intro.timer += dt;
+            UnitType *itype = &unitTypes[intro.typeIndex];
+            if (itype->hasAnimations && itype->animIndex[ANIM_IDLE] >= 0) {
+                int fc = itype->idleAnims[itype->animIndex[ANIM_IDLE]].frameCount;
+                if (fc > 0) intro.animFrame = (intro.animFrame + 1) % fc;
+            }
+            if (intro.timer >= INTRO_DURATION) intro.active = false;
+        }
+
         // Hover tooltip tracking
         int prevHoverAbilityId = hoverAbilityId;
         hoverAbilityId = -1;
@@ -215,20 +230,26 @@ int main(void)
         float cameraPos[3] = { camera.position.x, camera.position.y, camera.position.z };
         SetShaderValue(lightShader, lightShader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
 
-        // Poll NFC bridge for tag scans (only spawn during prep)
-        if (nfcPipe && phase == PHASE_PREP) {
+        // Poll NFC bridge for tag scans (only spawn during prep, blocked during intro)
+        if (nfcPipe && phase == PHASE_PREP && !intro.active) {
             char nfcBuf[64];
             if (fgets(nfcBuf, sizeof(nfcBuf), nfcPipe)) {
                 nfcBuf[strcspn(nfcBuf, "\r\n")] = '\0';
                 if (strcmp(nfcBuf, "0") == 0) {
-                    if (SpawnUnit(units, &unitCount, 1, TEAM_BLUE))
+                    if (SpawnUnit(units, &unitCount, 1, TEAM_BLUE)) {
                         printf("[NFC] Tag '0' -> Spawning Goblin (Blue)\n");
-                    else
+                        intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                            .typeIndex = 1, .unitIndex = unitCount - 1, .animFrame = 0 };
+                        TriggerShake(&shake, 8.0f, 0.4f);
+                    } else
                         printf("[NFC] Tag '0' -> Blue team full (%d/%d)\n", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
                 } else if (strcmp(nfcBuf, "1") == 0) {
-                    if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE))
+                    if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE)) {
                         printf("[NFC] Tag '1' -> Spawning Mushroom (Blue)\n");
-                    else
+                        intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                            .typeIndex = 0, .unitIndex = unitCount - 1, .animFrame = 0 };
+                        TriggerShake(&shake, 8.0f, 0.4f);
+                    } else
                         printf("[NFC] Tag '1' -> Blue team full (%d/%d)\n", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
                 } else {
                     printf("[NFC] Unknown payload: '%s'\n", nfcBuf);
@@ -265,8 +286,8 @@ int main(void)
                 if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) units[i].dragging = false;
             }
 
-            // Clicks
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+            // Clicks (blocked during intro)
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !intro.active)
             {
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
@@ -350,7 +371,14 @@ int main(void)
                     {
                         Rectangle r = { (float)btnXBlue, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
                         if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded)
-                        { SpawnUnit(units, &unitCount, i, TEAM_BLUE); clickedButton = true; break; }
+                        {
+                            if (SpawnUnit(units, &unitCount, i, TEAM_BLUE)) {
+                                intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                    .typeIndex = i, .unitIndex = unitCount - 1, .animFrame = 0 };
+                                TriggerShake(&shake, 8.0f, 0.4f);
+                            }
+                            clickedButton = true; break;
+                        }
                     }
                 }
                 // Red spawn buttons
@@ -485,7 +513,7 @@ int main(void)
             }
 
             // --- Drag-and-drop release handling ---
-            if (dragState.dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+            if (dragState.dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && !intro.active)
             {
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
@@ -1587,6 +1615,197 @@ int main(void)
             DrawText(tipDef->description, tipX + 6, tipY + 22, 10, (Color){180, 180, 200, 255});
         }
 
+        //==============================================================================
+        // UNIT INTRO SCREEN ("New Challenger" splash)
+        //==============================================================================
+        if (intro.active)
+        {
+            int isw = GetScreenWidth();
+            int ish = GetScreenHeight();
+            float t = intro.timer;
+
+            // Animation progress values
+            float wipeProgress = (t < INTRO_WIPE_IN) ? (t / INTRO_WIPE_IN) : 1.0f;
+            float fadeAlpha = 1.0f;
+            if (t >= INTRO_FADE_OUT_START) {
+                fadeAlpha = 1.0f - (t - INTRO_FADE_OUT_START) / (INTRO_FADE_OUT_END - INTRO_FADE_OUT_START);
+                if (fadeAlpha < 0.0f) fadeAlpha = 0.0f;
+            }
+            unsigned char alpha = (unsigned char)(255.0f * fadeAlpha);
+
+            // --- Render 3D model into offscreen texture ---
+            UnitType *itype = &unitTypes[intro.typeIndex];
+            if (itype->loaded) {
+                BoundingBox ib = itype->baseBounds;
+                float icenterY = (ib.min.y + ib.max.y) / 2.0f * itype->scale;
+                float iextent  = (ib.max.y - ib.min.y) * itype->scale;
+
+                Camera introCam = { 0 };
+                introCam.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+                introCam.fovy = 30.0f;
+                introCam.projection = CAMERA_PERSPECTIVE;
+                introCam.target   = (Vector3){ 0.0f, icenterY, 0.0f };
+                introCam.position = (Vector3){ 0.0f, icenterY, iextent * 2.0f };
+
+                BeginTextureMode(introModelRT);
+                    ClearBackground(BLANK);
+                    BeginMode3D(introCam);
+                        if (itype->hasAnimations && itype->animIndex[ANIM_IDLE] >= 0)
+                            UpdateModelAnimation(itype->model,
+                                itype->idleAnims[itype->animIndex[ANIM_IDLE]], intro.animFrame);
+                        DrawModel(itype->model, (Vector3){0,0,0}, itype->scale,
+                                  GetTeamTint(TEAM_BLUE));
+                    EndMode3D();
+                EndTextureMode();
+            }
+
+            // --- Procedural background (clipped to wipe) ---
+            int wipeW = (int)(isw * wipeProgress);
+            if (intro.typeIndex == 0) {
+                // Mushroom: dark forest green
+                DrawRectangle(0, 0, wipeW, ish, (Color){ 30, 45, 25, alpha });
+                for (int ring = 0; ring < 8; ring++) {
+                    float radius = 100.0f + ring * 80.0f;
+                    unsigned char ra = (unsigned char)(alpha * 0.3f);
+                    DrawCircleLines(isw * 65 / 100, ish / 2, radius,
+                        (Color){ (unsigned char)(50 + ring*8), (unsigned char)(70 + ring*5), 30, ra });
+                }
+                for (int ln = 0; ln < 12; ln++) {
+                    int y = (ish / 12) * ln;
+                    DrawLine(0, y, wipeW, y - 40,
+                        (Color){ 80, 120, 50, (unsigned char)(alpha * 0.2f) });
+                }
+            } else {
+                // Goblin: dark crimson
+                DrawRectangle(0, 0, wipeW, ish, (Color){ 45, 20, 20, alpha });
+                for (int ring = 0; ring < 8; ring++) {
+                    float radius = 100.0f + ring * 80.0f;
+                    unsigned char ra = (unsigned char)(alpha * 0.3f);
+                    DrawCircleLines(isw * 65 / 100, ish / 2, radius,
+                        (Color){ (unsigned char)(120 + ring*10), 40, 30, ra });
+                }
+                for (int ln = 0; ln < 15; ln++) {
+                    int y = (ish / 15) * ln;
+                    DrawLine(0, y + 60, wipeW, y - 60,
+                        (Color){ 180, 60, 30, (unsigned char)(alpha * 0.15f) });
+                }
+            }
+
+            // --- Slash wipe edge ---
+            if (wipeProgress < 1.0f) {
+                int wipeX = wipeW;
+                DrawLine(wipeX, -20, wipeX - 80, ish + 20,
+                    (Color){ 255, 255, 255, alpha });
+                DrawLine(wipeX + 3, -20, wipeX - 77, ish + 20,
+                    (Color){ 255, 255, 200, (unsigned char)(alpha * 0.5f) });
+                // Thicker glow
+                DrawLine(wipeX - 1, -20, wipeX - 81, ish + 20,
+                    (Color){ 255, 255, 255, (unsigned char)(alpha * 0.4f) });
+            }
+
+            // --- White flash at wipe completion ---
+            if (t >= INTRO_WIPE_IN && t < INTRO_WIPE_IN + 0.15f) {
+                float flashAlpha = 1.0f - (t - INTRO_WIPE_IN) / 0.15f;
+                DrawRectangle(0, 0, isw, ish,
+                    (Color){ 255, 255, 255, (unsigned char)(200.0f * flashAlpha * fadeAlpha) });
+            }
+
+            // --- 3D model composited (slide in from right) ---
+            float modelSlide = 0.0f;
+            if (t >= INTRO_HOLD_START) {
+                float slideT = (t - INTRO_HOLD_START) / 0.3f;
+                if (slideT > 1.0f) slideT = 1.0f;
+                modelSlide = 1.0f - (1.0f - slideT) * (1.0f - slideT); // ease-out
+            }
+            float modelSize = ish * 0.85f;
+            float modelFinalX = isw * 0.45f;
+            float modelStartX = isw * 1.2f;
+            float modelX = modelStartX + (modelFinalX - modelStartX) * modelSlide;
+            float modelY = (ish - modelSize) / 2.0f;
+
+            Rectangle introSrc = { 0, 0, 512.0f, -512.0f };
+            Rectangle introDst = { modelX, modelY, modelSize, modelSize };
+            DrawTexturePro(introModelRT.texture, introSrc, introDst,
+                (Vector2){ 0, 0 }, 0.0f, (Color){ 255, 255, 255, alpha });
+
+            // --- Unit name (slide in from left) ---
+            float textSlide = 0.0f;
+            if (t >= INTRO_HOLD_START + 0.1f) {
+                float textT = (t - INTRO_HOLD_START - 0.1f) / 0.25f;
+                if (textT > 1.0f) textT = 1.0f;
+                textSlide = 1.0f - (1.0f - textT) * (1.0f - textT);
+            }
+            const char *introName = unitTypes[intro.typeIndex].name;
+            int nameFontSize = ish / 8;
+            int nameW = MeasureText(introName, nameFontSize);
+            float nameFinalX = isw * 0.08f;
+            float nameStartX = (float)(-nameW - 20);
+            float nameX = nameStartX + (nameFinalX - nameStartX) * textSlide;
+            float nameY = ish * 0.2f;
+
+            // Shadow
+            DrawText(introName, (int)nameX + 3, (int)nameY + 3, nameFontSize,
+                (Color){ 0, 0, 0, (unsigned char)(alpha * 0.6f) });
+            // Main text
+            Color nameColor = GetTeamTint(TEAM_BLUE);
+            nameColor.a = alpha;
+            DrawText(introName, (int)nameX, (int)nameY, nameFontSize, nameColor);
+
+            // Subtitle
+            int subSize = nameFontSize / 3;
+            if (subSize < 12) subSize = 12;
+            const char *subText = "joins the battle!";
+            DrawText(subText, (int)nameX + 4, (int)nameY + nameFontSize + 4, subSize,
+                (Color){ 200, 200, 220, (unsigned char)(alpha * 0.8f) });
+
+            // --- Decorative line under name ---
+            if (textSlide > 0.0f) {
+                int lineW = (int)((nameW + 40) * textSlide);
+                int lineY2 = (int)nameY + nameFontSize + subSize + 12;
+                DrawRectangle((int)nameFinalX, lineY2, lineW, 3,
+                    (Color){ nameColor.r, nameColor.g, nameColor.b, (unsigned char)(alpha * 0.7f) });
+            }
+
+            // --- Ability slots (fade in with delay) ---
+            if (t >= INTRO_HOLD_START + 0.4f) {
+                float abilAlpha = (t - INTRO_HOLD_START - 0.4f) / 0.2f;
+                if (abilAlpha > 1.0f) abilAlpha = 1.0f;
+                abilAlpha *= fadeAlpha;
+                unsigned char aa = (unsigned char)(255.0f * abilAlpha);
+
+                int slotSize = 48;
+                int slotGap = 8;
+                int abilX = (int)nameFinalX;
+                int abilY = (int)nameY + nameFontSize + subSize + 24;
+
+                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                    int ax = abilX + a * (slotSize + slotGap);
+                    AbilitySlot *slot = &units[intro.unitIndex].abilities[a];
+
+                    if (slot->abilityId >= 0 && slot->abilityId < ABILITY_COUNT) {
+                        Color abilCol = ABILITY_COLORS[slot->abilityId];
+                        abilCol.a = aa;
+                        DrawRectangle(ax, abilY, slotSize, slotSize, abilCol);
+                        const char *abbr = ABILITY_ABBREV[slot->abilityId];
+                        int aw = MeasureText(abbr, 16);
+                        DrawText(abbr, ax + (slotSize - aw)/2,
+                            abilY + (slotSize - 16)/2, 16, (Color){ 255, 255, 255, aa });
+                        // Level
+                        const char *lvl = TextFormat("L%d", slot->level + 1);
+                        DrawText(lvl, ax + 2, abilY + slotSize - 10, 8, (Color){ 220, 220, 220, aa });
+                    } else {
+                        DrawRectangle(ax, abilY, slotSize, slotSize, (Color){ 40, 40, 55, aa });
+                        const char *q = "?";
+                        int qw = MeasureText(q, 22);
+                        DrawText(q, ax + (slotSize - qw)/2,
+                            abilY + (slotSize - 22)/2, 22, (Color){ 80, 80, 100, aa });
+                    }
+                    DrawRectangleLines(ax, abilY, slotSize, slotSize,
+                        (Color){ 120, 120, 150, aa });
+                }
+            }
+        }
+
         DrawFPS(10, 10);
         EndDrawing();
     }
@@ -1597,6 +1816,7 @@ int main(void)
         printf("[NFC] Bridge closed\n");
     }
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
+    UnloadRenderTexture(introModelRT);
     UnloadShader(lightShader);
     for (int i = 0; i < unitTypeCount; i++) {
         if (unitTypes[i].anims)

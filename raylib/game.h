@@ -199,3 +199,20 @@ typedef struct {
     float timer;      // time remaining
     Vector3 offset;   // current frame offset (applied to camera)
 } ScreenShake;
+
+//------------------------------------------------------------------------------------
+// Unit Introduction Screen ("New Challenger" splash)
+//------------------------------------------------------------------------------------
+#define INTRO_DURATION       2.0f
+#define INTRO_WIPE_IN        0.3f    // slash-wipe reveal duration
+#define INTRO_HOLD_START     0.3f    // model + text appear
+#define INTRO_FADE_OUT_START 1.5f
+#define INTRO_FADE_OUT_END   2.0f
+
+typedef struct {
+    bool    active;
+    float   timer;        // counts UP from 0 to INTRO_DURATION
+    int     typeIndex;    // which unit type (0=Mushroom, 1=Goblin)
+    int     unitIndex;    // index in units[] array
+    int     animFrame;    // dedicated anim counter for intro model
+} UnitIntro;
