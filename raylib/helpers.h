@@ -56,6 +56,11 @@ void ClearAllFissures(Fissure fissures[]);
 bool CheckFissureCollision(Fissure fissures[], Vector3 pos, float unitRadius);
 Vector3 ResolveFissureCollision(Fissure fissures[], Vector3 pos, Vector3 oldPos, float unitRadius);
 
+// Statue spawn helpers
+void StartStatueSpawn(StatueSpawn *spawn, int unitIndex);
+void UpdateStatueSpawn(StatueSpawn *spawn, Particle particles[], ScreenShake *shake, Vector3 unitWorldPos, float dt);
+bool IsUnitInStatueSpawn(const StatueSpawn *spawn, int unitIndex);
+
 // Drawing helpers
 void DrawArc3D(Vector3 center, float radius, float fraction, Color color);
 

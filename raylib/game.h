@@ -230,6 +230,36 @@ typedef struct {
 } UnitIntro;
 
 //------------------------------------------------------------------------------------
+// Statue Spawn Animation (blue units fall from sky as stone statues)
+//------------------------------------------------------------------------------------
+#define SPAWN_ANIM_DELAY            0.08f
+#define SPAWN_ANIM_START_Y          250.0f
+#define SPAWN_ANIM_GRAVITY          350.0f
+#define SPAWN_ANIM_IMPACT_PARTICLES 25
+#define SPAWN_ANIM_SHAKE_INTENSITY  12.0f
+#define SPAWN_ANIM_SHAKE_DURATION   0.45f
+#define SPAWN_ANIM_TRAIL_INTERVAL   0.02f
+
+typedef enum {
+    SSPAWN_INACTIVE = 0,
+    SSPAWN_DELAY,
+    SSPAWN_FALLING,
+    SSPAWN_DONE,
+} StatueSpawnPhase;
+
+typedef struct {
+    StatueSpawnPhase phase;
+    int     unitIndex;
+    float   timer;
+    float   currentY;
+    float   velocityY;
+    float   targetY;    // 0.0
+    float   trailTimer;
+    float   driftX;     // random XZ offset at start, lerps to 0 at ground
+    float   driftZ;
+} StatueSpawn;
+
+//------------------------------------------------------------------------------------
 // Fissure (terrain obstacle)
 //------------------------------------------------------------------------------------
 typedef struct {

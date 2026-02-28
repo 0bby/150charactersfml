@@ -183,6 +183,7 @@ int main(void)
     FloatingText floatingTexts[MAX_FLOATING_TEXTS] = {0};
     Fissure fissures[MAX_FISSURES] = {0};
     UnitIntro intro = { .active = false, .timer = 0.0f };
+    StatueSpawn statueSpawn = { .phase = SSPAWN_INACTIVE };
     int hoverAbilityId = -1;
     int hoverAbilityLevel = 0;
     float hoverTimer = 0.0f;
@@ -253,7 +254,44 @@ int main(void)
                 int fc = itype->idleAnims[itype->animIndex[ANIM_IDLE]].frameCount;
                 if (fc > 0) intro.animFrame = (intro.animFrame + 1) % fc;
             }
-            if (intro.timer >= INTRO_DURATION) intro.active = false;
+            if (intro.timer >= INTRO_DURATION) {
+                intro.active = false;
+                // Trigger statue spawn for blue units
+                if (intro.unitIndex >= 0 && intro.unitIndex < unitCount &&
+                    units[intro.unitIndex].active && units[intro.unitIndex].team == TEAM_BLUE) {
+                    // Force-finish any previous spawn anim (snap old unit to ground)
+                    if (statueSpawn.phase != SSPAWN_INACTIVE) {
+                        int old = statueSpawn.unitIndex;
+                        if (old >= 0 && old < unitCount && units[old].active)
+                            units[old].position.y = 0.0f;
+                        statueSpawn.phase = SSPAWN_INACTIVE;
+                    }
+                    // Randomize landing position on player side of field + random facing angle
+                    int idx2 = intro.unitIndex;
+                    float gridLim = ARENA_GRID_HALF - 10.0f; // 90
+                    units[idx2].position.x = (float)GetRandomValue((int)(-gridLim), (int)(gridLim));
+                    units[idx2].position.z = (float)GetRandomValue((int)(ARENA_BOUNDARY_Z + 5.0f), (int)(gridLim));
+                    units[idx2].facingAngle = (float)GetRandomValue(0, 359);
+                    StartStatueSpawn(&statueSpawn, idx2);
+                }
+            }
+        }
+
+        // Update statue spawn animation
+        if (statueSpawn.phase != SSPAWN_INACTIVE) {
+            // Guard: if unit became inactive, cancel spawn
+            int si = statueSpawn.unitIndex;
+            if (si < 0 || si >= unitCount || !units[si].active) {
+                statueSpawn.phase = SSPAWN_INACTIVE;
+            } else {
+                UpdateStatueSpawn(&statueSpawn, particles, &shake, units[si].position, dt);
+                if (statueSpawn.phase == SSPAWN_DONE) {
+                    units[si].position.y = 0.0f;
+                    units[si].currentAnim = ANIM_IDLE;
+                    units[si].animFrame = 0;
+                    statueSpawn.phase = SSPAWN_INACTIVE;
+                }
+            }
         }
 
         // Hover tooltip tracking
@@ -287,7 +325,7 @@ int main(void)
         SetShaderValue(lightShader, lightShader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
 
         // Poll NFC bridge for tag scans (only spawn during prep, blocked during intro)
-        if (nfcPipe && phase == PHASE_PREP && !intro.active) {
+        if (nfcPipe && phase == PHASE_PREP && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
             char nfcBuf[64];
             if (fgets(nfcBuf, sizeof(nfcBuf), nfcPipe)) {
                 nfcBuf[strcspn(nfcBuf, "\r\n")] = '\0';
@@ -300,7 +338,6 @@ int main(void)
                         printf("[NFC] Tag '%s' -> Spawning %s (Blue)\n", nfcBuf, unitTypes[nfcTypeIndex].name);
                         intro = (UnitIntro){ .active = true, .timer = 0.0f,
                             .typeIndex = nfcTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
-                        TriggerShake(&shake, 8.0f, 0.4f);
                     } else {
                         printf("[NFC] Tag '%s' -> Blue team full or unknown type\n", nfcBuf);
                     }
@@ -370,6 +407,7 @@ int main(void)
                         ClearAllParticles(particles);
                         ClearAllFloatingTexts(floatingTexts);
                         ClearAllFissures(fissures);
+                        statueSpawn.phase = SSPAWN_INACTIVE;
                         playerGold = 100;
                         for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                         RollShop(shopSlots, &playerGold, 0);
@@ -413,7 +451,7 @@ int main(void)
             }
 
             // NFC emulation text input handling
-            if (nfcInputActive && !intro.active) {
+            if (nfcInputActive && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
                 int key = GetCharPressed();
                 while (key > 0) {
                     // Uppercase the character
@@ -447,7 +485,6 @@ int main(void)
                                 units[unitCount - 1].abilities[a] = emAbilities[a];
                             intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                 .typeIndex = emTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
-                            TriggerShake(&shake, 8.0f, 0.4f);
                             nfcInputBuf[0] = '\0';
                             nfcInputLen = 0;
                             nfcInputActive = false;
@@ -459,13 +496,17 @@ int main(void)
                 }
             }
 
-            // Smooth Y lift
+            // Smooth Y lift (skip units in statue spawn so gravity isn't fought)
             for (int i = 0; i < unitCount; i++)
             {
                 if (!units[i].active) continue;
+                if (IsUnitInStatueSpawn(&statueSpawn, i)) continue;
                 float targetY = units[i].dragging ? 5.0f : 0.0f;
                 units[i].position.y += (targetY - units[i].position.y) * 0.1f;
             }
+
+            // Update particles during prep (so impact particles decay)
+            UpdateParticles(particles, dt);
 
             // Dragging
             for (int i = 0; i < unitCount; i++)
@@ -500,7 +541,7 @@ int main(void)
             }
 
             // Clicks (blocked during intro)
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !intro.active)
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE)
             {
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
@@ -576,6 +617,13 @@ int main(void)
                         ClearAllParticles(particles);
                         ClearAllFloatingTexts(floatingTexts);
                         ClearAllFissures(fissures);
+                        // Snap any mid-fall statue to ground before combat
+                        if (statueSpawn.phase != SSPAWN_INACTIVE) {
+                            int si2 = statueSpawn.unitIndex;
+                            if (si2 >= 0 && si2 < unitCount && units[si2].active)
+                                units[si2].position.y = 0.0f;
+                        }
+                        statueSpawn.phase = SSPAWN_INACTIVE;
                         dragState.dragging = false;
                         removeConfirmUnit = -1;
                         // Reset ability state for combat start
@@ -603,7 +651,6 @@ int main(void)
                             if (SpawnUnit(units, &unitCount, i, TEAM_BLUE)) {
                                 intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                     .typeIndex = i, .unitIndex = unitCount - 1, .animFrame = 0 };
-                                TriggerShake(&shake, 8.0f, 0.4f);
                             }
                             clickedButton = true; break;
                         }
@@ -744,7 +791,7 @@ int main(void)
             }
 
             // --- Drag-and-drop release handling ---
-            if (dragState.dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && !intro.active)
+            if (dragState.dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE)
             {
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
@@ -1204,6 +1251,7 @@ int main(void)
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
+                statueSpawn.phase = SSPAWN_INACTIVE;
             }
         }
         //------------------------------------------------------------------------------
@@ -1375,6 +1423,7 @@ int main(void)
                     ClearAllParticles(particles);
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
+                    statueSpawn.phase = SSPAWN_INACTIVE;
                     playerGold = 100;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     dragState.dragging = false;
@@ -1398,6 +1447,7 @@ int main(void)
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
+                statueSpawn.phase = SSPAWN_INACTIVE;
                 playerGold = 100;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
@@ -1410,6 +1460,7 @@ int main(void)
         //==============================================================================
         for (int i = 0; i < unitCount; i++) {
             if (!units[i].active) continue;
+            if (IsUnitInStatueSpawn(&statueSpawn, i)) continue; // frozen as statue
             UnitType *type = &unitTypes[units[i].typeIndex];
             if (!type->hasAnimations) continue;
 
@@ -1485,6 +1536,8 @@ int main(void)
             for (int i = 0; i < unitCount; i++)
             {
                 if (!units[i].active) continue;
+                if (IsUnitInStatueSpawn(&statueSpawn, i)) continue; // drawn separately as falling statue
+                if (intro.active && intro.unitIndex == i) continue; // hidden during intro splash
                 UnitType *type = &unitTypes[units[i].typeIndex];
                 if (!type->loaded) continue;
                 Color tint = GetTeamTint(units[i].team);
@@ -1503,6 +1556,33 @@ int main(void)
                 {
                     BoundingBox sb = GetUnitBounds(&units[i], type);
                     DrawBoundingBox(sb, GREEN);
+                }
+            }
+
+            // Draw falling statue (spawning unit rendered separately with stone tint at elevated Y + drift)
+            if (statueSpawn.phase == SSPAWN_FALLING) {
+                int si = statueSpawn.unitIndex;
+                if (si >= 0 && si < unitCount && units[si].active) {
+                    UnitType *stype = &unitTypes[units[si].typeIndex];
+                    if (stype->loaded) {
+                        // Force idle frame 0 pose (frozen statue)
+                        if (stype->hasAnimations && stype->animIndex[ANIM_IDLE] >= 0)
+                            UpdateModelAnimation(stype->model, stype->idleAnims[stype->animIndex[ANIM_IDLE]], 0);
+                        float ss = stype->scale * units[si].scaleOverride;
+                        // Compute drift offset based on height fraction
+                        float hRange = SPAWN_ANIM_START_Y - statueSpawn.targetY;
+                        float dFrac = (hRange > 0.0f) ? (statueSpawn.currentY - statueSpawn.targetY) / hRange : 0.0f;
+                        if (dFrac < 0.0f) dFrac = 0.0f;
+                        if (dFrac > 1.0f) dFrac = 1.0f;
+                        Vector3 statuePos = {
+                            units[si].position.x + statueSpawn.driftX * dFrac,
+                            statueSpawn.currentY,
+                            units[si].position.z + statueSpawn.driftZ * dFrac
+                        };
+                        Color stoneTint = { 160, 160, 170, 255 }; // grayish stone tint
+                        DrawModelEx(stype->model, statuePos, (Vector3){0,1,0}, units[si].facingAngle,
+                            (Vector3){ss, ss, ss}, stoneTint);
+                    }
                 }
             }
 
@@ -1646,14 +1726,27 @@ int main(void)
         for (int i = 0; i < unitCount; i++)
         {
             if (!units[i].active) continue;
+            if (intro.active && intro.unitIndex == i) continue; // hidden during intro splash
+            if (IsUnitInStatueSpawn(&statueSpawn, i) && statueSpawn.phase == SSPAWN_DELAY) continue; // hidden during pre-fall delay
             UnitType *type = &unitTypes[units[i].typeIndex];
             if (!type->loaded) continue;
             const UnitStats *stats = &UNIT_STATS[units[i].typeIndex];
 
+            // Use statue spawn position (with drift) for falling units
+            Vector3 labelWorldPos = units[i].position;
+            if (IsUnitInStatueSpawn(&statueSpawn, i) && statueSpawn.phase == SSPAWN_FALLING) {
+                float hRange = SPAWN_ANIM_START_Y - statueSpawn.targetY;
+                float dFrac = (hRange > 0.0f) ? (statueSpawn.currentY - statueSpawn.targetY) / hRange : 0.0f;
+                if (dFrac < 0.0f) dFrac = 0.0f;
+                if (dFrac > 1.0f) dFrac = 1.0f;
+                labelWorldPos.x += statueSpawn.driftX * dFrac;
+                labelWorldPos.y = statueSpawn.currentY;
+                labelWorldPos.z += statueSpawn.driftZ * dFrac;
+            }
             Vector2 sp = GetWorldToScreen(
-                (Vector3){ units[i].position.x,
-                           units[i].position.y + (type->baseBounds.max.y * type->scale) + 1.0f,
-                           units[i].position.z }, camera);
+                (Vector3){ labelWorldPos.x,
+                           labelWorldPos.y + (type->baseBounds.max.y * type->scale) + 1.0f,
+                           labelWorldPos.z }, camera);
 
             const char *label = type->name;
             int tw = MeasureText(label, 14);

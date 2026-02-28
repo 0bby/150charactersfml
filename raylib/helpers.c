@@ -432,6 +432,83 @@ void UpdateShake(ScreenShake *shake, float dt)
 }
 
 //------------------------------------------------------------------------------------
+// Statue Spawn Helpers
+//------------------------------------------------------------------------------------
+void StartStatueSpawn(StatueSpawn *spawn, int unitIndex)
+{
+    spawn->phase = SSPAWN_DELAY;
+    spawn->unitIndex = unitIndex;
+    spawn->timer = SPAWN_ANIM_DELAY;
+    spawn->currentY = SPAWN_ANIM_START_Y;
+    spawn->velocityY = 0.0f;
+    spawn->targetY = 0.0f;
+    spawn->trailTimer = 0.0f;
+    // Random directional drift: offset at top that converges to landing spot
+    float driftAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
+    float driftDist = (float)GetRandomValue(20, 60);  // 20-60 units of horizontal offset
+    spawn->driftX = cosf(driftAngle) * driftDist;
+    spawn->driftZ = sinf(driftAngle) * driftDist;
+}
+
+void UpdateStatueSpawn(StatueSpawn *spawn, Particle particles[], ScreenShake *shake, Vector3 unitWorldPos, float dt)
+{
+    if (spawn->phase == SSPAWN_INACTIVE || spawn->phase == SSPAWN_DONE) return;
+
+    if (spawn->phase == SSPAWN_DELAY) {
+        spawn->timer -= dt;
+        if (spawn->timer <= 0.0f) {
+            spawn->phase = SSPAWN_FALLING;
+            spawn->timer = 0.0f;
+        }
+        return;
+    }
+
+    if (spawn->phase == SSPAWN_FALLING) {
+        // Apply gravity (accelerate downward)
+        spawn->velocityY += SPAWN_ANIM_GRAVITY * dt;
+        spawn->currentY -= spawn->velocityY * dt;
+
+        // Check ground collision
+        if (spawn->currentY <= spawn->targetY) {
+            spawn->currentY = spawn->targetY;
+            spawn->phase = SSPAWN_DONE;
+
+            // Impact particles — stone chunks burst outward
+            Vector3 impactPos = { unitWorldPos.x, spawn->targetY, unitWorldPos.z };
+            for (int i = 0; i < SPAWN_ANIM_IMPACT_PARTICLES; i++) {
+                float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                float speed = (float)GetRandomValue(20, 80) / 10.0f;
+                Vector3 vel = {
+                    cosf(angle) * speed,
+                    (float)GetRandomValue(30, 100) / 10.0f,  // upward burst
+                    sinf(angle) * speed
+                };
+                int shade = GetRandomValue(100, 180);
+                int r = GetRandomValue(0, 1);
+                Color stoneColor;
+                if (r) {
+                    // Gray stone
+                    stoneColor = (Color){ (unsigned char)shade, (unsigned char)shade, (unsigned char)(shade - 10), 255 };
+                } else {
+                    // Brown stone
+                    stoneColor = (Color){ (unsigned char)shade, (unsigned char)(shade * 3 / 5), (unsigned char)(shade / 3), 255 };
+                }
+                float sz = (float)GetRandomValue(4, 12) / 10.0f;
+                SpawnParticle(particles, impactPos, vel, 0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, stoneColor);
+            }
+
+            // Screen shake on impact
+            TriggerShake(shake, SPAWN_ANIM_SHAKE_INTENSITY, SPAWN_ANIM_SHAKE_DURATION);
+        }
+    }
+}
+
+bool IsUnitInStatueSpawn(const StatueSpawn *spawn, int unitIndex)
+{
+    return spawn->phase != SSPAWN_INACTIVE && spawn->unitIndex == unitIndex;
+}
+
+//------------------------------------------------------------------------------------
 // Drawing Helpers
 //------------------------------------------------------------------------------------
 void DrawArc3D(Vector3 center, float radius, float fraction, Color color)
