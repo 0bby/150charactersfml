@@ -8,7 +8,10 @@ UNAME := $(shell uname -s)
 GAME_DIR = raylib
 GAME_SRCS = $(GAME_DIR)/main.c \
             $(GAME_DIR)/helpers.c \
-            $(GAME_DIR)/leaderboard.c
+            $(GAME_DIR)/leaderboard.c \
+            $(GAME_DIR)/combat_sim.c \
+            $(GAME_DIR)/net_client.c \
+            $(GAME_DIR)/net_common.c
 GAME_HDRS = $(wildcard $(GAME_DIR)/*.h)
 GAME_TARGET = $(GAME_DIR)/game
 
