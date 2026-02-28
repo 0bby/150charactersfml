@@ -373,11 +373,39 @@ int main(void)
     PlazaUnitData plazaData[MAX_UNITS] = {0};
     bool showMultiplayerPanel = false;
     Model doorModel = LoadModel("assets/goblin/environment/door/Door.obj");
-    for (int m = 0; m < doorModel.materialCount; m++)
+    for (int m = 0; m < doorModel.materialCount; m++) {
         doorModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        doorModel.materials[m].shader = lightShader;
+    }
+    // Re-center and scale Door (Maya cm export, verts in 300-1000 range)
+    if (doorModel.meshCount > 0) {
+        BoundingBox dbb = GetMeshBoundingBox(doorModel.meshes[0]);
+        float dCenterX = (dbb.min.x + dbb.max.x) * 0.5f;
+        float dBaseY   = dbb.min.y;
+        float dCenterZ = (dbb.min.z + dbb.max.z) * 0.5f;
+        float dHeight  = dbb.max.y - dbb.min.y;
+        float dScale   = 15.0f / dHeight;  // ~15 game units tall
+        doorModel.transform = MatrixMultiply(
+            MatrixTranslate(-dCenterX, -dBaseY, -dCenterZ),
+            MatrixScale(dScale, dScale, dScale));
+    }
     Model trophyModel = LoadModel("assets/goblin/environment/trophy/Trophy.obj");
-    for (int m = 0; m < trophyModel.materialCount; m++)
+    for (int m = 0; m < trophyModel.materialCount; m++) {
         trophyModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        trophyModel.materials[m].shader = lightShader;
+    }
+    // Re-center and scale Trophy (Maya cm export, verts around -6000 range)
+    if (trophyModel.meshCount > 0) {
+        BoundingBox tbb = GetMeshBoundingBox(trophyModel.meshes[0]);
+        float tCenterX = (tbb.min.x + tbb.max.x) * 0.5f;
+        float tBaseY   = tbb.min.y;
+        float tCenterZ = (tbb.min.z + tbb.max.z) * 0.5f;
+        float tHeight  = tbb.max.y - tbb.min.y;
+        float tScale   = 10.0f / tHeight;  // ~10 game units tall
+        trophyModel.transform = MatrixMultiply(
+            MatrixTranslate(-tCenterX, -tBaseY, -tCenterZ),
+            MatrixScale(tScale, tScale, tScale));
+    }
     Vector3 doorPos = { 120.0f, 0.0f, 80.0f };
     Vector3 trophyPos = { -120.0f, 0.0f, 80.0f };
     int plazaHoverObject = 0;  // 0=none, 1=trophy, 2=door
