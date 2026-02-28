@@ -34,17 +34,17 @@ static bool LoadLeaderboardLegacy(Leaderboard *lb)
     return lb->entryCount > 0;
 }
 
-void LoadLeaderboard(Leaderboard *lb)
+void LoadLeaderboard(Leaderboard *lb, const char *filepath)
 {
     memset(lb, 0, sizeof(Leaderboard));
 
     // Try loading JSON
-    FILE *f = fopen(LEADERBOARD_FILE, "r");
+    FILE *f = fopen(filepath, "r");
     if (!f) {
         // Migration: try legacy binary format
         if (LoadLeaderboardLegacy(lb)) {
             printf("[Leaderboard] Migrated %d entries from legacy binary\n", lb->entryCount);
-            SaveLeaderboard(lb);  // re-save as JSON immediately
+            SaveLeaderboard(lb, filepath);  // re-save as JSON immediately
         }
         return;
     }
@@ -150,9 +150,9 @@ void LoadLeaderboard(Leaderboard *lb)
     free(buf);
 }
 
-void SaveLeaderboard(const Leaderboard *lb)
+void SaveLeaderboard(const Leaderboard *lb, const char *filepath)
 {
-    FILE *f = fopen(LEADERBOARD_FILE, "w");
+    FILE *f = fopen(filepath, "w");
     if (!f) return;
 
     fprintf(f, "{\n  \"version\": %d,\n  \"entries\": [\n", LEADERBOARD_VERSION);
@@ -211,4 +211,79 @@ void InsertLeaderboardEntry(Leaderboard *lb, const LeaderboardEntry *entry)
         }
     }
     SortLeaderboard(lb);
+}
+
+// Binary format per entry (55 bytes):
+// [playerName: 16 bytes][highestRound: uint16][unitCount: uint8]
+// [4 units × 9 bytes: typeIndex:uint8 + 4 abilities × (abilityId:int8 + level:uint8)]
+int serialize_leaderboard_entry(const LeaderboardEntry *entry, uint8_t *buf, int bufSize)
+{
+    if (bufSize < LEADERBOARD_ENTRY_NET_SIZE) return -1;
+
+    memset(buf, 0, LEADERBOARD_ENTRY_NET_SIZE);
+    int off = 0;
+
+    // Player name (16 bytes, null-padded)
+    int nameLen = (int)strlen(entry->playerName);
+    if (nameLen > 15) nameLen = 15;
+    memcpy(buf + off, entry->playerName, nameLen);
+    off += 16;
+
+    // Highest round (uint16 big-endian)
+    buf[off++] = (uint8_t)((entry->highestRound >> 8) & 0xFF);
+    buf[off++] = (uint8_t)(entry->highestRound & 0xFF);
+
+    // Unit count
+    buf[off++] = (uint8_t)entry->unitCount;
+
+    // 4 units × 9 bytes each
+    for (int u = 0; u < BLUE_TEAM_MAX_SIZE; u++) {
+        if (u < entry->unitCount) {
+            buf[off++] = (uint8_t)entry->units[u].typeIndex;
+            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                buf[off++] = (uint8_t)(int8_t)entry->units[u].abilities[a].abilityId;
+                buf[off++] = (uint8_t)entry->units[u].abilities[a].level;
+            }
+        } else {
+            buf[off++] = 0; // typeIndex
+            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                buf[off++] = (uint8_t)(int8_t)(-1); // empty ability
+                buf[off++] = 0;
+            }
+        }
+    }
+
+    return LEADERBOARD_ENTRY_NET_SIZE;
+}
+
+int deserialize_leaderboard_entry(const uint8_t *buf, int bufSize, LeaderboardEntry *entry)
+{
+    if (bufSize < LEADERBOARD_ENTRY_NET_SIZE) return -1;
+
+    memset(entry, 0, sizeof(LeaderboardEntry));
+    int off = 0;
+
+    // Player name
+    memcpy(entry->playerName, buf + off, 15);
+    entry->playerName[15] = '\0';
+    off += 16;
+
+    // Highest round
+    entry->highestRound = ((int)buf[off] << 8) | buf[off + 1];
+    off += 2;
+
+    // Unit count
+    entry->unitCount = buf[off++];
+    if (entry->unitCount > BLUE_TEAM_MAX_SIZE) entry->unitCount = BLUE_TEAM_MAX_SIZE;
+
+    // 4 units
+    for (int u = 0; u < BLUE_TEAM_MAX_SIZE; u++) {
+        entry->units[u].typeIndex = buf[off++];
+        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+            entry->units[u].abilities[a].abilityId = (int)(int8_t)buf[off++];
+            entry->units[u].abilities[a].level = buf[off++];
+        }
+    }
+
+    return LEADERBOARD_ENTRY_NET_SIZE;
 }

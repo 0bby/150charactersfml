@@ -14,6 +14,7 @@
 
 #include "../raylib/net_protocol.h"
 #include "../raylib/net_common.h"
+#include "../raylib/leaderboard.h"
 #include "game_session.h"
 
 //------------------------------------------------------------------------------------
@@ -25,6 +26,26 @@
 
 static volatile int running = 1;
 static void sigint_handler(int sig) { (void)sig; running = 0; }
+
+//------------------------------------------------------------------------------------
+// Global leaderboard
+//------------------------------------------------------------------------------------
+#define GLOBAL_LEADERBOARD_FILE "global_leaderboard.json"
+static Leaderboard globalLeaderboard;
+
+static void send_leaderboard_data(int sockfd)
+{
+    // Payload: [entryCount:1][entries × 55 bytes]
+    uint8_t payload[1 + MAX_LEADERBOARD_ENTRIES * LEADERBOARD_ENTRY_NET_SIZE];
+    int count = globalLeaderboard.entryCount;
+    payload[0] = (uint8_t)count;
+    for (int i = 0; i < count; i++) {
+        serialize_leaderboard_entry(&globalLeaderboard.entries[i],
+            payload + 1 + i * LEADERBOARD_ENTRY_NET_SIZE,
+            LEADERBOARD_ENTRY_NET_SIZE);
+    }
+    net_send_msg(sockfd, MSG_LEADERBOARD_DATA, payload, 1 + count * LEADERBOARD_ENTRY_NET_SIZE);
+}
 
 //------------------------------------------------------------------------------------
 // Session management
@@ -69,18 +90,46 @@ static void handle_new_client(int clientfd, struct sockaddr_in *addr)
     setsockopt(clientfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
     net_set_nonblocking(clientfd);
 
-    // Wait for JOIN message (with short timeout via blocking peek)
-    // Temporarily set blocking for the join handshake
+    // Wait for first message (with short timeout via blocking peek)
+    // Temporarily set blocking for the handshake
     int flags = fcntl(clientfd, F_GETFL, 0);
     fcntl(clientfd, F_SETFL, flags & ~O_NONBLOCK);
 
-    // Set a 5-second timeout for the join message
+    // Set a 5-second timeout for the first message
     struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
     setsockopt(clientfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     NetMessage msg;
-    if (net_recv_msg(clientfd, &msg) < 0 || msg.type != MSG_JOIN) {
-        printf("[Server] Client fd=%d didn't send valid JOIN, closing\n", clientfd);
+    if (net_recv_msg(clientfd, &msg) < 0) {
+        printf("[Server] Client fd=%d didn't send valid message, closing\n", clientfd);
+        close(clientfd);
+        return;
+    }
+
+    // Handle leaderboard messages (stateless, short-lived connections)
+    if (msg.type == MSG_LEADERBOARD_SUBMIT) {
+        LeaderboardEntry entry;
+        if (msg.size >= LEADERBOARD_ENTRY_NET_SIZE &&
+            deserialize_leaderboard_entry(msg.payload, msg.size, &entry) > 0) {
+            InsertLeaderboardEntry(&globalLeaderboard, &entry);
+            SaveLeaderboard(&globalLeaderboard, GLOBAL_LEADERBOARD_FILE);
+            printf("[Server] Leaderboard submit from '%s' (round %d), total=%d\n",
+                   entry.playerName, entry.highestRound, globalLeaderboard.entryCount);
+            send_leaderboard_data(clientfd);
+        }
+        close(clientfd);
+        return;
+    }
+
+    if (msg.type == MSG_LEADERBOARD_REQUEST) {
+        printf("[Server] Leaderboard request, sending %d entries\n", globalLeaderboard.entryCount);
+        send_leaderboard_data(clientfd);
+        close(clientfd);
+        return;
+    }
+
+    if (msg.type != MSG_JOIN) {
+        printf("[Server] Client fd=%d sent unexpected msg type 0x%02X, closing\n", clientfd, msg.type);
         close(clientfd);
         return;
     }
@@ -149,6 +198,10 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
     srand((unsigned)time(NULL));
 
+    // Load global leaderboard
+    LoadLeaderboard(&globalLeaderboard, GLOBAL_LEADERBOARD_FILE);
+    printf("Loaded %d leaderboard entries from %s\n", globalLeaderboard.entryCount, GLOBAL_LEADERBOARD_FILE);
+
     // Create listening socket
     int listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0) { perror("socket"); return 1; }
@@ -205,6 +258,8 @@ int main(int argc, char *argv[])
     }
 
     printf("\n[Server] Shutting down...\n");
+    SaveLeaderboard(&globalLeaderboard, GLOBAL_LEADERBOARD_FILE);
+    printf("[Server] Saved %d leaderboard entries\n", globalLeaderboard.entryCount);
 
     // Close all sessions
     for (int i = 0; i < sessionCount; i++) {

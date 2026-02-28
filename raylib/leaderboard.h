@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 #include "game.h"
 #include "helpers.h"
 
@@ -30,7 +31,12 @@ typedef struct {
     LeaderboardEntry entries[MAX_LEADERBOARD_ENTRIES];
 } Leaderboard;
 
-void LoadLeaderboard(Leaderboard *lb);
-void SaveLeaderboard(const Leaderboard *lb);
+void LoadLeaderboard(Leaderboard *lb, const char *filepath);
+void SaveLeaderboard(const Leaderboard *lb, const char *filepath);
 void InsertLeaderboardEntry(Leaderboard *lb, const LeaderboardEntry *entry);
 void SortLeaderboard(Leaderboard *lb);
+
+// Binary serialization for network transfer (55 bytes per entry)
+#define LEADERBOARD_ENTRY_NET_SIZE 55
+int serialize_leaderboard_entry(const LeaderboardEntry *entry, uint8_t *buf, int bufSize);
+int deserialize_leaderboard_entry(const uint8_t *buf, int bufSize, LeaderboardEntry *entry);
