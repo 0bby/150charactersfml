@@ -39,6 +39,11 @@ void RollShop(ShopSlot shopSlots[], int *gold, int cost);
 void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold);
 void AssignRandomAbilities(Unit *unit, int numAbilities);
 
+// Floating text helpers
+void SpawnFloatingText(FloatingText texts[], Vector3 pos, const char *str, Color color, float life);
+void UpdateFloatingTexts(FloatingText texts[], float dt);
+void ClearAllFloatingTexts(FloatingText texts[]);
+
 // Screen shake helpers
 void TriggerShake(ScreenShake *shake, float intensity, float duration);
 void UpdateShake(ScreenShake *shake, float dt);

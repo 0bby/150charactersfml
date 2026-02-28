@@ -33,6 +33,7 @@ typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_COUNT } AnimState;
 #define MAX_MODIFIERS 128
 #define MAX_PROJECTILES 32
 #define MAX_PARTICLES 256
+#define MAX_FLOATING_TEXTS 16
 #define MAX_INVENTORY_SLOTS 6
 
 //------------------------------------------------------------------------------------
@@ -173,6 +174,21 @@ typedef struct {
     Team team;
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
 } UnitSnapshot;
+
+//------------------------------------------------------------------------------------
+// Screen Shake
+//------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------
+// Floating Text (spell shouts)
+//------------------------------------------------------------------------------------
+typedef struct {
+    Vector3 position;       // world position (rises over time)
+    char text[32];          // ability name
+    Color color;
+    float life;
+    float maxLife;
+    bool active;
+} FloatingText;
 
 //------------------------------------------------------------------------------------
 // Screen Shake

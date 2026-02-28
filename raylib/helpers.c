@@ -343,6 +343,41 @@ void AssignRandomAbilities(Unit *unit, int numAbilities)
 }
 
 //------------------------------------------------------------------------------------
+// Floating Text Helpers
+//------------------------------------------------------------------------------------
+void SpawnFloatingText(FloatingText texts[], Vector3 pos, const char *str, Color color, float life)
+{
+    for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
+        if (!texts[i].active) {
+            texts[i].position = pos;
+            texts[i].position.y += 5.0f; // start slightly above unit
+            strncpy(texts[i].text, str, 31);
+            texts[i].text[31] = '\0';
+            texts[i].color = color;
+            texts[i].life = life;
+            texts[i].maxLife = life;
+            texts[i].active = true;
+            return;
+        }
+    }
+}
+
+void UpdateFloatingTexts(FloatingText texts[], float dt)
+{
+    for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
+        if (!texts[i].active) continue;
+        texts[i].life -= dt;
+        if (texts[i].life <= 0) { texts[i].active = false; continue; }
+        texts[i].position.y += 15.0f * dt; // drift upward
+    }
+}
+
+void ClearAllFloatingTexts(FloatingText texts[])
+{
+    for (int i = 0; i < MAX_FLOATING_TEXTS; i++) texts[i].active = false;
+}
+
+//------------------------------------------------------------------------------------
 // Screen Shake Helpers
 //------------------------------------------------------------------------------------
 void TriggerShake(ScreenShake *shake, float intensity, float duration)

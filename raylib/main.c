@@ -142,6 +142,10 @@ int main(void)
     DragState dragState = { 0 };
     int removeConfirmUnit = -1;  // unit index awaiting removal confirmation (-1 = none)
     ScreenShake shake = {0};
+    FloatingText floatingTexts[MAX_FLOATING_TEXTS] = {0};
+    int hoverAbilityId = -1;
+    float hoverTimer = 0.0f;
+    const float tooltipDelay = 0.5f;
 
     // Initial free shop roll
     RollShop(shopSlots, &playerGold, 0);
@@ -181,6 +185,10 @@ int main(void)
     {
         float dt = GetFrameTime();
         UpdateShake(&shake, dt);
+
+        // Hover tooltip tracking
+        int prevHoverAbilityId = hoverAbilityId;
+        hoverAbilityId = -1;
 
         // Lerp camera toward phase preset
         {
@@ -318,6 +326,7 @@ int main(void)
                         ClearAllModifiers(modifiers);
                         ClearAllProjectiles(projectiles);
                         ClearAllParticles(particles);
+                        ClearAllFloatingTexts(floatingTexts);
                         dragState.dragging = false;
                         removeConfirmUnit = -1;
                         // Reset ability state for combat start
@@ -629,6 +638,7 @@ int main(void)
                 }
             }
             UpdateParticles(particles, dt);
+            UpdateFloatingTexts(floatingTexts, dt);
 
             // === STEP 2: Update projectiles ===
             for (int p = 0; p < MAX_PROJECTILES; p++) {
@@ -807,6 +817,10 @@ int main(void)
                         castThisFrame = true;
                     } break;
                     }
+                    if (castThisFrame) {
+                        SpawnFloatingText(floatingTexts, units[i].position,
+                            def->name, ABILITY_COLORS[slot->abilityId], 1.0f);
+                    }
                 }
 
                 // Movement + basic attack
@@ -868,6 +882,7 @@ int main(void)
                 phase = PHASE_ROUND_OVER;
                 roundOverTimer = 2.5f;
                 ClearAllParticles(particles);
+                ClearAllFloatingTexts(floatingTexts);
             }
         }
         //------------------------------------------------------------------------------
@@ -896,6 +911,7 @@ int main(void)
                     }
                     ClearAllModifiers(modifiers);
                     ClearAllProjectiles(projectiles);
+                    ClearAllFloatingTexts(floatingTexts);
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0); // free roll
                     phase = PHASE_PREP;
@@ -919,6 +935,7 @@ int main(void)
                 ClearAllModifiers(modifiers);
                 ClearAllProjectiles(projectiles);
                 ClearAllParticles(particles);
+                ClearAllFloatingTexts(floatingTexts);
                 playerGold = 10;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 RollShop(shopSlots, &playerGold, 0);
@@ -1084,8 +1101,7 @@ int main(void)
                            units[i].position.y + (type->baseBounds.max.y * type->scale) + 1.0f,
                            units[i].position.z }, camera);
 
-            const char *teamTag = (units[i].team == TEAM_BLUE) ? "BLUE" : "RED";
-            const char *label = TextFormat("[%s] %s", teamTag, type->name);
+            const char *label = type->name;
             int tw = MeasureText(label, 14);
             DrawText(label, (int)sp.x - tw/2, (int)sp.y - 12, 14,
                      (units[i].team == TEAM_BLUE) ? DARKBLUE : MAROON);
@@ -1125,6 +1141,18 @@ int main(void)
                     modY += 10;
                 }
             }
+        }
+
+        // 2D overlay: floating texts (spell shouts)
+        for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
+            if (!floatingTexts[i].active) continue;
+            Vector2 fsp = GetWorldToScreen(floatingTexts[i].position, camera);
+            float alpha = floatingTexts[i].life / floatingTexts[i].maxLife;
+            int fontSize = 16;
+            int ftw = MeasureText(floatingTexts[i].text, fontSize);
+            Color ftc = floatingTexts[i].color;
+            ftc.a = (unsigned char)(255.0f * alpha);
+            DrawText(floatingTexts[i].text, (int)fsp.x - ftw/2, (int)fsp.y, fontSize, ftc);
         }
 
         // ── Spawn buttons + Play — only during prep ──
@@ -1340,11 +1368,18 @@ int main(void)
                             // Filled slot — colored background
                             DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
                                          ABILITY_COLORS[aslot->abilityId]);
-                            // Abbreviation
+                            // Hover detection
+                            bool slotHovered = CheckCollisionPointRec(GetMousePosition(),
+                                (Rectangle){(float)ax,(float)ay,(float)HUD_ABILITY_SLOT_SIZE,(float)HUD_ABILITY_SLOT_SIZE});
+                            if (slotHovered) hoverAbilityId = aslot->abilityId;
+                            // Abbreviation (scale up when charging tooltip)
+                            int abbrSize = 11;
+                            if (slotHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
+                                abbrSize = 11 + (int)(3.0f * (hoverTimer / tooltipDelay));
                             const char *abbr = ABILITY_ABBREV[aslot->abilityId];
-                            int aw2 = MeasureText(abbr, 11);
+                            int aw2 = MeasureText(abbr, abbrSize);
                             DrawText(abbr, ax + (HUD_ABILITY_SLOT_SIZE - aw2) / 2,
-                                    ay + (HUD_ABILITY_SLOT_SIZE - 11) / 2, 11, WHITE);
+                                    ay + (HUD_ABILITY_SLOT_SIZE - abbrSize) / 2, abbrSize, WHITE);
                             // Level indicator (bottom-left)
                             const char *lvl = TextFormat("L%d", aslot->level + 1);
                             DrawText(lvl, ax + 2, ay + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
@@ -1409,10 +1444,17 @@ int main(void)
                     if (inventory[inv].abilityId >= 0 && inventory[inv].abilityId < ABILITY_COUNT) {
                         DrawRectangle(ix+1, iy+1, HUD_ABILITY_SLOT_SIZE-2, HUD_ABILITY_SLOT_SIZE-2,
                                       ABILITY_COLORS[inventory[inv].abilityId]);
+                        // Hover detection
+                        bool invHovered = CheckCollisionPointRec(GetMousePosition(),
+                            (Rectangle){(float)ix,(float)iy,(float)HUD_ABILITY_SLOT_SIZE,(float)HUD_ABILITY_SLOT_SIZE});
+                        if (invHovered) hoverAbilityId = inventory[inv].abilityId;
+                        int invAbbrSize = 11;
+                        if (invHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
+                            invAbbrSize = 11 + (int)(3.0f * (hoverTimer / tooltipDelay));
                         const char *iabbr = ABILITY_ABBREV[inventory[inv].abilityId];
-                        int iaw = MeasureText(iabbr, 11);
+                        int iaw = MeasureText(iabbr, invAbbrSize);
                         DrawText(iabbr, ix + (HUD_ABILITY_SLOT_SIZE-iaw)/2,
-                                 iy + (HUD_ABILITY_SLOT_SIZE-11)/2, 11, WHITE);
+                                 iy + (HUD_ABILITY_SLOT_SIZE-invAbbrSize)/2, invAbbrSize, WHITE);
                         const char *ilvl = TextFormat("L%d", inventory[inv].level + 1);
                         DrawText(ilvl, ix + 2, iy + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
                     }
@@ -1465,8 +1507,10 @@ int main(void)
                         const AbilityDef *sdef = &ABILITY_DEFS[shopSlots[s].abilityId];
                         bool canAfford = (playerGold >= sdef->goldCost);
                         Color cardBg = canAfford ? ABILITY_COLORS[shopSlots[s].abilityId] : (Color){50,50,65,255};
-                        if (canAfford && CheckCollisionPointRec(GetMousePosition(),
-                            (Rectangle){(float)scx,(float)scy,(float)shopCardW,(float)shopCardH}))
+                        bool shopHovered = CheckCollisionPointRec(GetMousePosition(),
+                            (Rectangle){(float)scx,(float)scy,(float)shopCardW,(float)shopCardH});
+                        if (shopHovered) hoverAbilityId = shopSlots[s].abilityId;
+                        if (canAfford && shopHovered)
                             cardBg = (Color){ cardBg.r + 30, cardBg.g + 30, cardBg.b + 30, 255 };
                         DrawRectangle(scx, scy, shopCardW, shopCardH, cardBg);
                         DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){90,90,110,255});
@@ -1518,6 +1562,29 @@ int main(void)
             int yw = MeasureText("YES", 14), nw = MeasureText("NO", 14);
             DrawText("YES", (int)(yesBtn.x + (80 - yw) / 2), (int)(yesBtn.y + 5), 14, WHITE);
             DrawText("NO",  (int)(noBtn.x + (80 - nw) / 2), (int)(noBtn.y + 5), 14, WHITE);
+        }
+
+        // --- Hover tooltip timer + drawing ---
+        if (hoverAbilityId >= 0 && hoverAbilityId == prevHoverAbilityId)
+            hoverTimer += dt;
+        else if (hoverAbilityId >= 0)
+            hoverTimer = dt;
+        else
+            hoverTimer = 0.0f;
+
+        if (hoverAbilityId >= 0 && hoverTimer >= tooltipDelay) {
+            const AbilityDef *tipDef = &ABILITY_DEFS[hoverAbilityId];
+            Vector2 mpos = GetMousePosition();
+            int tipW = 170, tipH = 44;
+            int tipX = (int)mpos.x + 14;
+            int tipY = (int)mpos.y - tipH - 4;
+            // Keep on screen
+            if (tipX + tipW > GetScreenWidth()) tipX = (int)mpos.x - tipW - 4;
+            if (tipY < 0) tipY = (int)mpos.y + 20;
+            DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
+            DrawRectangleLines(tipX, tipY, tipW, tipH, (Color){100, 100, 130, 255});
+            DrawText(tipDef->name, tipX + 6, tipY + 4, 14, WHITE);
+            DrawText(tipDef->description, tipX + 6, tipY + 22, 10, (Color){180, 180, 200, 255});
         }
 
         DrawFPS(10, 10);
