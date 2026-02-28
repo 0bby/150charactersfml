@@ -10,6 +10,11 @@
       "player": "Player",
       "round": 5,
       "units": ["1PC1XXXXSP1", "0VC1ML1FI2CA2", "1VA3PC3XXCA2", "1VA3XXXXSG1"]
+    },
+    {
+      "player": "Player",
+      "round": 5,
+      "units": ["0HK2CF2SG2EQ1", "1SU2AS2CA1BR1"]
     }
   ]
 }

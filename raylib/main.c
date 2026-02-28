@@ -624,6 +624,61 @@ int main(void)
             }
         }
 
+        // NFC debug input handling (shared for plaza + prep)
+        if (debugMode && (phase == PHASE_PLAZA || phase == PHASE_PREP)) {
+            // NFC input error timer countdown
+            if (nfcInputErrorTimer > 0.0f) {
+                nfcInputErrorTimer -= dt;
+                if (nfcInputErrorTimer <= 0.0f) nfcInputError[0] = '\0';
+            }
+
+            // NFC emulation text input handling
+            if (nfcInputActive && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
+                int key = GetCharPressed();
+                while (key > 0) {
+                    // Uppercase the character
+                    if (key >= 'a' && key <= 'z') key = key - 'a' + 'A';
+                    if (((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9')) && nfcInputLen < 13) {
+                        nfcInputBuf[nfcInputLen] = (char)key;
+                        nfcInputLen++;
+                        nfcInputBuf[nfcInputLen] = '\0';
+                    }
+                    key = GetCharPressed();
+                }
+                if (IsKeyPressed(KEY_BACKSPACE) && nfcInputLen > 0) {
+                    nfcInputLen--;
+                    nfcInputBuf[nfcInputLen] = '\0';
+                }
+                if (IsKeyPressed(KEY_ESCAPE)) {
+                    nfcInputActive = false;
+                }
+                if (IsKeyPressed(KEY_ENTER) && nfcInputLen > 0) {
+                    int emTypeIndex;
+                    AbilitySlot emAbilities[MAX_ABILITIES_PER_UNIT];
+                    if (ParseUnitCode(nfcInputBuf, &emTypeIndex, emAbilities)) {
+                        if (emTypeIndex >= unitTypeCount) {
+                            snprintf(nfcInputError, sizeof(nfcInputError), "Unknown unit type %d", emTypeIndex);
+                            nfcInputErrorTimer = 2.0f;
+                        } else if (!SpawnUnit(units, &unitCount, emTypeIndex, TEAM_BLUE)) {
+                            snprintf(nfcInputError, sizeof(nfcInputError), "Team full (%d/%d)", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
+                            nfcInputErrorTimer = 2.0f;
+                        } else {
+                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+                                units[unitCount - 1].abilities[a] = emAbilities[a];
+                            intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                .typeIndex = emTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
+                            nfcInputBuf[0] = '\0';
+                            nfcInputLen = 0;
+                            nfcInputActive = false;
+                        }
+                    } else {
+                        snprintf(nfcInputError, sizeof(nfcInputError), "Bad format: %s", nfcInputBuf);
+                        nfcInputErrorTimer = 2.0f;
+                    }
+                }
+            }
+        }
+
         //------------------------------------------------------------------------------
         // PHASE: PLAZA — 3D plaza with roaming enemies, interactive objects
         //------------------------------------------------------------------------------
@@ -805,9 +860,22 @@ int main(void)
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
                 int dHudTop = sh - HUD_TOTAL_HEIGHT;
-                int btnXBlue = btnMargin;
-                (void)sw; // btnXRed not needed here (only blue spawns in plaza)
                 int btnYStart = dHudTop - (unitTypeCount * (btnHeight + btnMargin)) - btnMargin;
+
+                // NFC input box click check
+                {
+                    int nfcBoxW = 200, nfcBoxH = 28;
+                    int nfcBoxX = sw/2 - nfcBoxW/2;
+                    int nfcBoxY = btnYStart - 55;
+                    Rectangle nfcRect = { (float)nfcBoxX, (float)nfcBoxY, (float)nfcBoxW, (float)nfcBoxH };
+                    if (CheckCollisionPointRec(mouse, nfcRect)) {
+                        nfcInputActive = true;
+                    } else if (nfcInputActive) {
+                        nfcInputActive = false;
+                    }
+                }
+
+                int btnXBlue = btnMargin;
                 for (int i = 0; i < unitTypeCount; i++) {
                     Rectangle r = { (float)btnXBlue, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
                     if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded) {
@@ -937,58 +1005,6 @@ int main(void)
                 }
             }
 
-            // NFC input error timer countdown
-            if (nfcInputErrorTimer > 0.0f) {
-                nfcInputErrorTimer -= dt;
-                if (nfcInputErrorTimer <= 0.0f) nfcInputError[0] = '\0';
-            }
-
-            // NFC emulation text input handling (debug only)
-            if (debugMode && nfcInputActive && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
-                int key = GetCharPressed();
-                while (key > 0) {
-                    // Uppercase the character
-                    if (key >= 'a' && key <= 'z') key = key - 'a' + 'A';
-                    if (((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9')) && nfcInputLen < 13) {
-                        nfcInputBuf[nfcInputLen] = (char)key;
-                        nfcInputLen++;
-                        nfcInputBuf[nfcInputLen] = '\0';
-                    }
-                    key = GetCharPressed();
-                }
-                if (IsKeyPressed(KEY_BACKSPACE) && nfcInputLen > 0) {
-                    nfcInputLen--;
-                    nfcInputBuf[nfcInputLen] = '\0';
-                }
-                if (IsKeyPressed(KEY_ESCAPE)) {
-                    nfcInputActive = false;
-                }
-                if (IsKeyPressed(KEY_ENTER) && nfcInputLen > 0) {
-                    int emTypeIndex;
-                    AbilitySlot emAbilities[MAX_ABILITIES_PER_UNIT];
-                    if (ParseUnitCode(nfcInputBuf, &emTypeIndex, emAbilities)) {
-                        if (emTypeIndex >= unitTypeCount) {
-                            snprintf(nfcInputError, sizeof(nfcInputError), "Unknown unit type %d", emTypeIndex);
-                            nfcInputErrorTimer = 2.0f;
-                        } else if (!SpawnUnit(units, &unitCount, emTypeIndex, TEAM_BLUE)) {
-                            snprintf(nfcInputError, sizeof(nfcInputError), "Team full (%d/%d)", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
-                            nfcInputErrorTimer = 2.0f;
-                        } else {
-                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
-                                units[unitCount - 1].abilities[a] = emAbilities[a];
-                            intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                                .typeIndex = emTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
-                            nfcInputBuf[0] = '\0';
-                            nfcInputLen = 0;
-                            nfcInputActive = false;
-                        }
-                    } else {
-                        snprintf(nfcInputError, sizeof(nfcInputError), "Bad format: %s", nfcInputBuf);
-                        nfcInputErrorTimer = 2.0f;
-                    }
-                }
-            }
-
             // Smooth Y lift (skip units in statue spawn so gravity isn't fought)
             for (int i = 0; i < unitCount; i++)
             {
@@ -1031,6 +1047,66 @@ int main(void)
                     if (units[i].position.z >  gridLimit) units[i].position.z =  gridLimit;
                 }
                 if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) { PlaySound(sfxUiDrop); units[i].dragging = false; }
+            }
+
+            // Quick-buy: keys 1, 2, 3 for shop slots
+            if (!(isMultiplayer && playerReady) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE && !nfcInputActive) {
+                int quickBuyKeys[3] = { KEY_ONE, KEY_TWO, KEY_THREE };
+                for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
+                    if (IsKeyPressed(quickBuyKeys[s]) && shopSlots[s].abilityId >= 0) {
+                        if (isMultiplayer) {
+                            net_client_send_buy(&netClient, s);
+                        } else {
+                            // Check if a selected blue unit has an empty ability slot
+                            int selUnit = -1;
+                            for (int i = 0; i < unitCount; i++) {
+                                if (units[i].active && units[i].team == TEAM_BLUE && units[i].selected) {
+                                    selUnit = i;
+                                    break;
+                                }
+                            }
+                            if (selUnit >= 0) {
+                                int cost = ABILITY_DEFS[shopSlots[s].abilityId].goldCost;
+                                if (playerGold >= cost) {
+                                    bool placed = false;
+                                    // Check for upgrade first (same ability on unit)
+                                    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                        if (units[selUnit].abilities[a].abilityId == shopSlots[s].abilityId &&
+                                            units[selUnit].abilities[a].level < ABILITY_MAX_LEVELS - 1) {
+                                            units[selUnit].abilities[a].level++;
+                                            playerGold -= cost;
+                                            shopSlots[s].abilityId = -1;
+                                            placed = true;
+                                            break;
+                                        }
+                                    }
+                                    // Otherwise empty slot on selected unit
+                                    if (!placed) {
+                                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                            if (units[selUnit].abilities[a].abilityId < 0) {
+                                                units[selUnit].abilities[a].abilityId = shopSlots[s].abilityId;
+                                                units[selUnit].abilities[a].level = shopSlots[s].level;
+                                                playerGold -= cost;
+                                                shopSlots[s].abilityId = -1;
+                                                placed = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    // Unit full — fall back to inventory
+                                    if (!placed) {
+                                        BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
+                                    }
+                                    if (placed || shopSlots[s].abilityId < 0) PlaySound(sfxUiBuy);
+                                }
+                            } else {
+                                // No unit selected — normal buy (auto-combine / inventory)
+                                BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
+                            }
+                        }
+                        break;
+                    }
+                }
             }
 
             // Clicks (blocked during intro)
@@ -3283,6 +3359,9 @@ int main(void)
                         DrawText("SOLD", scx + (shopCardW - MeasureText("SOLD",12))/2,
                                 scy + (shopCardH - 12)/2, 12, (Color){60,60,80,255});
                     }
+                    // Keybind indicator
+                    const char *keyLabel = TextFormat("[%d]", s + 1);
+                    DrawText(keyLabel, scx + 2, scy + 2, 10, (Color){180, 180, 200, 160});
                 }
 
                 // Gold display (right side)
