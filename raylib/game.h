@@ -25,7 +25,7 @@ typedef enum { TEAM_BLUE = 0, TEAM_RED = 1 } Team;
 // Game phases
 //------------------------------------------------------------------------------------
 typedef enum {
-    PHASE_MENU,       // main menu + leaderboard view
+    PHASE_PLAZA,      // 3D plaza with roaming enemies, interactive objects
     PHASE_LOBBY,      // waiting in multiplayer lobby
     PHASE_PREP,       // place / arrange units
     PHASE_COMBAT,     // units fight automatically
@@ -34,7 +34,7 @@ typedef enum {
     PHASE_GAME_OVER,  // all rounds finished
 } GamePhase;
 
-typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_COUNT } AnimState;
+typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_SCARED, ANIM_COUNT } AnimState;
 
 #define MAX_SHOP_SLOTS 3
 #define MAX_MODIFIERS 128
@@ -150,6 +150,8 @@ typedef struct {
     int animCount;                  // number of walk animations
     ModelAnimation *idleAnims;      // idle animations (NULL if none)
     int idleAnimCount;              // number of idle animations
+    ModelAnimation *scaredAnims;    // scared animations (NULL if none)
+    int scaredAnimCount;            // number of scared animations
     int animIndex[ANIM_COUNT];      // index into respective anim array (-1 = not found)
     bool hasAnimations;
     float yOffset;          // vertical draw offset (raise/lower model)

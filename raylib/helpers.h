@@ -65,6 +65,9 @@ void StartStatueSpawn(StatueSpawn *spawn, int unitIndex);
 void UpdateStatueSpawn(StatueSpawn *spawn, Particle particles[], ScreenShake *shake, Vector3 unitWorldPos, float dt);
 bool IsUnitInStatueSpawn(const StatueSpawn *spawn, int unitIndex);
 
+// Plaza smoke poof
+void SpawnPoofBurst(Particle particles[], Vector3 pos, int count);
+
 // Drawing helpers
 void DrawArc3D(Vector3 center, float radius, float fraction, Color color);
 

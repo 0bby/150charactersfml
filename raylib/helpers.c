@@ -481,6 +481,27 @@ bool IsUnitInStatueSpawn(const StatueSpawn *spawn, int unitIndex)
 }
 
 //------------------------------------------------------------------------------------
+// Plaza Smoke Poof
+//------------------------------------------------------------------------------------
+void SpawnPoofBurst(Particle particles[], Vector3 pos, int count)
+{
+    for (int i = 0; i < count; i++) {
+        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+        float speed = (float)GetRandomValue(20, 60) / 10.0f;
+        Vector3 vel = {
+            cosf(angle) * speed,
+            (float)GetRandomValue(10, 40) / 10.0f,
+            sinf(angle) * speed
+        };
+        int shade = GetRandomValue(160, 230);
+        Color smokeColor = { (unsigned char)shade, (unsigned char)shade, (unsigned char)shade, 255 };
+        float sz = (float)GetRandomValue(5, 15) / 10.0f;
+        SpawnParticle(particles, pos, vel,
+            0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, smokeColor);
+    }
+}
+
+//------------------------------------------------------------------------------------
 // Drawing Helpers
 //------------------------------------------------------------------------------------
 void DrawArc3D(Vector3 center, float radius, float fraction, Color color)

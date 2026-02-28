@@ -27,6 +27,7 @@
 #include "leaderboard.h"
 #include "net_client.h"
 #include "pve_waves.h"
+#include "plaza.h"
 
 // --- Win/loss sound split point (seconds) — tweak & re-split with ffmpeg if needed ---
 // Loss = first 6.5s of "cgj loss and win demo 2.mp3" → sfx/loss.wav
@@ -50,9 +51,10 @@ int main(void)
     SetSoundVolume(sfxLoss, ENDGAME_SFX_VOL);
     bool lastOutcomeWin = false;
 
-    // Camera presets — prep (top-down auto-chess) vs combat (diagonal MOBA)
+    // Camera presets — prep (top-down auto-chess) vs combat (diagonal MOBA) vs plaza (cinematic)
     const float prepHeight = 200.0f, prepDistance = 150.0f, prepFOV = 48.0f, prepX = 0.0f;
     const float combatHeight = 135.0f, combatDistance = 165.0f, combatFOV = 55.0f, combatX = 37.0f;
+    const float plazaHeight = 120.0f, plazaDistance = 180.0f, plazaFOV = 55.0f, plazaX = 25.0f;
     const float camLerpSpeed = 2.5f;
 
     float camHeight = prepHeight;
@@ -104,6 +106,10 @@ int main(void)
     for (int s = 0; s < ANIM_COUNT; s++) unitTypes[1].animIndex[s] = -1;
     if (walkAnimCount > 0) unitTypes[1].animIndex[ANIM_WALK] = 0;
     if (idleAnimCount > 0) unitTypes[1].animIndex[ANIM_IDLE] = 0;
+    // ANIM_SCARED: use dedicated scared GLB if available, else fallback to walk
+    unitTypes[1].scaredAnims = NULL;
+    unitTypes[1].scaredAnimCount = 0;
+    if (walkAnimCount > 0) unitTypes[1].animIndex[ANIM_SCARED] = 0;  // fallback to walk
     unitTypes[1].hasAnimations = (walkAnimCount > 0 || idleAnimCount > 0);
 
     // Portrait render textures for HUD (one per max blue unit)
@@ -309,14 +315,30 @@ int main(void)
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
 
+    // Plaza state
+    PlazaSubState plazaState = PLAZA_ROAMING;
+    float plazaTimer = 0.0f;
+    PlazaUnitData plazaData[MAX_UNITS] = {0};
+    bool showMultiplayerPanel = false;
+    Model doorModel = LoadModel("assets/goblin/environment/door/Door.obj");
+    for (int m = 0; m < doorModel.materialCount; m++)
+        doorModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+    Model trophyModel = LoadModel("assets/goblin/environment/trophy/Trophy.obj");
+    for (int m = 0; m < trophyModel.materialCount; m++)
+        trophyModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+    Vector3 doorPos = { 120.0f, 0.0f, 80.0f };
+    Vector3 trophyPos = { -120.0f, 0.0f, 80.0f };
+    int plazaHoverObject = 0;  // 0=none, 1=trophy, 2=door
+    float plazaSparkleTimer = 0.0f;  // for sparkle effect on objects
+
     // Round / score state
-    GamePhase phase = PHASE_MENU;
+    GamePhase phase = PHASE_PLAZA;
     int currentRound = 0;          // 0-indexed, displayed as 1-indexed
     int blueWins = 0;
     int redWins  = 0;
     float roundOverTimer = 0.0f;   // brief pause after a round ends
     const char *roundResultText = "";
-    bool debugMode = true;
+    bool debugMode = false;
 
     // Leaderboard & prestige state
     Leaderboard leaderboard = {0};
@@ -356,6 +378,9 @@ int main(void)
     const int btnMargin = 10;
     const int playBtnW = 120;
     const int playBtnH = 40;
+
+    // Spawn initial plaza enemies
+    PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
 
     SetTargetFPS(60);
 
@@ -479,10 +504,11 @@ int main(void)
         // Lerp camera toward phase preset
         {
             bool combat = (phase == PHASE_COMBAT);
-            float tgtH = combat ? combatHeight : prepHeight;
-            float tgtD = combat ? combatDistance : prepDistance;
-            float tgtF = combat ? combatFOV : prepFOV;
-            float tgtX = combat ? combatX : prepX;
+            bool plaza = (phase == PHASE_PLAZA);
+            float tgtH = plaza ? plazaHeight : (combat ? combatHeight : prepHeight);
+            float tgtD = plaza ? plazaDistance : (combat ? combatDistance : prepDistance);
+            float tgtF = plaza ? plazaFOV : (combat ? combatFOV : prepFOV);
+            float tgtX = plaza ? plazaX : (combat ? combatX : prepX);
             // Mirror camera for player 2 during PVP combat
             if (combat && isMultiplayer && netClient.playerSlot == 1 && !currentRoundIsPve) {
                 tgtX = -tgtX;
@@ -506,8 +532,8 @@ int main(void)
         float cameraPos[3] = { camera.position.x, camera.position.y, camera.position.z };
         SetShaderValue(lightShader, lightShader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
 
-        // Poll NFC bridge for tag scans (only spawn during prep, blocked during intro)
-        if (nfcPipe && phase == PHASE_PREP && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
+        // Poll NFC bridge for tag scans (spawn during prep or plaza, blocked during intro)
+        if (nfcPipe && (phase == PHASE_PLAZA || phase == PHASE_PREP) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
             char nfcBuf[64];
             if (fgets(nfcBuf, sizeof(nfcBuf), nfcPipe)) {
                 nfcBuf[strcspn(nfcBuf, "\r\n")] = '\0';
@@ -528,6 +554,10 @@ int main(void)
                             nfcReader, nfcCode, unitTypes[nfcTypeIndex].name);
                         intro = (UnitIntro){ .active = true, .timer = 0.0f,
                             .typeIndex = nfcTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
+                        // Trigger plaza scared if we're in plaza mode
+                        if (phase == PHASE_PLAZA && plazaState == PLAZA_ROAMING) {
+                            PlazaTriggerScared(units, unitCount, plazaData, &plazaState, &plazaTimer);
+                        }
                     } else {
                         printf("[NFC] Reader %d: '%s' -> Blue team full or unknown type\n", nfcReader, nfcCode);
                     }
@@ -538,11 +568,124 @@ int main(void)
         }
 
         //------------------------------------------------------------------------------
-        // PHASE: MENU — main menu + leaderboard view
+        // PHASE: PLAZA — 3D plaza with roaming enemies, interactive objects
         //------------------------------------------------------------------------------
-        if (phase == PHASE_MENU)
+        if (phase == PHASE_PLAZA)
         {
-            // Name input handling
+            // Update plaza sub-states
+            if (plazaState == PLAZA_ROAMING) {
+                PlazaUpdateRoaming(units, unitCount, plazaData, dt);
+            } else if (plazaState == PLAZA_SCARED) {
+                plazaTimer -= dt;
+                if (plazaTimer <= 0.0f) {
+                    plazaState = PLAZA_FLEEING;
+                }
+            } else if (plazaState == PLAZA_FLEEING) {
+                bool allGone = PlazaUpdateFlee(units, unitCount, plazaData, particles, dt);
+                if (allGone) {
+                    // All enemies fled — initialize game state and transition to prep
+                    ClearRedUnits(units, &unitCount);
+                    snapshotCount = 0;
+                    currentRound = 0;
+                    blueWins = 0;
+                    redWins = 0;
+                    lastMilestoneRound = 0;
+                    blueLostLastRound = false;
+                    deathPenalty = false;
+                    roundResultText = "";
+                    ClearAllModifiers(modifiers);
+                    ClearAllProjectiles(projectiles);
+                    ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
+                    statueSpawn.phase = SSPAWN_INACTIVE;
+                    playerGold = 100;
+                    for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
+                    RollShop(shopSlots, &playerGold, 0);
+                    dragState.dragging = false;
+                    SpawnWave(units, &unitCount, 0, unitTypeCount);
+                    phase = PHASE_PREP;
+                }
+            }
+
+            // Check 3D object hover
+            if (!showLeaderboard && !showMultiplayerPanel) {
+                plazaHoverObject = PlazaCheckObjectHover(camera, trophyPos, doorPos);
+            } else {
+                plazaHoverObject = 0;
+            }
+
+            // Click handling for 3D objects and overlays
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                if (showLeaderboard) {
+                    // Close button for leaderboard overlay
+                    int sw = GetScreenWidth();
+                    int sh = GetScreenHeight();
+                    Rectangle closeBtn = { (float)(sw/2 + 280), (float)(sh/2 - 250), 40, 40 };
+                    if (CheckCollisionPointRec(GetMousePosition(), closeBtn))
+                        showLeaderboard = false;
+                } else if (showMultiplayerPanel) {
+                    // Multiplayer panel click handling
+                    int sw = GetScreenWidth();
+                    int sh = GetScreenHeight();
+                    int panelW = 400, panelH = 300;
+                    int panelX = sw/2 - panelW/2;
+                    int panelY = sh/2 - panelH/2;
+                    Vector2 mouse = GetMousePosition();
+
+                    // Close button
+                    Rectangle closeBtn = { (float)(panelX + panelW - 36), (float)(panelY + 4), 32, 32 };
+                    if (CheckCollisionPointRec(mouse, closeBtn)) {
+                        showMultiplayerPanel = false;
+                    }
+
+                    // Name input field
+                    Rectangle nameField = { (float)(panelX + 50), (float)(panelY + 60), (float)(panelW - 100), 36 };
+                    if (CheckCollisionPointRec(mouse, nameField))
+                        nameInputActive = true;
+                    else
+                        nameInputActive = false;
+
+                    // CREATE LOBBY button
+                    Rectangle createBtn = { (float)(panelX + 50), (float)(panelY + 120), (float)(panelW - 100), 40 };
+                    if (CheckCollisionPointRec(mouse, createBtn)) {
+                        menuError[0] = '\0';
+                        isMultiplayer = true;
+                        playerReady = false;
+                        if (net_client_connect(&netClient, serverHost, NET_PORT, NULL, playerName) == 0) {
+                            showMultiplayerPanel = false;
+                            phase = PHASE_LOBBY;
+                        } else {
+                            strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                            isMultiplayer = false;
+                        }
+                    }
+
+                    // JOIN LOBBY button
+                    Rectangle joinBtn = { (float)(panelX + 50), (float)(panelY + 180), (float)(panelW - 100), 40 };
+                    if (joinCodeLen == LOBBY_CODE_LEN && CheckCollisionPointRec(mouse, joinBtn)) {
+                        menuError[0] = '\0';
+                        isMultiplayer = true;
+                        playerReady = false;
+                        if (net_client_connect(&netClient, serverHost, NET_PORT, joinCodeInput, playerName) == 0) {
+                            showMultiplayerPanel = false;
+                            phase = PHASE_LOBBY;
+                        } else {
+                            strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                            isMultiplayer = false;
+                        }
+                    }
+                } else {
+                    // 3D object clicks
+                    if (plazaHoverObject == 1) {
+                        showLeaderboard = true;
+                        leaderboardScroll = 0;
+                    } else if (plazaHoverObject == 2) {
+                        showMultiplayerPanel = true;
+                    }
+                }
+            }
+
+            // Name input handling (shared for multiplayer panel)
             if (nameInputActive) {
                 int key = GetCharPressed();
                 while (key > 0) {
@@ -560,98 +703,8 @@ int main(void)
                 if (IsKeyPressed(KEY_ENTER)) nameInputActive = false;
             }
 
-            // Click handling
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                Vector2 mouse = GetMousePosition();
-                int sw = GetScreenWidth();
-                int sh = GetScreenHeight();
-
-                if (showLeaderboard) {
-                    // Close button for leaderboard overlay
-                    Rectangle closeBtn = { (float)(sw/2 + 280), (float)(sh/2 - 250), 40, 40 };
-                    if (CheckCollisionPointRec(mouse, closeBtn))
-                        showLeaderboard = false;
-                } else {
-                    // Name input field
-                    Rectangle nameField = { (float)(sw/2 - 120), (float)(sh/2 - 40), 240, 36 };
-                    if (CheckCollisionPointRec(mouse, nameField))
-                        nameInputActive = true;
-                    else
-                        nameInputActive = false;
-
-                    // PLAY button
-                    Rectangle playMenuBtn = { (float)(sw/2 - 80), (float)(sh/2 + 20), 160, 50 };
-                    if (CheckCollisionPointRec(mouse, playMenuBtn)) {
-                        // Initialize game state
-                        unitCount = 0;
-                        snapshotCount = 0;
-                        currentRound = 0;
-                        blueWins = 0;
-                        redWins = 0;
-                        lastMilestoneRound = 0;
-                        blueLostLastRound = false;
-                        deathPenalty = false;
-                        roundResultText = "";
-                        ClearAllModifiers(modifiers);
-                        ClearAllProjectiles(projectiles);
-                        ClearAllParticles(particles);
-                        ClearAllFloatingTexts(floatingTexts);
-                        ClearAllFissures(fissures);
-                        statueSpawn.phase = SSPAWN_INACTIVE;
-                        playerGold = 100;
-                        for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
-                        RollShop(shopSlots, &playerGold, 0);
-                        dragState.dragging = false;
-                        SpawnWave(units, &unitCount, 0, unitTypeCount);
-                        phase = PHASE_PREP;
-                    }
-
-                    // LEADERBOARD button
-                    Rectangle lbBtn = { (float)(sw/2 - 80), (float)(sh/2 + 80), 160, 40 };
-                    if (CheckCollisionPointRec(mouse, lbBtn)) {
-                        showLeaderboard = true;
-                        leaderboardScroll = 0;
-                    }
-
-                    // --- Multiplayer buttons ---
-                    // CREATE LOBBY button
-                    Rectangle createBtn = { (float)(sw/2 - 80), (float)(sh/2 + 130), 160, 40 };
-                    if (CheckCollisionPointRec(mouse, createBtn)) {
-                        menuError[0] = '\0';
-                        isMultiplayer = true;
-                        playerReady = false;
-                        if (net_client_connect(&netClient, serverHost, NET_PORT, NULL, playerName) == 0) {
-                            phase = PHASE_LOBBY;
-                        } else {
-                            strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
-                            isMultiplayer = false;
-                        }
-                    }
-
-                    // JOIN LOBBY button (only if 4-char code entered)
-                    Rectangle joinBtn = { (float)(sw/2 - 80), (float)(sh/2 + 180), 160, 40 };
-                    if (joinCodeLen == LOBBY_CODE_LEN &&
-                        CheckCollisionPointRec(mouse, joinBtn)) {
-                        menuError[0] = '\0';
-                        isMultiplayer = true;
-                        playerReady = false;
-                        if (net_client_connect(&netClient, serverHost, NET_PORT, joinCodeInput, playerName) == 0) {
-                            phase = PHASE_LOBBY;
-                        } else {
-                            strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
-                            isMultiplayer = false;
-                        }
-                    }
-
-                    // Join code input field focus
-                    Rectangle codeBox = { (float)(sw/2 - 60), (float)(sh/2 + 225), 120, 30 };
-                    if (CheckCollisionPointRec(mouse, codeBox))
-                        mpNameFieldFocused = false;
-                }
-            }
-
             // Multiplayer join code text input
-            if (!showLeaderboard && !nameInputActive) {
+            if (showMultiplayerPanel && !nameInputActive) {
                 int key = GetCharPressed();
                 while (key > 0) {
                     if (joinCodeLen < LOBBY_CODE_LEN && ((key >= 'A' && key <= 'Z') ||
@@ -662,15 +715,17 @@ int main(void)
                     }
                     key = GetCharPressed();
                 }
-                if (IsKeyPressed(KEY_BACKSPACE) && joinCodeLen > 0 && !nameInputActive) {
+                if (IsKeyPressed(KEY_BACKSPACE) && joinCodeLen > 0) {
                     joinCodeLen--;
                     joinCodeInput[joinCodeLen] = '\0';
                 }
             }
 
-            // ESC closes leaderboard overlay
+            // ESC closes overlays
             if (showLeaderboard && IsKeyPressed(KEY_ESCAPE))
                 showLeaderboard = false;
+            if (showMultiplayerPanel && IsKeyPressed(KEY_ESCAPE))
+                showMultiplayerPanel = false;
 
             // Leaderboard scroll
             if (showLeaderboard) {
@@ -680,6 +735,33 @@ int main(void)
                 int maxScroll = leaderboard.entryCount * 80 - 400;
                 if (maxScroll < 0) maxScroll = 0;
                 if (leaderboardScroll > maxScroll) leaderboardScroll = maxScroll;
+            }
+
+            // Debug spawn buttons click handling during plaza
+            if (debugMode && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+                !showLeaderboard && !showMultiplayerPanel) {
+                Vector2 mouse = GetMousePosition();
+                int sw = GetScreenWidth();
+                int sh = GetScreenHeight();
+                int dHudTop = sh - HUD_TOTAL_HEIGHT;
+                int btnXBlue = btnMargin;
+                (void)sw; // btnXRed not needed here (only blue spawns in plaza)
+                int btnYStart = dHudTop - (unitTypeCount * (btnHeight + btnMargin)) - btnMargin;
+                for (int i = 0; i < unitTypeCount; i++) {
+                    Rectangle r = { (float)btnXBlue, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                    if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded) {
+                        if (SpawnUnit(units, &unitCount, i, TEAM_BLUE)) {
+                            // Place on blue side
+                            units[unitCount-1].position.x = (float)GetRandomValue(-50, 50);
+                            units[unitCount-1].position.z = (float)GetRandomValue(10, 80);
+                            // Trigger scared
+                            if (plazaState == PLAZA_ROAMING) {
+                                PlazaTriggerScared(units, unitCount, plazaData, &plazaState, &plazaTimer);
+                            }
+                        }
+                        break;
+                    }
+                }
             }
         }
         //------------------------------------------------------------------------------
@@ -693,7 +775,11 @@ int main(void)
                 strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
-                phase = PHASE_MENU;
+                unitCount = 0;
+                memset(plazaData, 0, sizeof(plazaData));
+                PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
+                plazaState = PLAZA_ROAMING;
+                phase = PHASE_PLAZA;
             }
 
             if (netClient.gameStarted) {
@@ -729,7 +815,11 @@ int main(void)
             if (IsKeyPressed(KEY_ESCAPE)) {
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
-                phase = PHASE_MENU;
+                unitCount = 0;
+                memset(plazaData, 0, sizeof(plazaData));
+                PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
+                plazaState = PLAZA_ROAMING;
+                phase = PHASE_PLAZA;
             }
         }
         //------------------------------------------------------------------------------
@@ -743,7 +833,11 @@ int main(void)
                 if (netClient.state == NET_ERROR) {
                     net_client_disconnect(&netClient);
                     isMultiplayer = false;
-                    phase = PHASE_MENU;
+                    unitCount = 0;
+                    memset(plazaData, 0, sizeof(plazaData));
+                    PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
+                    plazaState = PLAZA_ROAMING;
+                    phase = PHASE_PLAZA;
                 }
                 if (netClient.shopUpdated) {
                     netClient.shopUpdated = false;
@@ -932,6 +1026,16 @@ int main(void)
                         units[ri].active = false;
                         removeConfirmUnit = -1;
                         clickedButton = true;
+                        // Check if all blue units removed → return to plaza
+                        int blueLeft = CountTeamUnits(units, unitCount, TEAM_BLUE);
+                        if (blueLeft == 0) {
+                            ClearRedUnits(units, &unitCount);
+                            CompactBlueUnits(units, &unitCount);
+                            memset(plazaData, 0, sizeof(plazaData));
+                            PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
+                            plazaState = PLAZA_ROAMING;
+                            phase = PHASE_PLAZA;
+                        }
                     } else if (CheckCollisionPointRec(mouse, noBtn)) {
                         removeConfirmUnit = -1;
                         clickedButton = true;
@@ -1970,7 +2074,11 @@ int main(void)
                 dragState.dragging = false;
                 joinCodeLen = 0;
                 joinCodeInput[0] = '\0';
-                phase = PHASE_MENU;
+                unitCount = 0;
+                memset(plazaData, 0, sizeof(plazaData));
+                PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
+                plazaState = PLAZA_ROAMING;
+                phase = PHASE_PLAZA;
             }
 
             // Solo: existing game over logic
@@ -2026,7 +2134,11 @@ int main(void)
                     playerGold = 100;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     dragState.dragging = false;
-                    phase = PHASE_MENU;
+                    unitCount = 0;
+                    memset(plazaData, 0, sizeof(plazaData));
+                    PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
+                    plazaState = PLAZA_ROAMING;
+                    phase = PHASE_PLAZA;
                 }
             }
 
@@ -2050,7 +2162,10 @@ int main(void)
                 playerGold = 100;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
-                phase = PHASE_MENU;
+                memset(plazaData, 0, sizeof(plazaData));
+                PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
+                plazaState = PLAZA_ROAMING;
+                phase = PHASE_PLAZA;
             }
         }
 
@@ -2068,6 +2183,8 @@ int main(void)
             if (phase == PHASE_COMBAT && units[i].targetIndex >= 0) {
                 float dist = DistXZ(units[i].position, units[units[i].targetIndex].position);
                 if (dist > ATTACK_RANGE) desired = ANIM_WALK;
+            } else if (phase == PHASE_PLAZA) {
+                desired = units[i].currentAnim;  // set by plaza roam/flee logic
             }
 
             // Reset frame on anim change
@@ -2076,10 +2193,16 @@ int main(void)
                 units[i].animFrame = 0;
             }
 
-            // Advance frame
+            // Advance frame — pick anim array based on current state
             int idx = type->animIndex[units[i].currentAnim];
             if (idx >= 0) {
-                ModelAnimation *arr = (units[i].currentAnim == ANIM_IDLE) ? type->idleAnims : type->anims;
+                ModelAnimation *arr;
+                if (units[i].currentAnim == ANIM_IDLE)
+                    arr = type->idleAnims;
+                else if (units[i].currentAnim == ANIM_SCARED && type->scaredAnims)
+                    arr = type->scaredAnims;
+                else
+                    arr = type->anims;
                 int frameCount = arr[idx].frameCount;
                 if (frameCount > 0)
                     units[i].animFrame = (units[i].animFrame + 1) % frameCount;
@@ -2368,6 +2491,13 @@ int main(void)
                     }
                 }
             }
+
+            // Draw plaza 3D objects (door, trophy) during PHASE_PLAZA
+            if (phase == PHASE_PLAZA) {
+                plazaSparkleTimer += dt;
+                PlazaDrawObjects(doorModel, trophyModel, doorPos, trophyPos, camera,
+                    plazaHoverObject == 2, plazaHoverObject == 1, plazaSparkleTimer);
+            }
         EndMode3D();
 
         // Restore camera position after shake
@@ -2514,8 +2644,8 @@ int main(void)
             DrawText(floatingTexts[i].text, (int)fsp.x - ftw/2, (int)fsp.y, fontSize, ftc);
         }
 
-        // ── Spawn buttons + Play — only during prep ──
-        if (phase == PHASE_PREP)
+        // ── Spawn buttons + Play — during prep and plaza ──
+        if (phase == PHASE_PREP || phase == PHASE_PLAZA)
         {
             int sw = GetScreenWidth();
             int sh = GetScreenHeight();
@@ -2554,8 +2684,8 @@ int main(void)
                 DrawText(TextFormat("[</>] Tiles: %s", tileLayoutNames[tileLayout]), dBtnXBlue, dBtnYStart - 36, 12, YELLOW);
             }
 
-            // Round info label
-            {
+            // Round info label (prep phase only)
+            if (phase == PHASE_PREP) {
                 const char *waveLabel = TextFormat("Wave %d", currentRound + 1);
                 int wlw = MeasureText(waveLabel, 16);
                 DrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, 16, WHITE);
@@ -2614,8 +2744,8 @@ int main(void)
                 DrawText(nextText, sw/2 - ntw/2, 82, 14, ORANGE);
             }
 
-            // PLAY button (centre-bottom)
-            {
+            // PLAY button (centre-bottom, prep phase only)
+            if (phase == PHASE_PREP) {
                 Rectangle dPlayBtn = { (float)(sw/2 - playBtnW/2), (float)(dHudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 int ba, ra;
                 CountTeams(units, unitCount, &ba, &ra);
@@ -2635,11 +2765,15 @@ int main(void)
         {
             int sw = GetScreenWidth();
             int sh = GetScreenHeight();
-            DrawText(TextFormat("Round: %d / %d", currentRound < TOTAL_ROUNDS ? currentRound + 1 : TOTAL_ROUNDS, TOTAL_ROUNDS),
-                     sw/2 - 60, 10, 20, BLACK);
-            DrawText(TextFormat("BLUE: %d", blueWins), sw/2 - 120, 35, 18, DARKBLUE);
-            DrawText(TextFormat("RED: %d", redWins),  sw/2 + 60, 35, 18, MAROON);
-            DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
+            if (phase != PHASE_PLAZA) {
+                DrawText(TextFormat("Round: %d / %d", currentRound < TOTAL_ROUNDS ? currentRound + 1 : TOTAL_ROUNDS, TOTAL_ROUNDS),
+                         sw/2 - 60, 10, 20, BLACK);
+                DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
+            }
+            if (isMultiplayer) {
+                DrawText(TextFormat("BLUE: %d", blueWins), sw/2 - 120, 35, 18, DARKBLUE);
+                DrawText(TextFormat("RED: %d", redWins),  sw/2 + 60, 35, 18, MAROON);
+            }
 
             // Phase label
             if (phase == PHASE_COMBAT)
@@ -2712,7 +2846,7 @@ int main(void)
         }
 
         // ── UNIT HUD BAR + SHOP ── (visible during prep, combat, round_over only)
-        if (phase != PHASE_GAME_OVER && phase != PHASE_MENU && phase != PHASE_MILESTONE)
+        if (phase != PHASE_GAME_OVER && phase != PHASE_PLAZA && phase != PHASE_MILESTONE)
         {
             int hudSw = GetScreenWidth();
             int hudSh = GetScreenHeight();
@@ -3162,128 +3296,42 @@ int main(void)
         }
 
         //==============================================================================
-        // PHASE_MENU DRAWING
+        // PHASE_PLAZA DRAWING (2D overlays on top of the 3D world)
         //==============================================================================
-        if (phase == PHASE_MENU)
+        if (phase == PHASE_PLAZA)
         {
             int msw = GetScreenWidth();
             int msh = GetScreenHeight();
 
-            // Dark background
-            DrawRectangle(0, 0, msw, msh, (Color){ 20, 20, 30, 255 });
-
-            // Title
-            const char *title = "AUTOCHESS";
-            int titleSize = 48;
+            // Title text (floating over the 3D scene)
+            const char *title = "Sets of Skills";
+            int titleSize = 72;
             int tw = MeasureText(title, titleSize);
-            DrawText(title, msw/2 - tw/2, msh/4 - 40, titleSize, (Color){200, 180, 255, 255});
+            DrawText(title, msw/2 - tw/2, 60, titleSize, (Color){200, 180, 255, 220});
 
-            const char *subtitle = "Set in Stone";
-            int subSize = 24;
+            const char *subtitle = "Scan a figure to begin";
+            int subSize = 32;
             int sw2 = MeasureText(subtitle, subSize);
-            DrawText(subtitle, msw/2 - sw2/2, msh/4 + 20, subSize, (Color){160,140,200,200});
+            DrawText(subtitle, msw/2 - sw2/2, 140, subSize, (Color){160,140,200,160});
 
-            // Name input field
+            // Draw floating 2D labels above 3D objects
             {
-                const char *nameLabel = "Player Name:";
-                int nlw = MeasureText(nameLabel, 16);
-                DrawText(nameLabel, msw/2 - nlw/2, msh/2 - 65, 16, (Color){180,180,200,255});
+                Vector2 trophyScreen = GetWorldToScreen((Vector3){trophyPos.x, trophyPos.y + 14.0f, trophyPos.z}, camera);
+                const char *tLabel = "LEADERBOARD";
+                int tlw = MeasureText(tLabel, 14);
+                Color tlCol = (plazaHoverObject == 1) ? YELLOW : (Color){200,200,220,200};
+                DrawText(tLabel, (int)trophyScreen.x - tlw/2, (int)trophyScreen.y, 14, tlCol);
 
-                Rectangle nameField = { (float)(msw/2 - 120), (float)(msh/2 - 40), 240, 36 };
-                Color nameBg = nameInputActive ? (Color){50,50,70,255} : (Color){35,35,50,255};
-                DrawRectangleRec(nameField, nameBg);
-                Color nameBorder = nameInputActive ? (Color){150,140,200,255} : (Color){80,80,100,255};
-                DrawRectangleLinesEx(nameField, 2, nameBorder);
-
-                // Draw player name with cursor
-                int nameTextW = MeasureText(playerName, 18);
-                DrawText(playerName, msw/2 - nameTextW/2, msh/2 - 31, 18, WHITE);
-                if (nameInputActive) {
-                    // Blinking cursor
-                    float blinkTime = (float)GetTime();
-                    if ((int)(blinkTime * 2) % 2 == 0) {
-                        int cursorX = msw/2 - nameTextW/2 + nameTextW;
-                        DrawRectangle(cursorX + 2, msh/2 - 31, 2, 18, WHITE);
-                    }
-                }
+                Vector2 doorScreen = GetWorldToScreen((Vector3){doorPos.x, doorPos.y + 18.0f, doorPos.z}, camera);
+                const char *dLabel = "MULTIPLAYER";
+                int dlw = MeasureText(dLabel, 14);
+                Color dlCol = (plazaHoverObject == 2) ? YELLOW : (Color){200,200,220,200};
+                DrawText(dLabel, (int)doorScreen.x - dlw/2, (int)doorScreen.y, 14, dlCol);
             }
 
-            // PLAY button
-            {
-                Rectangle playMenuBtn = { (float)(msw/2 - 80), (float)(msh/2 + 20), 160, 50 };
-                Color playBg = (Color){50,180,80,255};
-                if (CheckCollisionPointRec(GetMousePosition(), playMenuBtn))
-                    playBg = (Color){30,220,60,255};
-                DrawRectangleRec(playMenuBtn, playBg);
-                DrawRectangleLinesEx(playMenuBtn, 2, DARKGREEN);
-                const char *playText = "PLAY";
-                int ptw2 = MeasureText(playText, 24);
-                DrawText(playText, (int)(playMenuBtn.x + 80 - ptw2/2), (int)(playMenuBtn.y + 13), 24, WHITE);
-            }
-
-            // LEADERBOARD button
-            {
-                Rectangle lbBtn = { (float)(msw/2 - 80), (float)(msh/2 + 80), 160, 40 };
-                Color lbBg = (Color){60,60,80,255};
-                if (CheckCollisionPointRec(GetMousePosition(), lbBtn))
-                    lbBg = (Color){80,80,110,255};
-                DrawRectangleRec(lbBtn, lbBg);
-                DrawRectangleLinesEx(lbBtn, 2, (Color){100,100,130,255});
-                const char *lbText = "LEADERBOARD";
-                int lbw = MeasureText(lbText, 16);
-                DrawText(lbText, (int)(lbBtn.x + 80 - lbw/2), (int)(lbBtn.y + 12), 16, WHITE);
-            }
-
-            // --- Multiplayer buttons ---
-            // CREATE LOBBY button
-            {
-                Rectangle createBtn = { (float)(msw/2 - 80), (float)(msh/2 + 130), 160, 40 };
-                Color cBg = (Color){40,130,60,255};
-                if (CheckCollisionPointRec(GetMousePosition(), createBtn))
-                    cBg = (Color){50,170,70,255};
-                DrawRectangleRec(createBtn, cBg);
-                DrawRectangleLinesEx(createBtn, 2, (Color){30,100,40,255});
-                const char *cText = "CREATE LOBBY";
-                int cw = MeasureText(cText, 14);
-                DrawText(cText, (int)(createBtn.x + 80 - cw/2), (int)(createBtn.y + 13), 14, WHITE);
-            }
-
-            // JOIN LOBBY button
-            {
-                bool codeReady = (joinCodeLen == LOBBY_CODE_LEN);
-                Rectangle joinBtn = { (float)(msw/2 - 80), (float)(msh/2 + 180), 160, 40 };
-                Color jBg = codeReady ? (Color){160,100,30,255} : (Color){80,80,80,255};
-                if (codeReady && CheckCollisionPointRec(GetMousePosition(), joinBtn))
-                    jBg = (Color){200,130,40,255};
-                DrawRectangleRec(joinBtn, jBg);
-                DrawRectangleLinesEx(joinBtn, 2, (Color){100,70,20,255});
-                const char *jText = "JOIN LOBBY";
-                int jw = MeasureText(jText, 14);
-                DrawText(jText, (int)(joinBtn.x + 80 - jw/2), (int)(joinBtn.y + 13), 14, WHITE);
-            }
-
-            // Join code input field
-            {
-                DrawText("Lobby Code:", msw/2 - MeasureText("Lobby Code:", 12)/2, msh/2 + 225, 12, (Color){150,150,170,255});
-                Rectangle codeBox = { (float)(msw/2 - 60), (float)(msh/2 + 240), 120, 30 };
-                DrawRectangleRec(codeBox, (Color){35,35,50,255});
-                DrawRectangleLinesEx(codeBox, 2, (Color){80,80,100,255});
-                char codeBuf[8];
-                snprintf(codeBuf, sizeof(codeBuf), "%s_", joinCodeInput);
-                int ccw = MeasureText(codeBuf, 18);
-                DrawText(codeBuf, msw/2 - ccw/2, msh/2 + 246, 18, WHITE);
-            }
-
-            // Menu error message
-            if (menuError[0]) {
-                int ew = MeasureText(menuError, 14);
-                DrawText(menuError, msw/2 - ew/2, msh/2 + 280, 14, RED);
-            }
-
-            // Leaderboard overlay
+            // Leaderboard overlay (reused from old menu)
             if (showLeaderboard)
             {
-                // Dim overlay
                 DrawRectangle(0, 0, msw, msh, (Color){0,0,0,180});
 
                 int panelW = 600, panelH = 500;
@@ -3292,12 +3340,10 @@ int main(void)
                 DrawRectangle(panelX, panelY, panelW, panelH, (Color){24,24,32,240});
                 DrawRectangleLinesEx((Rectangle){(float)panelX,(float)panelY,(float)panelW,(float)panelH}, 2, (Color){100,100,130,255});
 
-                // Title
                 const char *lbTitle = "LEADERBOARD";
                 int ltw = MeasureText(lbTitle, 24);
                 DrawText(lbTitle, panelX + panelW/2 - ltw/2, panelY + 10, 24, GOLD);
 
-                // Close button
                 Rectangle closeBtn = { (float)(panelX + panelW - 40), (float)panelY, 40, 40 };
                 Color closeBg = (Color){180,50,50,200};
                 if (CheckCollisionPointRec(GetMousePosition(), closeBtn))
@@ -3306,7 +3352,6 @@ int main(void)
                 int xw = MeasureText("X", 18);
                 DrawText("X", (int)(closeBtn.x + 20 - xw/2), (int)(closeBtn.y + 11), 18, WHITE);
 
-                // Entries
                 int listTop = panelY + 50;
                 int listH = panelH - 60;
                 int rowH = 70;
@@ -3319,31 +3364,21 @@ int main(void)
                     Color rowBg = (e % 2 == 0) ? (Color){30,30,42,255} : (Color){36,36,48,255};
                     DrawRectangle(panelX + 4, rowY, panelW - 8, rowH - 2, rowBg);
 
-                    // Rank
                     const char *rankText = TextFormat("#%d", e + 1);
                     DrawText(rankText, panelX + 12, rowY + 8, 20, GOLD);
-
-                    // Round
                     const char *roundText = TextFormat("Wave %d", le->highestRound);
                     DrawText(roundText, panelX + 60, rowY + 8, 18, WHITE);
-
-                    // Player name
                     DrawText(le->playerName, panelX + 180, rowY + 8, 16, (Color){180,180,200,255});
 
-                    // Unit info
                     int ux = panelX + 180;
                     int uy = rowY + 32;
                     for (int u = 0; u < le->unitCount && u < BLUE_TEAM_MAX_SIZE; u++) {
                         SavedUnit *su = &le->units[u];
-                        // Unit type name
                         const char *uname = (su->typeIndex < unitTypeCount) ? unitTypes[su->typeIndex].name : "???";
                         DrawText(uname, ux, uy, 12, (Color){150,180,255,255});
                         int nameW = MeasureText(uname, 12);
-
-                        // 2x2 ability mini-grid
                         int gridX = ux + nameW + 6;
-                        int miniSize = 14;
-                        int miniGap = 2;
+                        int miniSize = 14, miniGap = 2;
                         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
                             int col = a % 2, row = a / 2;
                             int ax = gridX + col * (miniSize + miniGap);
@@ -3356,21 +3391,7 @@ int main(void)
                                 DrawRectangle(ax, ay, miniSize, miniSize, (Color){40,40,55,255});
                             }
                         }
-                        // Unit code string below grid
-                        {
-                            char ucBuf[16];
-                            AbilitySlot ucSlots[MAX_ABILITIES_PER_UNIT];
-                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                                ucSlots[a] = (AbilitySlot){
-                                    .abilityId = su->abilities[a].abilityId,
-                                    .level = su->abilities[a].level,
-                                    .cooldownRemaining = 0, .triggered = false
-                                };
-                            }
-                            FormatUnitCode(su->typeIndex, ucSlots, ucBuf, sizeof(ucBuf));
-                            DrawText(ucBuf, ux, uy + 2 * (miniSize + miniGap) + 2, 8, (Color){120,120,140,255});
-                        }
-                        ux += nameW + 6 + 2 * (miniSize + miniGap) + 12;
+                        ux += nameW + 6 + 2 * (14 + 2) + 12;
                     }
                 }
                 EndScissorMode();
@@ -3379,6 +3400,81 @@ int main(void)
                     const char *emptyText = "No entries yet - play and Set in Stone!";
                     int etw = MeasureText(emptyText, 16);
                     DrawText(emptyText, panelX + panelW/2 - etw/2, panelY + panelH/2, 16, (Color){100,100,120,255});
+                }
+            }
+
+            // Multiplayer panel overlay
+            if (showMultiplayerPanel)
+            {
+                DrawRectangle(0, 0, msw, msh, (Color){0,0,0,140});
+
+                int panelW = 400, panelH = 300;
+                int panelX = msw/2 - panelW/2;
+                int panelY = msh/2 - panelH/2;
+                DrawRectangle(panelX, panelY, panelW, panelH, (Color){24,24,32,240});
+                DrawRectangleLinesEx((Rectangle){(float)panelX,(float)panelY,(float)panelW,(float)panelH}, 2, (Color){100,100,130,255});
+
+                const char *mpTitle = "MULTIPLAYER";
+                int mptw = MeasureText(mpTitle, 24);
+                DrawText(mpTitle, panelX + panelW/2 - mptw/2, panelY + 10, 24, (Color){200,180,255,255});
+
+                // Close button
+                Rectangle closeBtn = { (float)(panelX + panelW - 36), (float)(panelY + 4), 32, 32 };
+                Color closeBg = (Color){180,50,50,200};
+                if (CheckCollisionPointRec(GetMousePosition(), closeBtn))
+                    closeBg = (Color){230,70,70,255};
+                DrawRectangleRec(closeBtn, closeBg);
+                DrawText("X", (int)(closeBtn.x + 10), (int)(closeBtn.y + 7), 18, WHITE);
+
+                // Name input
+                DrawText("Player Name:", panelX + 50, panelY + 45, 14, (Color){180,180,200,255});
+                Rectangle nameField = { (float)(panelX + 50), (float)(panelY + 60), (float)(panelW - 100), 36 };
+                Color nameBg = nameInputActive ? (Color){50,50,70,255} : (Color){35,35,50,255};
+                DrawRectangleRec(nameField, nameBg);
+                DrawRectangleLinesEx(nameField, 2, nameInputActive ? (Color){150,140,200,255} : (Color){80,80,100,255});
+                DrawText(playerName, panelX + 58, panelY + 69, 18, WHITE);
+                if (nameInputActive) {
+                    float blinkTime = (float)GetTime();
+                    if ((int)(blinkTime * 2) % 2 == 0) {
+                        int cw = MeasureText(playerName, 18);
+                        DrawRectangle(panelX + 58 + cw + 2, panelY + 69, 2, 18, WHITE);
+                    }
+                }
+
+                // CREATE LOBBY button
+                Rectangle createBtn = { (float)(panelX + 50), (float)(panelY + 120), (float)(panelW - 100), 40 };
+                Color cBg = (Color){40,130,60,255};
+                if (CheckCollisionPointRec(GetMousePosition(), createBtn)) cBg = (Color){50,170,70,255};
+                DrawRectangleRec(createBtn, cBg);
+                DrawRectangleLinesEx(createBtn, 2, (Color){30,100,40,255});
+                const char *cText = "CREATE LOBBY";
+                int ctw = MeasureText(cText, 16);
+                DrawText(cText, (int)(createBtn.x + (panelW-100)/2 - ctw/2), (int)(createBtn.y + 12), 16, WHITE);
+
+                // JOIN LOBBY button
+                bool codeReady = (joinCodeLen == LOBBY_CODE_LEN);
+                Rectangle joinBtn = { (float)(panelX + 50), (float)(panelY + 180), (float)(panelW - 100), 40 };
+                Color jBg = codeReady ? (Color){160,100,30,255} : (Color){80,80,80,255};
+                if (codeReady && CheckCollisionPointRec(GetMousePosition(), joinBtn)) jBg = (Color){200,130,40,255};
+                DrawRectangleRec(joinBtn, jBg);
+                DrawRectangleLinesEx(joinBtn, 2, (Color){100,70,20,255});
+                const char *jText = "JOIN LOBBY";
+                int jtw = MeasureText(jText, 16);
+                DrawText(jText, (int)(joinBtn.x + (panelW-100)/2 - jtw/2), (int)(joinBtn.y + 12), 16, WHITE);
+
+                // Lobby code input
+                DrawText("Lobby Code:", panelX + 50, panelY + 230, 12, (Color){150,150,170,255});
+                Rectangle codeBox = { (float)(panelX + 50), (float)(panelY + 248), 120, 30 };
+                DrawRectangleRec(codeBox, (Color){35,35,50,255});
+                DrawRectangleLinesEx(codeBox, 2, (Color){80,80,100,255});
+                char codeBuf[8];
+                snprintf(codeBuf, sizeof(codeBuf), "%s_", joinCodeInput);
+                DrawText(codeBuf, panelX + 58, panelY + 254, 18, WHITE);
+
+                // Error message
+                if (menuError[0]) {
+                    int ew = MeasureText(menuError, 12);
+                    DrawText(menuError, panelX + panelW/2 - ew/2, panelY + panelH - 20, 12, RED);
                 }
             }
         }
@@ -3898,10 +3994,14 @@ int main(void)
             UnloadModelAnimations(unitTypes[i].anims, unitTypes[i].animCount);
         if (unitTypes[i].idleAnims)
             UnloadModelAnimations(unitTypes[i].idleAnims, unitTypes[i].idleAnimCount);
+        if (unitTypes[i].scaredAnims)
+            UnloadModelAnimations(unitTypes[i].scaredAnims, unitTypes[i].scaredAnimCount);
         UnloadModel(unitTypes[i].model);
     }
     for (int i = 0; i < TILE_VARIANTS; i++) UnloadModel(tileModels[i]);
     UnloadTexture(tileDiffuse);
+    UnloadModel(doorModel);
+    UnloadModel(trophyModel);
     UnloadSound(sfxWin);
     UnloadSound(sfxLoss);
     CloseAudioDevice();
