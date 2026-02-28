@@ -29,6 +29,16 @@
 #include "pve_waves.h"
 #include "plaza.h"
 
+// --- Hit flash ---
+#define HIT_FLASH_DURATION 0.12f
+
+// --- Projectile polish ---
+#define PROJ_CHARGE_TIME    0.2f
+#define CAST_PAUSE_TIME     0.25f
+#define PROJ_TRAIL_LIFE     0.4f
+#define PROJ_TRAIL_SIZE     1.0f
+#define PROJ_EXPLODE_COUNT  30
+
 // --- Win/loss sound split point (seconds) — tweak & re-split with ffmpeg if needed ---
 // Loss = first 6.5s of "cgj loss and win demo 2.mp3" → sfx/loss.wav
 // Win  = from 6.5s onward                            → sfx/win.wav
@@ -1416,6 +1426,11 @@ int main(void)
             // === STEP 2: Update projectiles ===
             for (int p = 0; p < MAX_PROJECTILES; p++) {
                 if (!projectiles[p].active) continue;
+                // Charge-up phase: stay in place and grow
+                if (projectiles[p].chargeTimer > 0) {
+                    projectiles[p].chargeTimer -= dt;
+                    continue;
+                }
                 int ti = projectiles[p].targetIndex;
                 // Target gone?
                 if (ti < 0 || ti >= unitCount || !units[ti].active) {
@@ -1435,6 +1450,43 @@ int main(void)
                 float pstep = projectiles[p].speed * dt;
 
                 if (pdist <= pstep) {
+                    // Impact explosion particles + tile shake
+                    {
+                        Vector3 impactPos = projectiles[p].position;
+                        for (int ep = 0; ep < PROJ_EXPLODE_COUNT; ep++) {
+                            float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                            float spd = (float)GetRandomValue(100, 250) / 10.0f;
+                            Vector3 ev = {
+                                cosf(angle) * spd,
+                                (float)GetRandomValue(40, 150) / 10.0f,
+                                sinf(angle) * spd,
+                            };
+                            SpawnParticle(particles, impactPos, ev, 0.7f,
+                                (float)GetRandomValue(70, 130) / 10.0f, projectiles[p].color);
+                        }
+                        TriggerShake(&shake, 4.0f, 0.2f);
+                        // Tile wobble ripple from impact
+                        float gridOriginImp = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
+                        for (int tr = 0; tr < TILE_GRID_SIZE; tr++) {
+                            for (int tc = 0; tc < TILE_GRID_SIZE; tc++) {
+                                float cx = gridOriginImp + (tc + 0.5f) * TILE_WORLD_SIZE;
+                                float cz = gridOriginImp + (tr + 0.5f) * TILE_WORLD_SIZE;
+                                float dxw = cx - impactPos.x, dzw = cz - impactPos.z;
+                                float dist = sqrtf(dxw*dxw + dzw*dzw);
+                                float wobbleR = 50.0f;
+                                if (dist < wobbleR) {
+                                    float strength = expf(-2.0f * dist / wobbleR);
+                                    if (tileWobble[tr][tc] < TILE_WOBBLE_MAX * 0.5f * strength) {
+                                        tileWobble[tr][tc] = TILE_WOBBLE_MAX * 0.5f * strength;
+                                        tileWobbleTime[tr][tc] = -(dist * 0.008f);
+                                        float len = dist > 0.1f ? dist : 1.0f;
+                                        tileWobbleDirX[tr][tc] = dzw / len;
+                                        tileWobbleDirZ[tr][tc] = -dxw / len;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // HIT — Hook: pull target to caster, damage by distance
                     if (projectiles[p].type == PROJ_HOOK) {
                         if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
@@ -1445,6 +1497,7 @@ int main(void)
                                 else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                             }
                             units[ti].currentHealth -= hitDmg;
+                            units[ti].hitFlash = HIT_FLASH_DURATION;
                             // Teleport target to caster
                             units[ti].position.x = units[projectiles[p].sourceIndex].position.x;
                             units[ti].position.z = units[projectiles[p].sourceIndex].position.z;
@@ -1462,6 +1515,7 @@ int main(void)
                                 else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                             }
                             units[ti].currentHealth -= hitDmg;
+                            units[ti].hitFlash = HIT_FLASH_DURATION;
                             if (units[ti].currentHealth <= 0) units[ti].active = false;
                         }
                         if (projectiles[p].bouncesRemaining > 0) {
@@ -1490,6 +1544,7 @@ int main(void)
                             else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                         }
                         units[ti].currentHealth -= hitDmg;
+                        units[ti].hitFlash = HIT_FLASH_DURATION;
                         if (projectiles[p].stunDuration > 0) {
                             AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
                             TriggerShake(&shake, 5.0f, 0.25f);
@@ -1514,6 +1569,15 @@ int main(void)
                     projectiles[p].position.x += (pdx / pdist) * pstep;
                     projectiles[p].position.y += (pdy / pdist) * pstep;
                     projectiles[p].position.z += (pdz / pdist) * pstep;
+                    // Particle trail
+                    Color tc = projectiles[p].color;
+                    Vector3 tv = {
+                        ((GetRandomValue(0, 200) - 100) / 100.0f) * 3.0f,
+                        ((GetRandomValue(0, 100)) / 100.0f) * 4.0f + 3.0f,  // upward bias to fight gravity
+                        ((GetRandomValue(0, 200) - 100) / 100.0f) * 3.0f,
+                    };
+                    SpawnParticle(particles, projectiles[p].position, tv,
+                        PROJ_TRAIL_LIFE, PROJ_TRAIL_SIZE, tc);
                 }
             }
 
@@ -1618,7 +1682,33 @@ int main(void)
                     case ABILITY_VACUUM:        castThisFrame = CastVacuum(&combatState, i, slot); break;
                     case ABILITY_CHAIN_FROST:   castThisFrame = CastChainFrost(&combatState, i, slot, target); break;
                     case ABILITY_BLOOD_RAGE:    castThisFrame = CastBloodRage(&combatState, i, slot); break;
-                    case ABILITY_EARTHQUAKE:    castThisFrame = CastEarthquake(&combatState, i, slot); break;
+                    case ABILITY_EARTHQUAKE:
+                        castThisFrame = CastEarthquake(&combatState, i, slot);
+                        if (castThisFrame) {
+                            // Aggressive tile ripple from earthquake epicenter
+                            float eqX = units[i].position.x;
+                            float eqZ = units[i].position.z;
+                            float eqRadius = ABILITY_DEFS[ABILITY_EARTHQUAKE].values[slot->level][AV_EQ_RADIUS];
+                            float gridOriginEq = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
+                            for (int tr = 0; tr < TILE_GRID_SIZE; tr++) {
+                                for (int tc = 0; tc < TILE_GRID_SIZE; tc++) {
+                                    float cx = gridOriginEq + (tc + 0.5f) * TILE_WORLD_SIZE;
+                                    float cz = gridOriginEq + (tr + 0.5f) * TILE_WORLD_SIZE;
+                                    float dxw = cx - eqX, dzw = cz - eqZ;
+                                    float dist = sqrtf(dxw*dxw + dzw*dzw);
+                                    float wobbleR = eqRadius * 3.0f;
+                                    if (dist < wobbleR) {
+                                        float strength = expf(-1.5f * dist / wobbleR);
+                                        tileWobble[tr][tc] = TILE_WOBBLE_MAX * 1.5f * strength;
+                                        tileWobbleTime[tr][tc] = -(dist * 0.012f);
+                                        float len = dist > 0.1f ? dist : 1.0f;
+                                        tileWobbleDirX[tr][tc] = dzw / len;
+                                        tileWobbleDirZ[tr][tc] = -dxw / len;
+                                    }
+                                }
+                            }
+                        }
+                        break;
                     case ABILITY_SPELL_PROTECT: castThisFrame = CastSpellProtect(&combatState, i, slot); break;
                     case ABILITY_CRAGGY_ARMOR:  castThisFrame = CastCraggyArmor(&combatState, i, slot); break;
                     case ABILITY_STONE_GAZE:    castThisFrame = CastStoneGaze(&combatState, i, slot); break;
@@ -1635,6 +1725,11 @@ int main(void)
                         SpawnFloatingText(floatingTexts, units[i].position,
                             def->name, def->color, 1.0f);
                         units[i].abilityCastDelay = 0.75f;
+                        // Pause caster briefly for projectile abilities
+                        if (slot->abilityId == ABILITY_MAGIC_MISSILE ||
+                            slot->abilityId == ABILITY_CHAIN_FROST ||
+                            slot->abilityId == ABILITY_HOOK)
+                            units[i].castPause = CAST_PAUSE_TIME;
                     }
                 }
 
@@ -1670,6 +1765,7 @@ int main(void)
                                         else { dmgHit -= units[j].shieldHP; units[j].shieldHP = 0; }
                                     }
                                     units[j].currentHealth -= dmgHit;
+                                    units[j].hitFlash = HIT_FLASH_DURATION;
                                     if (units[j].currentHealth <= 0) units[j].active = false;
                                     // Knockback
                                     float kx = units[j].position.x - units[ct].position.x;
@@ -1697,6 +1793,12 @@ int main(void)
                         }
                         continue; // skip normal movement while charging
                     }
+                }
+
+                // Cast pause — brief freeze after projectile cast
+                if (units[i].castPause > 0) {
+                    units[i].castPause -= dt;
+                    continue;
                 }
 
                 // Movement + basic attack
@@ -1752,6 +1854,7 @@ int main(void)
                                 else { dmg -= units[target].shieldHP; units[target].shieldHP = 0; }
                             }
                             units[target].currentHealth -= dmg;
+                            units[target].hitFlash = HIT_FLASH_DURATION;
                             // Lifesteal
                             float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
                             if (ls > 0) {
@@ -2174,7 +2277,9 @@ int main(void)
         //==============================================================================
         for (int i = 0; i < unitCount; i++) {
             if (!units[i].active) continue;
+            if (units[i].hitFlash > 0) units[i].hitFlash -= dt;
             if (IsUnitInStatueSpawn(&statueSpawn, i)) continue; // frozen as statue
+            if (units[i].castPause > 0) continue; // frozen during cast
             UnitType *type = &unitTypes[units[i].typeIndex];
             if (!type->hasAnimations) continue;
 
@@ -2326,6 +2431,13 @@ int main(void)
                 UnitType *type = &unitTypes[units[i].typeIndex];
                 if (!type->loaded) continue;
                 Color tint = GetTeamTint(units[i].team);
+                if (units[i].hitFlash > 0) {
+                    float f = units[i].hitFlash / HIT_FLASH_DURATION;
+                    if (f > 1.0f) f = 1.0f;
+                    tint.r = (unsigned char)(tint.r + (255 - tint.r) * f);
+                    tint.g = (unsigned char)(tint.g + (255 - tint.g) * f);
+                    tint.b = (unsigned char)(tint.b + (255 - tint.b) * f);
+                }
                 if (type->hasAnimations) {
                     int idx = type->animIndex[units[i].currentAnim];
                     if (idx >= 0) {
@@ -2432,7 +2544,12 @@ int main(void)
             // Draw projectiles
             for (int p = 0; p < MAX_PROJECTILES; p++) {
                 if (!projectiles[p].active) continue;
-                DrawSphere(projectiles[p].position, 1.5f, projectiles[p].color);
+                float pr = 1.5f;
+                if (projectiles[p].chargeTimer > 0 && projectiles[p].chargeMax > 0) {
+                    float t = 1.0f - projectiles[p].chargeTimer / projectiles[p].chargeMax;
+                    pr *= t;
+                }
+                DrawSphere(projectiles[p].position, pr, projectiles[p].color);
             }
 
             // Draw particles

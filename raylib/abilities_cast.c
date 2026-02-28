@@ -18,6 +18,7 @@ void SpawnChainFrostProjectile(Projectile projectiles[],
                 .speed = speed, .damage = damage, .stunDuration = 0,
                 .bouncesRemaining = bounces, .bounceRange = bounceRange, .lastHitUnit = -1,
                 .level = level, .color = (Color){ 80, 140, 255, 255 }, .active = true,
+                .chargeTimer = 0.2f, .chargeMax = 0.2f,
             };
             return;
         }
@@ -36,6 +37,7 @@ void SpawnHookProjectile(Projectile projectiles[], Vector3 startPos, int targetI
                 .speed = speed, .damage = dmgPerDist, .stunDuration = 0,
                 .bouncesRemaining = 0, .bounceRange = range, .lastHitUnit = -1,
                 .level = level, .color = (Color){ 200, 60, 60, 255 }, .active = true,
+                .chargeTimer = 0.2f, .chargeMax = 0.2f,
             };
             return;
         }
@@ -54,6 +56,7 @@ void SpawnMaelstromProjectile(Projectile projectiles[], Vector3 startPos, int ta
                 .speed = speed, .damage = damage, .stunDuration = 0,
                 .bouncesRemaining = bounces, .bounceRange = bounceRange, .lastHitUnit = -1,
                 .level = level, .color = (Color){ 255, 230, 50, 255 }, .active = true,
+                .chargeTimer = 0.2f, .chargeMax = 0.2f,
             };
             return;
         }
@@ -206,6 +209,7 @@ bool CastEarthquake(CombatState *state, int caster, AbilitySlot *slot)
         float d = DistXZ(state->units[caster].position, state->units[j].position);
         if (d <= radius) {
             state->units[j].currentHealth -= damage;
+            state->units[j].hitFlash = 0.12f;
             if (state->units[j].currentHealth <= 0) state->units[j].active = false;
         }
     }
@@ -292,6 +296,7 @@ bool CastFissure(CombatState *state, int caster, AbilitySlot *slot, int target)
         float perpDist = sqrtf(perpX * perpX + perpZ * perpZ);
         if (perpDist <= width + 3.0f) {
             state->units[j].currentHealth -= damage;
+            state->units[j].hitFlash = 0.12f;
             if (state->units[j].currentHealth <= 0) state->units[j].active = false;
         }
     }
