@@ -11,6 +11,9 @@
 #define TOTAL_ROUNDS 5
 #define ATTACK_RANGE 8.0f       // how close a unit needs to be to attack
 #define BLUE_TEAM_MAX_SIZE 4   // player team cap (change this to rebalance)
+#define ARENA_BOUNDARY_Z   5.0f // blue units can't be placed below this Z (into red territory)
+#define ARENA_GRID_HALF  100.0f // half the visible grid (grid goes -100 to +100)
+#define MAX_WAVE_ENEMIES 8
 
 //------------------------------------------------------------------------------------
 // Team
@@ -165,6 +168,9 @@ typedef struct {
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
     int nextAbilitySlot;   // index into ACTIVATION_ORDER for clockwise cycling
     float gazeAccum;       // Stone Gaze: time spent facing a stone-gazer
+    float scaleOverride;   // model scale multiplier (1.0 = normal, 2.5 = boss)
+    float hpMultiplier;    // max HP multiplier (1.0 = normal)
+    float dmgMultiplier;   // attack damage multiplier (1.0 = normal)
 } Unit;
 
 //------------------------------------------------------------------------------------
@@ -246,3 +252,20 @@ typedef struct {
     FloatingText *floatingTexts;
     ScreenShake *shake;
 } CombatState;
+
+//------------------------------------------------------------------------------------
+// Wave System
+//------------------------------------------------------------------------------------
+typedef struct {
+    int unitType;       // -1 = random from available types
+    int numAbilities;   // ability slots to fill (0-4)
+    int abilityLevel;   // level for each ability (0, 1, or 2)
+    float hpMult;       // HP multiplier
+    float dmgMult;      // attack damage multiplier
+    float scaleMult;    // model scale multiplier
+} WaveEntry;
+
+typedef struct {
+    WaveEntry entries[MAX_WAVE_ENEMIES];
+    int count;
+} WaveDef;

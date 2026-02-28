@@ -36,14 +36,15 @@ bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
         .facingAngle    = (team == TEAM_BLUE) ? 180.0f : 0.0f,
         .currentAnim    = ANIM_IDLE,
         .animFrame      = GetRandomValue(0, 999),
+        .scaleOverride  = 1.0f,
+        .hpMultiplier   = 1.0f,
+        .dmgMultiplier  = 1.0f,
     };
     for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
         units[*unitCount].abilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
             .cooldownRemaining = 0, .triggered = false };
     }
     units[*unitCount].nextAbilitySlot = 0;
-    // Red team AI: assign random abilities
-    if (team == TEAM_RED) AssignRandomAbilities(&units[*unitCount], GetRandomValue(1, 2));
     (*unitCount)++;
     return true;
 }
@@ -136,6 +137,9 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             .facingAngle    = (snaps[i].team == TEAM_BLUE) ? 180.0f : 0.0f,
             .currentAnim    = ANIM_IDLE,
             .animFrame      = GetRandomValue(0, 999),
+            .scaleOverride  = 1.0f,
+            .hpMultiplier   = 1.0f,
+            .dmgMultiplier  = 1.0f,
         };
         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
             units[i].abilities[a] = snaps[i].abilities[a];
@@ -758,5 +762,142 @@ void CheckCraggyArmorRetaliation(CombatState *state, int attacker, int defender)
         }
         AddModifier(state->modifiers, attacker, MOD_STUN, stunDur, 0);
         TriggerShake(state->shake, 3.0f, 0.15f);
+    }
+}
+
+//------------------------------------------------------------------------------------
+// Wave Spawning System
+//------------------------------------------------------------------------------------
+
+// Assign N random non-duplicate abilities at a specific level
+static void AssignAbilitiesAtLevel(Unit *unit, int numAbilities, int level)
+{
+    int used[ABILITY_COUNT] = {0};
+    for (int a = 0; a < numAbilities && a < MAX_ABILITIES_PER_UNIT; a++) {
+        int id;
+        int attempts = 0;
+        do {
+            id = GetRandomValue(0, ABILITY_COUNT - 1);
+            attempts++;
+        } while (used[id] && attempts < 50);
+        used[id] = 1;
+        unit->abilities[a].abilityId = id;
+        unit->abilities[a].level = level;
+        unit->abilities[a].cooldownRemaining = 0;
+        unit->abilities[a].triggered = false;
+    }
+}
+
+// Find a valid spawn position on the red half (Z < 0), not overlapping others
+Vector3 FindValidSpawnPos(Unit units[], int unitCount, float minDist)
+{
+    for (int attempt = 0; attempt < 30; attempt++) {
+        float x = (float)GetRandomValue(-80, 80);
+        float z = (float)GetRandomValue(-90, -20);
+        bool valid = true;
+        for (int i = 0; i < unitCount; i++) {
+            if (!units[i].active) continue;
+            float dx = units[i].position.x - x;
+            float dz = units[i].position.z - z;
+            if (sqrtf(dx*dx + dz*dz) < minDist) { valid = false; break; }
+        }
+        if (valid) return (Vector3){ x, 0.0f, z };
+    }
+    // Fallback: just pick a random spot
+    return (Vector3){ (float)GetRandomValue(-80, 80), 0.0f, (float)GetRandomValue(-90, -20) };
+}
+
+// Remove all red (enemy) units
+void ClearRedUnits(Unit units[], int *unitCount)
+{
+    // Compact: move active blues to front, drop reds
+    int write = 0;
+    for (int read = 0; read < *unitCount; read++) {
+        if (units[read].team == TEAM_RED) continue;
+        if (write != read) units[write] = units[read];
+        write++;
+    }
+    *unitCount = write;
+}
+
+// Static wave definitions for rounds 1-5
+static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
+    // Round 1: "Skirmish" — no abilities
+    { .count = 3, .entries = {
+        { .unitType = 0, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+    }},
+    // Round 2: "Scouts" — 1 ability each (level 0)
+    { .count = 4, .entries = {
+        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+    }},
+    // Round 3: "Veterans" — 2 abilities level 0 each
+    { .count = 5, .entries = {
+        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 1, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 1, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+    }},
+    // Round 4: "Elite Squad" — 2 abilities level 1 each
+    { .count = 5, .entries = {
+        { .unitType = 0, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+    }},
+    // Round 5: "BOSS" — single massive unit, 4 abilities all level 2
+    { .count = 1, .entries = {
+        { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 8.0f, .dmgMult = 3.0f, .scaleMult = 2.5f },
+    }},
+};
+
+// Spawn a wave of enemies for the given round (0-indexed)
+void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
+{
+    if (round < TOTAL_ROUNDS) {
+        // Scripted wave (rounds 0-4)
+        const WaveDef *wave = &WAVE_DEFS[round];
+        for (int e = 0; e < wave->count; e++) {
+            int type = wave->entries[e].unitType;
+            if (type < 0) type = GetRandomValue(0, unitTypeCount - 1);
+            if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
+                Unit *u = &units[*unitCount - 1];
+                u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
+                u->scaleOverride = wave->entries[e].scaleMult;
+                u->hpMultiplier = wave->entries[e].hpMult;
+                u->dmgMultiplier = wave->entries[e].dmgMult;
+                u->currentHealth = UNIT_STATS[type].health * wave->entries[e].hpMult;
+                if (wave->entries[e].numAbilities > 0) {
+                    AssignAbilitiesAtLevel(u, wave->entries[e].numAbilities, wave->entries[e].abilityLevel);
+                }
+            }
+        }
+    } else {
+        // Infinite scaling (round 5+)
+        int extraRounds = round - TOTAL_ROUNDS;  // 0 for round 6, 1 for round 7, etc.
+        int enemyCount = 3 + (extraRounds + 1);
+        if (enemyCount > MAX_WAVE_ENEMIES) enemyCount = MAX_WAVE_ENEMIES;
+        float hpScale = powf(1.25f, (float)(extraRounds + 1));
+        float dmgScale = powf(1.15f, (float)(extraRounds + 1));
+        for (int e = 0; e < enemyCount; e++) {
+            int type = GetRandomValue(0, unitTypeCount - 1);
+            if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
+                Unit *u = &units[*unitCount - 1];
+                u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
+                u->scaleOverride = 1.0f;
+                u->hpMultiplier = hpScale;
+                u->dmgMultiplier = dmgScale;
+                u->currentHealth = UNIT_STATS[type].health * hpScale;
+                int numAb = GetRandomValue(2, 4);
+                int abLevel = GetRandomValue(1, 2);
+                AssignAbilitiesAtLevel(u, numAb, abLevel);
+            }
+        }
     }
 }

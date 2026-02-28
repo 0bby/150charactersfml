@@ -44,7 +44,7 @@ int main(void)
     float camX = prepX;
     Camera camera = { 0 };
     camera.position = (Vector3){ camX, camHeight, camDistance };
-    camera.target   = (Vector3){ 0.0f, 0.0f, 0.0f };
+    camera.target   = (Vector3){ 0.0f, 0.0f, 35.0f };
     camera.up       = (Vector3){ 0.0f, 1.0f, 0.0f };
     camera.fovy     = camFOV;
     camera.projection = CAMERA_PERSPECTIVE;
@@ -99,7 +99,7 @@ int main(void)
     // Dedicated camera for portrait rendering
     Camera portraitCam = { 0 };
     portraitCam.up = (Vector3){ 0.0f, 1.0f, 0.0f };
-    portraitCam.fovy = 30.0f;
+    portraitCam.fovy = 35.0f;
     portraitCam.projection = CAMERA_PERSPECTIVE;
 
     // --- Lighting setup ---
@@ -162,6 +162,8 @@ int main(void)
     int redWins  = 0;
     float roundOverTimer = 0.0f;   // brief pause after a round ends
     const char *roundResultText = "";
+    bool showContinuePrompt = false;
+    bool debugMode = true;
 
     // UI button sizes (positions computed each frame for resize support)
     const int btnWidth = 150;
@@ -183,6 +185,9 @@ int main(void)
         printf("[NFC] Failed to launch bridge\n");
     }
 
+    // Spawn initial wave (round 1)
+    SpawnWave(units, &unitCount, 0, unitTypeCount);
+
     //==================================================================================
     // MAIN LOOP
     //==================================================================================
@@ -190,6 +195,7 @@ int main(void)
     {
         float dt = GetFrameTime();
         UpdateShake(&shake, dt);
+        if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
 
         // Update unit intro animation
         if (intro.active) {
@@ -279,10 +285,26 @@ int main(void)
                 RayCollision groundHit = GetRayCollisionQuad(ray,
                     (Vector3){ -500, 0, -500 }, (Vector3){ -500, 0, 500 },
                     (Vector3){  500, 0,  500 }, (Vector3){  500, 0, -500 });
+                // Only allow dragging red units in debug mode
+                if (units[i].team == TEAM_RED && !debugMode) {
+                    units[i].dragging = false;
+                    continue;
+                }
                 if (groundHit.hit)
                 {
                     units[i].position.x = groundHit.point.x;
                     units[i].position.z = groundHit.point.z;
+                    // Clamp blue units to their half (positive Z = blue side)
+                    if (units[i].team == TEAM_BLUE) {
+                        if (units[i].position.z < ARENA_BOUNDARY_Z)
+                            units[i].position.z = ARENA_BOUNDARY_Z;
+                    }
+                    // Clamp all units to grid bounds (X and Z)
+                    float gridLimit = ARENA_GRID_HALF - 5.0f; // 95
+                    if (units[i].position.x < -gridLimit) units[i].position.x = -gridLimit;
+                    if (units[i].position.x >  gridLimit) units[i].position.x =  gridLimit;
+                    if (units[i].position.z < -gridLimit) units[i].position.z = -gridLimit;
+                    if (units[i].position.z >  gridLimit) units[i].position.z =  gridLimit;
                 }
                 if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) units[i].dragging = false;
             }
@@ -366,8 +388,8 @@ int main(void)
                     }
                 }
 
-                // Blue spawn buttons
-                if (!clickedButton)
+                // Blue spawn buttons (debug only)
+                if (!clickedButton && debugMode)
                 {
                     for (int i = 0; i < unitTypeCount; i++)
                     {
@@ -383,14 +405,17 @@ int main(void)
                         }
                     }
                 }
-                // Red spawn buttons
-                if (!clickedButton)
+                // Red spawn buttons (debug only)
+                if (!clickedButton && debugMode)
                 {
                     for (int i = 0; i < unitTypeCount; i++)
                     {
                         Rectangle r = { (float)btnXRed, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
-                        if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded)
-                        { SpawnUnit(units, &unitCount, i, TEAM_RED); clickedButton = true; break; }
+                        if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded) {
+                            if (SpawnUnit(units, &unitCount, i, TEAM_RED))
+                                AssignRandomAbilities(&units[unitCount-1], GetRandomValue(1, 2));
+                            clickedButton = true; break;
+                        }
                     }
                 }
                 // --- Shop: ROLL button click ---
@@ -758,11 +783,12 @@ int main(void)
                             if (slot->triggered || slot->cooldownRemaining > 0) continue;
                             const AbilityDef *def = &ABILITY_DEFS[ABILITY_DIG];
                             float threshold = def->values[slot->level][AV_DIG_HP_THRESH];
-                            if (units[i].currentHealth > 0 && units[i].currentHealth <= stats->health * threshold) {
+                            float unitMaxHP = stats->health * units[i].hpMultiplier;
+                            if (units[i].currentHealth > 0 && units[i].currentHealth <= unitMaxHP * threshold) {
                                 slot->triggered = true;
                                 slot->cooldownRemaining = def->cooldown[slot->level];
                                 float healDur = def->values[slot->level][AV_DIG_HEAL_DUR];
-                                float healPerSec = stats->health / healDur;
+                                float healPerSec = unitMaxHP / healDur;
                                 AddModifier(modifiers, i, MOD_INVULNERABLE, healDur, 0);
                                 AddModifier(modifiers, i, MOD_DIG_HEAL, healDur, healPerSec);
                             }
@@ -860,7 +886,7 @@ int main(void)
                     if (units[i].attackCooldown <= 0.0f)
                     {
                         if (!UnitHasModifier(modifiers, target, MOD_INVULNERABLE)) {
-                            float dmg = stats->attackDamage;
+                            float dmg = stats->attackDamage * units[i].dmgMultiplier;
                             float armor = GetModifierValue(modifiers, target, MOD_ARMOR);
                             dmg -= armor;
                             if (dmg < 0) dmg = 0;
@@ -868,9 +894,10 @@ int main(void)
                             // Lifesteal
                             float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
                             if (ls > 0) {
+                                float maxHP = stats->health * units[i].hpMultiplier;
                                 units[i].currentHealth += dmg * ls;
-                                if (units[i].currentHealth > stats->health)
-                                    units[i].currentHealth = stats->health;
+                                if (units[i].currentHealth > maxHP)
+                                    units[i].currentHealth = maxHP;
                             }
                             // Craggy Armor retaliation — chance to stun attacker
                             CheckCraggyArmorRetaliation(&combatState, i, target);
@@ -967,15 +994,12 @@ int main(void)
             roundOverTimer -= dt;
             if (roundOverTimer <= 0.0f)
             {
-                if (currentRound >= TOTAL_ROUNDS || blueWins > TOTAL_ROUNDS/2 || redWins > TOTAL_ROUNDS/2)
-                {
-                    phase = PHASE_GAME_OVER;
-                }
-                else
-                {
-                    // Restore units to pre-round positions & full HP
+                if (currentRound >= TOTAL_ROUNDS && !showContinuePrompt) {
+                    // After round 5+: show continue/stop prompt
+                    showContinuePrompt = true;
+                } else if (!showContinuePrompt) {
+                    // Normal round transition (rounds 1-4): auto-advance
                     RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
-                    // Reset transient ability state
                     for (int i = 0; i < unitCount; i++) {
                         units[i].nextAbilitySlot = 0;
                         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
@@ -987,9 +1011,40 @@ int main(void)
                     ClearAllProjectiles(projectiles);
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
+                    ClearRedUnits(units, &unitCount);
+                    SpawnWave(units, &unitCount, currentRound, unitTypeCount);
                     playerGold += goldPerRound;
-                    RollShop(shopSlots, &playerGold, 0); // free roll
+                    RollShop(shopSlots, &playerGold, 0);
                     phase = PHASE_PREP;
+                }
+
+                // Continue/Stop prompt input handling
+                if (showContinuePrompt) {
+                    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_Y)) {
+                        // Continue: advance to next wave
+                        showContinuePrompt = false;
+                        RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
+                        for (int i = 0; i < unitCount; i++) {
+                            units[i].nextAbilitySlot = 0;
+                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                units[i].abilities[a].cooldownRemaining = 0;
+                                units[i].abilities[a].triggered = false;
+                            }
+                        }
+                        ClearAllModifiers(modifiers);
+                        ClearAllProjectiles(projectiles);
+                        ClearAllFloatingTexts(floatingTexts);
+                        ClearAllFissures(fissures);
+                        ClearRedUnits(units, &unitCount);
+                        SpawnWave(units, &unitCount, currentRound, unitTypeCount);
+                        playerGold += goldPerRound;
+                        RollShop(shopSlots, &playerGold, 0);
+                        phase = PHASE_PREP;
+                    } else if (IsKeyPressed(KEY_N) || IsKeyPressed(KEY_ESCAPE)) {
+                        // Stop: game over
+                        showContinuePrompt = false;
+                        phase = PHASE_GAME_OVER;
+                    }
                 }
             }
         }
@@ -1007,15 +1062,17 @@ int main(void)
                 blueWins = 0;
                 redWins = 0;
                 roundResultText = "";
+                showContinuePrompt = false;
                 ClearAllModifiers(modifiers);
                 ClearAllProjectiles(projectiles);
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
-                playerGold = 10;
+                playerGold = 100; // DEBUG: was 10
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 RollShop(shopSlots, &playerGold, 0);
                 dragState.dragging = false;
+                SpawnWave(units, &unitCount, 0, unitTypeCount);
                 phase = PHASE_PREP;
             }
         }
@@ -1110,8 +1167,9 @@ int main(void)
                         UpdateModelAnimation(type->model, arr[idx], units[i].animFrame);
                     }
                 }
+                float s = type->scale * units[i].scaleOverride;
                 DrawModelEx(type->model, units[i].position, (Vector3){0,1,0}, units[i].facingAngle,
-                    (Vector3){type->scale, type->scale, type->scale}, tint);
+                    (Vector3){s, s, s}, tint);
 
                 if (units[i].selected)
                 {
@@ -1180,6 +1238,32 @@ int main(void)
                     DrawCircle3D(ringPos, 5.0f, (Vector3){1,0,0}, 90.0f, (Color){160,80,200,140});
                 }
             }
+
+            // Arena boundary wall (fades in as blue unit is dragged near it)
+            if (phase == PHASE_PREP) {
+                float closestDragZ = 999.0f;
+                for (int i = 0; i < unitCount; i++) {
+                    if (units[i].active && units[i].dragging && units[i].team == TEAM_BLUE) {
+                        if (units[i].position.z < closestDragZ) closestDragZ = units[i].position.z;
+                    }
+                }
+                if (closestDragZ < 999.0f) {
+                    float fadeRange = 40.0f;
+                    float dz = closestDragZ - ARENA_BOUNDARY_Z;
+                    float proximity = 1.0f - fminf(fmaxf(dz / fadeRange, 0.0f), 1.0f);
+                    if (proximity > 0.01f) {
+                        unsigned char alpha = (unsigned char)(proximity * 160.0f);
+                        Color borderCol = { 255, 50, 50, alpha };
+                        // Ground line
+                        DrawLine3D((Vector3){-100, 0.5f, ARENA_BOUNDARY_Z},
+                                   (Vector3){ 100, 0.5f, ARENA_BOUNDARY_Z}, borderCol);
+                        DrawLine3D((Vector3){-100, 0.3f, ARENA_BOUNDARY_Z},
+                                   (Vector3){ 100, 0.3f, ARENA_BOUNDARY_Z}, borderCol);
+                        // Translucent wall
+                        DrawCube((Vector3){0, 5.0f, ARENA_BOUNDARY_Z}, 200.0f, 10.0f, 0.3f, borderCol);
+                    }
+                }
+            }
         EndMode3D();
 
         // Restore camera position after shake
@@ -1222,7 +1306,8 @@ int main(void)
                      (units[i].team == TEAM_BLUE) ? DARKBLUE : MAROON);
 
             // Health bar
-            float hpRatio = units[i].currentHealth / stats->health;
+            float maxHP = stats->health * units[i].hpMultiplier;
+            float hpRatio = units[i].currentHealth / maxHP;
             if (hpRatio < 0) hpRatio = 0;
             if (hpRatio > 1) hpRatio = 1;
             int bw = 40, bh = 5;
@@ -1232,7 +1317,7 @@ int main(void)
             DrawRectangle(bx, by, (int)(bw * hpRatio), bh, hpC);
             DrawRectangleLines(bx, by, bw, bh, BLACK);
 
-            const char *hpT = TextFormat("%.0f/%.0f", units[i].currentHealth, stats->health);
+            const char *hpT = TextFormat("%.0f/%.0f", units[i].currentHealth, maxHP);
             int htw = MeasureText(hpT, 10);
             DrawText(hpT, (int)sp.x - htw/2, by + bh + 2, 10, DARKGRAY);
 
@@ -1310,28 +1395,40 @@ int main(void)
             int dBtnXRed  = sw - btnWidth - btnMargin;
             int dBtnYStart = dHudTop - (unitTypeCount * (btnHeight + btnMargin)) - btnMargin;
 
-            for (int i = 0; i < unitTypeCount; i++)
-            {
-                Rectangle r = { (float)dBtnXBlue, (float)(dBtnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
-                Color c = unitTypes[i].loaded ? (Color){100,140,230,255} : LIGHTGRAY;
-                if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = BLUE;
-                DrawRectangleRec(r, c);
-                DrawRectangleLinesEx(r, 2, unitTypes[i].loaded ? DARKBLUE : GRAY);
-                const char *l = TextFormat("BLUE %s", unitTypes[i].name);
-                int lw = MeasureText(l, 14);
-                DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
+            // Spawn buttons (debug mode only — F1 to toggle)
+            if (debugMode) {
+                for (int i = 0; i < unitTypeCount; i++)
+                {
+                    Rectangle r = { (float)dBtnXBlue, (float)(dBtnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                    Color c = unitTypes[i].loaded ? (Color){100,140,230,255} : LIGHTGRAY;
+                    if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = BLUE;
+                    DrawRectangleRec(r, c);
+                    DrawRectangleLinesEx(r, 2, unitTypes[i].loaded ? DARKBLUE : GRAY);
+                    const char *l = TextFormat("BLUE %s", unitTypes[i].name);
+                    int lw = MeasureText(l, 14);
+                    DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
+                }
+
+                for (int i = 0; i < unitTypeCount; i++)
+                {
+                    Rectangle r = { (float)dBtnXRed, (float)(dBtnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                    Color c = unitTypes[i].loaded ? (Color){230,100,100,255} : LIGHTGRAY;
+                    if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = RED;
+                    DrawRectangleRec(r, c);
+                    DrawRectangleLinesEx(r, 2, unitTypes[i].loaded ? MAROON : GRAY);
+                    const char *l = TextFormat("RED %s", unitTypes[i].name);
+                    int lw = MeasureText(l, 14);
+                    DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
+                }
+
+                DrawText("[F1] DEBUG MODE", dBtnXBlue, dBtnYStart - 20, 12, YELLOW);
             }
 
-            for (int i = 0; i < unitTypeCount; i++)
+            // Round info label
             {
-                Rectangle r = { (float)dBtnXRed, (float)(dBtnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
-                Color c = unitTypes[i].loaded ? (Color){230,100,100,255} : LIGHTGRAY;
-                if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = RED;
-                DrawRectangleRec(r, c);
-                DrawRectangleLinesEx(r, 2, unitTypes[i].loaded ? MAROON : GRAY);
-                const char *l = TextFormat("RED %s", unitTypes[i].name);
-                int lw = MeasureText(l, 14);
-                DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
+                const char *waveLabel = TextFormat("Wave %d", currentRound + 1);
+                int wlw = MeasureText(waveLabel, 16);
+                DrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, 16, WHITE);
             }
 
             // PLAY button (centre-bottom)
@@ -1372,6 +1469,20 @@ int main(void)
             {
                 int rtw = MeasureText(roundResultText, 26);
                 DrawText(roundResultText, sw/2 - rtw/2, sh/2 - 40, 26, DARKPURPLE);
+
+                const char *scoreText = TextFormat("Score: %d - %d", blueWins, redWins);
+                int stw = MeasureText(scoreText, 18);
+                DrawText(scoreText, sw/2 - stw/2, sh/2 - 10, 18, WHITE);
+
+                if (showContinuePrompt) {
+                    const char *promptText = TextFormat("Wave %d Complete!", currentRound);
+                    int pw = MeasureText(promptText, 24);
+                    DrawText(promptText, sw/2 - pw/2, sh/2 + 20, 24, GOLD);
+
+                    const char *choiceText = "[ENTER] Continue   [ESC] Stop";
+                    int cw = MeasureText(choiceText, 18);
+                    DrawText(choiceText, sw/2 - cw/2, sh/2 + 50, 18, LIGHTGRAY);
+                }
             }
             else if (phase == PHASE_GAME_OVER)
             {
@@ -1387,30 +1498,40 @@ int main(void)
             }
         }
 
-        // Camera debug sliders
-        Rectangle hBar = { 10, 60, 150, 20 };
-        float hPerc = camHeight / 150.0f; if (hPerc > 1) hPerc = 1; if (hPerc < 0) hPerc = 0;
-        DrawRectangleRec(hBar, LIGHTGRAY);
-        DrawRectangle(10, 60, (int)(150*hPerc), 20, SKYBLUE);
-        DrawText(TextFormat("Height: %.1f", camHeight), 170, 60, 10, BLACK);
-        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), hBar))
-        { camHeight = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camHeight < 1) camHeight = 1; }
+        // F1 debug hint (always visible, top-right)
+        {
+            const char *dbgHint = "[F1] Debug";
+            int dbgW = MeasureText(dbgHint, 14);
+            Color dbgCol = debugMode ? YELLOW : (Color){180,180,180,120};
+            DrawText(dbgHint, GetScreenWidth() - dbgW - 10, 10, 14, dbgCol);
+        }
 
-        Rectangle dBar = { 10, 90, 150, 20 };
-        float dPerc = camDistance / 150.0f; if (dPerc > 1) dPerc = 1; if (dPerc < 0) dPerc = 0;
-        DrawRectangleRec(dBar, LIGHTGRAY);
-        DrawRectangle(10, 90, (int)(150*dPerc), 20, SKYBLUE);
-        DrawText(TextFormat("Distance: %.1f", camDistance), 170, 90, 10, BLACK);
-        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), dBar))
-        { camDistance = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camDistance < 1) camDistance = 1; }
+        // Camera debug sliders (debug mode only)
+        if (debugMode) {
+            Rectangle hBar = { 10, 60, 150, 20 };
+            float hPerc = camHeight / 150.0f; if (hPerc > 1) hPerc = 1; if (hPerc < 0) hPerc = 0;
+            DrawRectangleRec(hBar, LIGHTGRAY);
+            DrawRectangle(10, 60, (int)(150*hPerc), 20, SKYBLUE);
+            DrawText(TextFormat("Height: %.1f", camHeight), 170, 60, 10, BLACK);
+            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), hBar))
+            { camHeight = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camHeight < 1) camHeight = 1; }
 
-        Rectangle fBar = { 10, 120, 150, 20 };
-        float fPerc = camFOV / 120.0f; if (fPerc > 1) fPerc = 1; if (fPerc < 0) fPerc = 0;
-        DrawRectangleRec(fBar, LIGHTGRAY);
-        DrawRectangle(10, 120, (int)(150*fPerc), 20, SKYBLUE);
-        DrawText(TextFormat("FOV: %.1f", camFOV), 170, 120, 10, BLACK);
-        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), fBar))
-        { camFOV = (GetMousePosition().x - 10) / 150.0f * 120.0f; if (camFOV < 1) camFOV = 1; }
+            Rectangle dBar = { 10, 90, 150, 20 };
+            float dPerc = camDistance / 150.0f; if (dPerc > 1) dPerc = 1; if (dPerc < 0) dPerc = 0;
+            DrawRectangleRec(dBar, LIGHTGRAY);
+            DrawRectangle(10, 90, (int)(150*dPerc), 20, SKYBLUE);
+            DrawText(TextFormat("Distance: %.1f", camDistance), 170, 90, 10, BLACK);
+            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), dBar))
+            { camDistance = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camDistance < 1) camDistance = 1; }
+
+            Rectangle fBar = { 10, 120, 150, 20 };
+            float fPerc = camFOV / 120.0f; if (fPerc > 1) fPerc = 1; if (fPerc < 0) fPerc = 0;
+            DrawRectangleRec(fBar, LIGHTGRAY);
+            DrawRectangle(10, 120, (int)(150*fPerc), 20, SKYBLUE);
+            DrawText(TextFormat("FOV: %.1f", camFOV), 170, 120, 10, BLACK);
+            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), fBar))
+            { camFOV = (GetMousePosition().x - 10) / 150.0f * 120.0f; if (camFOV < 1) camFOV = 1; }
+        }
 
         // ── UNIT HUD BAR + SHOP ── (visible in all phases except GAME_OVER)
         if (phase != PHASE_GAME_OVER)
@@ -1490,7 +1611,8 @@ int main(void)
                     int hbY = cardsY + HUD_PORTRAIT_SIZE + 22;
                     int hbW = HUD_PORTRAIT_SIZE;
                     int hbH = 6;
-                    float hpRatio = units[ui].currentHealth / stats->health;
+                    float cardMaxHP = stats->health * units[ui].hpMultiplier;
+                    float hpRatio = units[ui].currentHealth / cardMaxHP;
                     if (hpRatio < 0) hpRatio = 0;
                     if (hpRatio > 1) hpRatio = 1;
                     DrawRectangle(hbX, hbY, hbW, hbH, (Color){ 20, 20, 20, 255 });
