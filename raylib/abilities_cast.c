@@ -206,6 +206,7 @@ bool CastEarthquake(CombatState *state, int caster, AbilitySlot *slot)
         float d = DistXZ(state->units[caster].position, state->units[j].position);
         if (d <= radius) {
             state->units[j].currentHealth -= damage;
+            state->units[j].hitFlash = 0.12f;
             if (state->units[j].currentHealth <= 0) state->units[j].active = false;
         }
     }
@@ -292,6 +293,7 @@ bool CastFissure(CombatState *state, int caster, AbilitySlot *slot, int target)
         float perpDist = sqrtf(perpX * perpX + perpZ * perpZ);
         if (perpDist <= width + 3.0f) {
             state->units[j].currentHealth -= damage;
+            state->units[j].hitFlash = 0.12f;
             if (state->units[j].currentHealth <= 0) state->units[j].active = false;
         }
     }

@@ -28,6 +28,9 @@
 #include "net_client.h"
 #include "pve_waves.h"
 
+// --- Hit flash ---
+#define HIT_FLASH_DURATION 0.12f
+
 // --- Win/loss sound split point (seconds) — tweak & re-split with ffmpeg if needed ---
 // Loss = first 6.5s of "cgj loss and win demo 2.mp3" → sfx/loss.wav
 // Win  = from 6.5s onward                            → sfx/win.wav
@@ -1341,6 +1344,7 @@ int main(void)
                                 else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                             }
                             units[ti].currentHealth -= hitDmg;
+                            units[ti].hitFlash = HIT_FLASH_DURATION;
                             // Teleport target to caster
                             units[ti].position.x = units[projectiles[p].sourceIndex].position.x;
                             units[ti].position.z = units[projectiles[p].sourceIndex].position.z;
@@ -1358,6 +1362,7 @@ int main(void)
                                 else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                             }
                             units[ti].currentHealth -= hitDmg;
+                            units[ti].hitFlash = HIT_FLASH_DURATION;
                             if (units[ti].currentHealth <= 0) units[ti].active = false;
                         }
                         if (projectiles[p].bouncesRemaining > 0) {
@@ -1386,6 +1391,7 @@ int main(void)
                             else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                         }
                         units[ti].currentHealth -= hitDmg;
+                        units[ti].hitFlash = HIT_FLASH_DURATION;
                         if (projectiles[p].stunDuration > 0) {
                             AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
                             TriggerShake(&shake, 5.0f, 0.25f);
@@ -1592,6 +1598,7 @@ int main(void)
                                         else { dmgHit -= units[j].shieldHP; units[j].shieldHP = 0; }
                                     }
                                     units[j].currentHealth -= dmgHit;
+                                    units[j].hitFlash = HIT_FLASH_DURATION;
                                     if (units[j].currentHealth <= 0) units[j].active = false;
                                     // Knockback
                                     float kx = units[j].position.x - units[ct].position.x;
@@ -1674,6 +1681,7 @@ int main(void)
                                 else { dmg -= units[target].shieldHP; units[target].shieldHP = 0; }
                             }
                             units[target].currentHealth -= dmg;
+                            units[target].hitFlash = HIT_FLASH_DURATION;
                             // Lifesteal
                             float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
                             if (ls > 0) {
@@ -2085,6 +2093,7 @@ int main(void)
         //==============================================================================
         for (int i = 0; i < unitCount; i++) {
             if (!units[i].active) continue;
+            if (units[i].hitFlash > 0) units[i].hitFlash -= dt;
             if (IsUnitInStatueSpawn(&statueSpawn, i)) continue; // frozen as statue
             UnitType *type = &unitTypes[units[i].typeIndex];
             if (!type->hasAnimations) continue;
@@ -2229,6 +2238,13 @@ int main(void)
                 UnitType *type = &unitTypes[units[i].typeIndex];
                 if (!type->loaded) continue;
                 Color tint = GetTeamTint(units[i].team);
+                if (units[i].hitFlash > 0) {
+                    float f = units[i].hitFlash / HIT_FLASH_DURATION;
+                    if (f > 1.0f) f = 1.0f;
+                    tint.r = (unsigned char)(tint.r + (255 - tint.r) * f);
+                    tint.g = (unsigned char)(tint.g + (255 - tint.g) * f);
+                    tint.b = (unsigned char)(tint.b + (255 - tint.b) * f);
+                }
                 if (type->hasAnimations) {
                     int idx = type->animIndex[units[i].currentAnim];
                     if (idx >= 0) {

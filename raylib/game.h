@@ -180,6 +180,7 @@ typedef struct {
     float shieldHP;        // absorbs damage before HP (blue bar visual)
     float abilityCastDelay; // 0.75s delay between successive ability casts
     int   chargeTarget;    // Primal Charge: target unit index (-1 = not charging)
+    float hitFlash;        // >0 = flash white on damage (decays to 0)
 } Unit;
 
 //------------------------------------------------------------------------------------
