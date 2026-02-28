@@ -105,9 +105,8 @@ int main(void)
                     fflush(stdout);
                 }
                 if (strstr(buf, "Didn't find PN53x")) {
-                    fprintf(stderr, "ERROR: PN532 not detected on %s\n", port);
-                    close(fd);
-                    return 1;
+                    fprintf(stderr, "WARNING: %s\n", buf);
+                    /* Don't exit — with multiple readers, the other may still work */
                 }
                 fprintf(stderr, "[NFC] %s\n", buf);
                 pos = 0;

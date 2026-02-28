@@ -497,17 +497,25 @@ int main(void)
             char nfcBuf[64];
             if (fgets(nfcBuf, sizeof(nfcBuf), nfcPipe)) {
                 nfcBuf[strcspn(nfcBuf, "\r\n")] = '\0';
+                // Parse optional reader prefix "N:" (e.g. "1:0MM1..." or "2:1DG2...")
+                int nfcReader = 0;
+                const char *nfcCode = nfcBuf;
+                if (nfcBuf[0] >= '1' && nfcBuf[0] <= '9' && nfcBuf[1] == ':') {
+                    nfcReader = nfcBuf[0] - '0';
+                    nfcCode = nfcBuf + 2;
+                }
                 int nfcTypeIndex;
                 AbilitySlot nfcAbilities[MAX_ABILITIES_PER_UNIT];
-                if (ParseUnitCode(nfcBuf, &nfcTypeIndex, nfcAbilities)) {
+                if (ParseUnitCode(nfcCode, &nfcTypeIndex, nfcAbilities)) {
                     if (nfcTypeIndex < unitTypeCount && SpawnUnit(units, &unitCount, nfcTypeIndex, TEAM_BLUE)) {
                         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
                             units[unitCount - 1].abilities[a] = nfcAbilities[a];
-                        printf("[NFC] Tag '%s' -> Spawning %s (Blue)\n", nfcBuf, unitTypes[nfcTypeIndex].name);
+                        printf("[NFC] Reader %d: '%s' -> Spawning %s (Blue)\n",
+                            nfcReader, nfcCode, unitTypes[nfcTypeIndex].name);
                         intro = (UnitIntro){ .active = true, .timer = 0.0f,
                             .typeIndex = nfcTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
                     } else {
-                        printf("[NFC] Tag '%s' -> Blue team full or unknown type\n", nfcBuf);
+                        printf("[NFC] Reader %d: '%s' -> Blue team full or unknown type\n", nfcReader, nfcCode);
                     }
                 } else {
                     printf("[NFC] Invalid unit code: '%s'\n", nfcBuf);

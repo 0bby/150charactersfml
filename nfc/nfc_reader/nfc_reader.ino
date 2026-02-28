@@ -1,208 +1,239 @@
 /**************************************************************************/
 /*!
-    @file     readMifareClassic.pde
-    @author   Adafruit Industries
-	@license  BSD (see license.txt)
+    Dual PN532 NFC reader for Raspberry Pi Pico.
 
-    This example will wait for any ISO14443A card or tag, and
-    depending on the size of the UID will attempt to read from it.
+    Two PN532 boards share the hardware SPI bus (SCK, MOSI, MISO) and are
+    selected by separate chip-select (SS) pins.  The firmware polls each
+    reader in turn with a short timeout and prints any NDEF text payload
+    prefixed with the reader number:
 
-    If the card has a 4-byte UID it is probably a Mifare
-    Classic card, and the following steps are taken:
+        PAYLOAD:1:<text>      (from reader 1)
+        PAYLOAD:2:<text>      (from reader 2)
 
-    Reads the 4 byte (32 bit) ID of a MiFare Classic card.
-    Since the classic cards have only 32 bit identifiers you can stick
-	them in a single variable and use that to compare card ID's as a
-	number. This doesn't work for ultralight cards that have longer 7
-	byte IDs!
+    Wiring (Pico default SPI0):
+        SCK   -> GP18  (shared)
+        MOSI  -> GP19  (shared)
+        MISO  -> GP16  (shared)
+        SS1   -> GP4   (reader 1 chip select)
+        SS2   -> GP9   (reader 2 chip select)
 
-    Note that you need the baud rate to be 115200 because we need to
-	print out the data and read from the card at the same time!
-
-This is an example sketch for the Adafruit PN532 NFC/RFID breakout boards
-This library works with the Adafruit NFC breakout
-  ----> https://www.adafruit.com/products/364
-
-Check out the links above for our tutorials and wiring diagrams
-These chips use SPI to communicate, 4 required to interface
-
-Adafruit invests time and resources providing this open source code,
-please support Adafruit and open-source hardware by purchasing
-products from Adafruit!
+    Both PN532 boards need SCK/MOSI/MISO wired in parallel; only SS differs.
+    Set each PN532 to SPI mode (DIP switches / solder jumpers).
 */
 /**************************************************************************/
-#include <Wire.h>
 #include <SPI.h>
 #include <Adafruit_PN532.h>
 
-// If using the breakout with SPI, define the pins for SPI communication.
-#define PN532_SCK  (2)
-#define PN532_MOSI (3)
-#define PN532_SS   (4)
-#define PN532_MISO (5)
+// Chip-select pins — one per reader
+#define PN532_SS_1  (4)
+#define PN532_SS_2  (9)
 
-// If using the breakout or shield with I2C, define just the pins connected
-// to the IRQ and reset lines.  Use the values below (2, 3) for the shield!
-#define PN532_IRQ   (2)
-#define PN532_RESET (3)  // Not connected by default on the NFC Shield
+// Number of readers
+#define NUM_READERS 2
 
-// Uncomment just _one_ line below depending on how your breakout or shield
-// is connected to the Arduino:
+// Hardware SPI with manual chip-select
+Adafruit_PN532 readers[NUM_READERS] = {
+    Adafruit_PN532(PN532_SS_1),
+    Adafruit_PN532(PN532_SS_2),
+};
 
-// Use this line for a breakout with a SPI connection:
-//Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
+// Debounce: ignore the same UID on the same reader for this many ms
+#define DEBOUNCE_MS 2000
+uint8_t  lastUID[NUM_READERS][7];
+uint8_t  lastUIDLen[NUM_READERS];
+uint32_t lastReadTime[NUM_READERS];
 
-// Use this line for a breakout with a hardware SPI connection.  Note that
-// the PN532 SCK, MOSI, and MISO pins need to be connected to the Arduino's
-// hardware SPI SCK, MOSI, and MISO pins.  On an Arduino Uno these are
-// SCK = 13, MOSI = 11, MISO = 12.  The SS line can be any digital IO pin.
-//Adafruit_PN532 nfc(PN532_SS);
-
-// Or use this line for a breakout or shield with an I2C connection:
-Adafruit_PN532 nfc(PN532_IRQ, PN532_RESET);
-
-void setup(void) {
-  Serial.begin(115200);
-  while (!Serial) delay(10); // for Leonardo/Micro/Zero
-
-  Serial.println("Hello!");
-
-  nfc.begin();
-  Wire.setClock(400000); // I2C Fast Mode (400kHz vs default 100kHz)
-
-  uint32_t versiondata = nfc.getFirmwareVersion();
-  if (! versiondata) {
-    Serial.print("Didn't find PN53x board");
-    while (1); // halt
-  }
-  // Got ok data, print it out!
-  Serial.print("Found chip PN5"); Serial.println((versiondata>>24) & 0xFF, HEX);
-  Serial.print("Firmware ver. "); Serial.print((versiondata>>16) & 0xFF, DEC);
-  Serial.print('.'); Serial.println((versiondata>>8) & 0xFF, DEC);
-
-  Serial.println("Waiting for an ISO14443A Card ...");
+/**************************************************************************/
+/*!  Return true if uid matches the last-seen UID on this reader.         */
+/**************************************************************************/
+static bool isSameTag(int r, uint8_t *uid, uint8_t uidLen)
+{
+    if (uidLen != lastUIDLen[r]) return false;
+    return memcmp(uid, lastUID[r], uidLen) == 0;
 }
 
+/**************************************************************************/
+/*!  Walk NTAG2xx user pages and print any NDEF text/URI payload.         */
+/**************************************************************************/
+static void readAndPrintNDEF(int readerIdx)
+{
+    Adafruit_PN532 &nfc = readers[readerIdx];
 
-void loop(void) {
-  uint8_t success;
-  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
-  uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+    // Read user pages 4-48 (180 bytes — enough for ~150 char payloads)
+    uint8_t data[180];
+    uint8_t pageBuf[16];
+    bool readOk = true;
 
-  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
-  // 'uid' will be populated with the UID, and uidLength will indicate
-  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
-
-  if (success) {
-    // Display some basic information about the card
-    Serial.println("Found an ISO14443A card");
-    Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
-    Serial.print("  UID Value: ");
-    nfc.PrintHex(uid, uidLength);
-
-    if (uidLength == 4)
-    {
-      // We probably have a Mifare Classic card ...
-      uint32_t cardid = uid[0];
-      cardid <<= 8;
-      cardid |= uid[1];
-      cardid <<= 8;
-      cardid |= uid[2];
-      cardid <<= 8;
-      cardid |= uid[3];
-      Serial.print("Seems to be a Mifare Classic card #");
-      Serial.println(cardid);
-    }
-
-    if (uidLength == 7)
-    {
-      // NTAG215 (Ultralight-compatible, 7-byte UID)
-      Serial.println("Detected NTAG2xx tag");
-
-      // Read user pages 4-48 into buffer (180 bytes, enough for ~150 char payloads)
-      uint8_t data[180];
-      uint8_t pageBuf[16];
-      bool readOk = true;
-
-      for (uint8_t page = 4; page < 49; page++) {
+    for (uint8_t page = 4; page < 49; page++) {
         if (!nfc.mifareultralight_ReadPage(page, pageBuf)) {
-          readOk = false;
-          break;
+            readOk = false;
+            break;
         }
         memcpy(&data[(page - 4) * 4], pageBuf, 4);
-      }
+    }
 
-      if (readOk) {
-        // Walk TLV blocks to find NDEF message (type 0x03)
-        int off = 0;
-        while (off < (int)sizeof(data)) {
-          uint8_t tlvType = data[off++];
-          if (tlvType == 0x00) continue;   // NULL TLV
-          if (tlvType == 0xFE) break;      // Terminator
+    if (!readOk) {
+        Serial.println("Failed to read tag pages");
+        return;
+    }
 
-          // Read TLV length (1 or 3 bytes)
-          uint16_t tlvLen;
-          if (data[off] == 0xFF) {
+    // Walk TLV blocks to find NDEF message (type 0x03)
+    int off = 0;
+    while (off < (int)sizeof(data)) {
+        uint8_t tlvType = data[off++];
+        if (tlvType == 0x00) continue;   // NULL TLV
+        if (tlvType == 0xFE) break;      // Terminator
+
+        // Read TLV length (1 or 3 bytes)
+        uint16_t tlvLen;
+        if (data[off] == 0xFF) {
             off++;
             tlvLen = ((uint16_t)data[off] << 8) | data[off + 1];
             off += 2;
-          } else {
+        } else {
             tlvLen = data[off++];
-          }
+        }
 
-          if (tlvType != 0x03) {
+        if (tlvType != 0x03) {
             off += tlvLen; // skip non-NDEF TLVs
             continue;
-          }
+        }
 
-          // Parse NDEF record header
-          uint8_t flags   = data[off];
-          uint8_t typeLen  = data[off + 1];
-          bool    sr       = flags & 0x10;
-          bool    il       = flags & 0x08;
-          uint8_t tnf      = flags & 0x07;
-          int     pos      = off + 2;
+        // Parse NDEF record header
+        uint8_t flags   = data[off];
+        uint8_t typeLen  = data[off + 1];
+        bool    sr       = flags & 0x10;
+        bool    il       = flags & 0x08;
+        uint8_t tnf      = flags & 0x07;
+        int     pos      = off + 2;
 
-          uint32_t payloadLen;
-          if (sr) {
+        uint32_t payloadLen;
+        if (sr) {
             payloadLen = data[pos++];
-          } else {
+        } else {
             payloadLen = ((uint32_t)data[pos] << 24) | ((uint32_t)data[pos+1] << 16) |
                          ((uint32_t)data[pos+2] << 8) | data[pos+3];
             pos += 4;
-          }
+        }
 
-          uint8_t idLen = 0;
-          if (il) idLen = data[pos++];
+        uint8_t idLen = 0;
+        if (il) idLen = data[pos++];
 
-          uint8_t recType = data[pos];
-          pos += typeLen; // skip type field
-          pos += idLen;   // skip ID field
+        uint8_t recType = data[pos];
+        pos += typeLen; // skip type field
+        pos += idLen;   // skip ID field
 
-          // Strip NDEF record overhead to get raw text
-          if (tnf == 0x01 && typeLen == 1 && recType == 'T') {
+        // Strip NDEF record overhead to get raw text
+        if (tnf == 0x01 && typeLen == 1 && recType == 'T') {
             // NFC Forum Text Record: skip status byte + language code
             uint8_t langLen = data[pos] & 0x3F;
             pos += 1 + langLen;
             payloadLen -= 1 + langLen;
-          } else if (tnf == 0x01 && typeLen == 1 && recType == 'U') {
+        } else if (tnf == 0x01 && typeLen == 1 && recType == 'U') {
             // NFC Forum URI Record: skip URI prefix byte
             pos += 1;
             payloadLen -= 1;
-          }
-
-          Serial.print("PAYLOAD:");
-          for (uint32_t j = 0; j < payloadLen && (pos + (int)j) < (int)sizeof(data); j++) {
-            Serial.print((char)data[pos + j]);
-          }
-          Serial.println();
-          break;
         }
-      } else {
-        Serial.println("Failed to read tag pages");
-      }
+
+        // Print with reader prefix:  PAYLOAD:<reader>:<text>
+        Serial.print("PAYLOAD:");
+        Serial.print(readerIdx + 1);  // 1-indexed
+        Serial.print(":");
+        for (uint32_t j = 0; j < payloadLen && (pos + (int)j) < (int)sizeof(data); j++) {
+            Serial.print((char)data[pos + j]);
+        }
+        Serial.println();
+        break;
     }
-    Serial.println("");
-  }
+}
+
+/**************************************************************************/
+/*!  Arduino setup — initialise both readers.                             */
+/**************************************************************************/
+void setup(void)
+{
+    Serial.begin(115200);
+    while (!Serial) delay(10);
+
+    Serial.println("Hello! Dual-reader NFC init");
+
+    for (int r = 0; r < NUM_READERS; r++) {
+        readers[r].begin();
+
+        // Fail fast: only try once per poll (non-blocking-ish)
+        readers[r].setPassiveActivationRetries(0x01);
+
+        uint32_t versiondata = readers[r].getFirmwareVersion();
+        if (!versiondata) {
+            Serial.print("Didn't find PN53x board on reader ");
+            Serial.println(r + 1);
+            // Don't halt — the other reader may still work
+            continue;
+        }
+        Serial.print("Reader ");
+        Serial.print(r + 1);
+        Serial.print(": PN5");
+        Serial.print((versiondata >> 24) & 0xFF, HEX);
+        Serial.print(" fw ");
+        Serial.print((versiondata >> 16) & 0xFF, DEC);
+        Serial.print('.');
+        Serial.println((versiondata >> 8) & 0xFF, DEC);
+
+        // Configure to read ISO14443A tags
+        readers[r].SAMConfig();
+
+        lastUIDLen[r] = 0;
+        lastReadTime[r] = 0;
+    }
+
+    Serial.println("Waiting for an ISO14443A Card ...");
+}
+
+/**************************************************************************/
+/*!  Main loop — poll each reader in turn.                                */
+/**************************************************************************/
+void loop(void)
+{
+    for (int r = 0; r < NUM_READERS; r++) {
+        uint8_t uid[7] = {0};
+        uint8_t uidLength = 0;
+
+        // Short timeout (200 ms) so we don't block the other reader for long
+        bool found = readers[r].readPassiveTargetID(
+            PN532_MIFARE_ISO14443A, uid, &uidLength, 200);
+
+        if (!found) continue;
+
+        // Debounce: skip if same tag was just read on this reader
+        uint32_t now = millis();
+        if (isSameTag(r, uid, uidLength) &&
+            (now - lastReadTime[r]) < DEBOUNCE_MS) {
+            continue;
+        }
+
+        // Remember this tag for debounce
+        memcpy(lastUID[r], uid, uidLength);
+        lastUIDLen[r] = uidLength;
+        lastReadTime[r] = now;
+
+        Serial.print("Reader ");
+        Serial.print(r + 1);
+        Serial.print(": Found ISO14443A card, UID ");
+        Serial.print(uidLength, DEC);
+        Serial.println(" bytes");
+
+        if (uidLength == 4) {
+            uint32_t cardid = ((uint32_t)uid[0] << 24) | ((uint32_t)uid[1] << 16) |
+                              ((uint32_t)uid[2] << 8)  | uid[3];
+            Serial.print("Mifare Classic #");
+            Serial.println(cardid);
+        }
+
+        if (uidLength == 7) {
+            Serial.println("Detected NTAG2xx tag");
+            readAndPrintNDEF(r);
+        }
+
+        Serial.println();
+    }
 }
