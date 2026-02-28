@@ -39,7 +39,7 @@ typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_COUNT } AnimState;
 #define MAX_SHOP_SLOTS 3
 #define MAX_MODIFIERS 128
 #define MAX_PROJECTILES 32
-#define MAX_PARTICLES 256
+#define MAX_PARTICLES 512
 #define MAX_FLOATING_TEXTS 16
 #define MAX_INVENTORY_SLOTS 6
 #define MAX_FISSURES 8
@@ -84,6 +84,8 @@ typedef struct {
     int level;
     Color color;
     bool active;
+    float chargeTimer;  // >0 = still charging (not moving yet)
+    float chargeMax;    // total charge time (for size lerp)
 } Projectile;
 
 //------------------------------------------------------------------------------------
@@ -181,6 +183,7 @@ typedef struct {
     float abilityCastDelay; // 0.75s delay between successive ability casts
     int   chargeTarget;    // Primal Charge: target unit index (-1 = not charging)
     float hitFlash;        // >0 = flash white on damage (decays to 0)
+    float castPause;       // >0 = frozen after casting projectile ability
 } Unit;
 
 //------------------------------------------------------------------------------------

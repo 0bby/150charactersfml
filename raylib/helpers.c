@@ -221,6 +221,7 @@ void SpawnProjectile(Projectile projectiles[], ProjectileType type,
                 .speed = speed, .damage = damage, .stunDuration = stunDur,
                 .bouncesRemaining = 0, .bounceRange = 0, .lastHitUnit = -1,
                 .level = level, .color = color, .active = true,
+                .chargeTimer = 0.2f, .chargeMax = 0.2f,
             };
             return;
         }
