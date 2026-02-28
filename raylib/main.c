@@ -1514,7 +1514,33 @@ int main(void)
                     case ABILITY_VACUUM:        castThisFrame = CastVacuum(&combatState, i, slot); break;
                     case ABILITY_CHAIN_FROST:   castThisFrame = CastChainFrost(&combatState, i, slot, target); break;
                     case ABILITY_BLOOD_RAGE:    castThisFrame = CastBloodRage(&combatState, i, slot); break;
-                    case ABILITY_EARTHQUAKE:    castThisFrame = CastEarthquake(&combatState, i, slot); break;
+                    case ABILITY_EARTHQUAKE:
+                        castThisFrame = CastEarthquake(&combatState, i, slot);
+                        if (castThisFrame) {
+                            // Aggressive tile ripple from earthquake epicenter
+                            float eqX = units[i].position.x;
+                            float eqZ = units[i].position.z;
+                            float eqRadius = ABILITY_DEFS[ABILITY_EARTHQUAKE].values[slot->level][AV_EQ_RADIUS];
+                            float gridOriginEq = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
+                            for (int tr = 0; tr < TILE_GRID_SIZE; tr++) {
+                                for (int tc = 0; tc < TILE_GRID_SIZE; tc++) {
+                                    float cx = gridOriginEq + (tc + 0.5f) * TILE_WORLD_SIZE;
+                                    float cz = gridOriginEq + (tr + 0.5f) * TILE_WORLD_SIZE;
+                                    float dxw = cx - eqX, dzw = cz - eqZ;
+                                    float dist = sqrtf(dxw*dxw + dzw*dzw);
+                                    float wobbleR = eqRadius * 3.0f;
+                                    if (dist < wobbleR) {
+                                        float strength = expf(-1.5f * dist / wobbleR);
+                                        tileWobble[tr][tc] = TILE_WOBBLE_MAX * 1.5f * strength;
+                                        tileWobbleTime[tr][tc] = -(dist * 0.012f);
+                                        float len = dist > 0.1f ? dist : 1.0f;
+                                        tileWobbleDirX[tr][tc] = dzw / len;
+                                        tileWobbleDirZ[tr][tc] = -dxw / len;
+                                    }
+                                }
+                            }
+                        }
+                        break;
                     case ABILITY_SPELL_PROTECT: castThisFrame = CastSpellProtect(&combatState, i, slot); break;
                     case ABILITY_CRAGGY_ARMOR:  castThisFrame = CastCraggyArmor(&combatState, i, slot); break;
                     case ABILITY_STONE_GAZE:    castThisFrame = CastStoneGaze(&combatState, i, slot); break;
