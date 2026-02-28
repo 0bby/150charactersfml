@@ -10,6 +10,7 @@
 
 #include "raylib.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
@@ -122,6 +123,39 @@ int main(void)
         for (int m = 0; m < unitTypes[i].model.materialCount; m++)
             unitTypes[i].model.materials[m].shader = lightShader;
     }
+
+    // Border barrier shader + mesh
+    Shader borderShader = LoadShader("resources/shaders/glsl330/border.vs",
+                                     "resources/shaders/glsl330/border.fs");
+    int borderTimeLoc = GetShaderLocation(borderShader, "time");
+    int borderProximityLoc = GetShaderLocation(borderShader, "proximity");
+
+    Mesh borderMesh = { 0 };
+    borderMesh.vertexCount = 4;
+    borderMesh.triangleCount = 2;
+    borderMesh.vertices = (float *)MemAlloc(4 * 3 * sizeof(float));
+    borderMesh.texcoords = (float *)MemAlloc(4 * 2 * sizeof(float));
+    borderMesh.indices = (unsigned short *)MemAlloc(6 * sizeof(unsigned short));
+    // Quad: X=-100..100, Y=0..40, Z=ARENA_BOUNDARY_Z
+    // Vertex 0: bottom-left
+    borderMesh.vertices[0] = -100.0f; borderMesh.vertices[1] = 0.0f;  borderMesh.vertices[2] = ARENA_BOUNDARY_Z;
+    borderMesh.texcoords[0] = 0.0f;   borderMesh.texcoords[1] = 0.0f;
+    // Vertex 1: bottom-right
+    borderMesh.vertices[3] = 100.0f;  borderMesh.vertices[4] = 0.0f;  borderMesh.vertices[5] = ARENA_BOUNDARY_Z;
+    borderMesh.texcoords[2] = 1.0f;   borderMesh.texcoords[3] = 0.0f;
+    // Vertex 2: top-right
+    borderMesh.vertices[6] = 100.0f;  borderMesh.vertices[7] = 40.0f; borderMesh.vertices[8] = ARENA_BOUNDARY_Z;
+    borderMesh.texcoords[4] = 1.0f;   borderMesh.texcoords[5] = 1.0f;
+    // Vertex 3: top-left
+    borderMesh.vertices[9] = -100.0f; borderMesh.vertices[10] = 40.0f; borderMesh.vertices[11] = ARENA_BOUNDARY_Z;
+    borderMesh.texcoords[6] = 0.0f;   borderMesh.texcoords[7] = 1.0f;
+    // Two triangles: 0-1-2, 0-2-3
+    borderMesh.indices[0] = 0; borderMesh.indices[1] = 1; borderMesh.indices[2] = 2;
+    borderMesh.indices[3] = 0; borderMesh.indices[4] = 2; borderMesh.indices[5] = 3;
+    UploadMesh(&borderMesh, false);
+
+    Material borderMaterial = LoadMaterialDefault();
+    borderMaterial.shader = borderShader;
 
     // Units
     Unit units[MAX_UNITS] = { 0 };
@@ -1252,15 +1286,17 @@ int main(void)
                     float dz = closestDragZ - ARENA_BOUNDARY_Z;
                     float proximity = 1.0f - fminf(fmaxf(dz / fadeRange, 0.0f), 1.0f);
                     if (proximity > 0.01f) {
-                        unsigned char alpha = (unsigned char)(proximity * 160.0f);
-                        Color borderCol = { 255, 50, 50, alpha };
-                        // Ground line
-                        DrawLine3D((Vector3){-100, 0.5f, ARENA_BOUNDARY_Z},
-                                   (Vector3){ 100, 0.5f, ARENA_BOUNDARY_Z}, borderCol);
-                        DrawLine3D((Vector3){-100, 0.3f, ARENA_BOUNDARY_Z},
-                                   (Vector3){ 100, 0.3f, ARENA_BOUNDARY_Z}, borderCol);
-                        // Translucent wall
-                        DrawCube((Vector3){0, 5.0f, ARENA_BOUNDARY_Z}, 200.0f, 10.0f, 0.3f, borderCol);
+                        float currentTime = (float)GetTime();
+                        SetShaderValue(borderShader, borderTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
+                        SetShaderValue(borderShader, borderProximityLoc, &proximity, SHADER_UNIFORM_FLOAT);
+                        rlDisableBackfaceCulling();
+                        rlDisableDepthMask();
+                        BeginBlendMode(BLEND_ADDITIVE);
+                            DrawMesh(borderMesh, borderMaterial, MatrixIdentity());
+                        EndBlendMode();
+                        rlEnableDepthMask();
+                        rlEnableBackfaceCulling();
+
                     }
                 }
             }
@@ -2057,6 +2093,8 @@ int main(void)
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     UnloadRenderTexture(introModelRT);
     UnloadShader(lightShader);
+    UnloadShader(borderShader);
+    UnloadMesh(borderMesh);
     for (int i = 0; i < unitTypeCount; i++) {
         if (unitTypes[i].anims)
             UnloadModelAnimations(unitTypes[i].anims, unitTypes[i].animCount);
