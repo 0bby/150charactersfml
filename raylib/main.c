@@ -113,11 +113,17 @@ int main(void)
     lightShader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(lightShader, "viewPos");
 
     int ambientLoc = GetShaderLocation(lightShader, "ambient");
-    SetShaderValue(lightShader, ambientLoc, (float[4]){ 0.15f, 0.15f, 0.18f, 1.0f }, SHADER_UNIFORM_VEC4);
+    SetShaderValue(lightShader, ambientLoc, (float[4]){ 0.25f, 0.22f, 0.18f, 1.0f }, SHADER_UNIFORM_VEC4);
+
+    int fogColorLoc = GetShaderLocation(lightShader, "fogColor");
+    int fogDensityLoc = GetShaderLocation(lightShader, "fogDensity");
+    SetShaderValue(lightShader, fogColorLoc, (float[3]){ 0.176f, 0.157f, 0.137f }, SHADER_UNIFORM_VEC3);
+    float fogDensity = 0.003f;
+    SetShaderValue(lightShader, fogDensityLoc, &fogDensity, SHADER_UNIFORM_FLOAT);
 
     Light lights[MAX_LIGHTS] = { 0 };
-    lights[0] = CreateLight(LIGHT_DIRECTIONAL, (Vector3){ 50, 80, 50 }, Vector3Zero(), (Color){255, 245, 220, 255}, lightShader);
-    lights[1] = CreateLight(LIGHT_POINT, (Vector3){ 0, 40, 0 }, Vector3Zero(), (Color){240, 240, 255, 255}, lightShader);
+    lights[0] = CreateLight(LIGHT_DIRECTIONAL, (Vector3){ 40, 60, 30 }, Vector3Zero(), (Color){245, 230, 200, 255}, lightShader);
+    lights[1] = CreateLight(LIGHT_POINT, (Vector3){ 0, 40, 0 }, Vector3Zero(), (Color){220, 200, 170, 255}, lightShader);
 
     // Assign lighting shader to all loaded models
     for (int i = 0; i < unitTypeCount; i++)
@@ -126,6 +132,104 @@ int main(void)
         for (int m = 0; m < unitTypes[i].model.materialCount; m++)
             unitTypes[i].model.materials[m].shader = lightShader;
     }
+
+    // --- Tile floor setup ---
+    #define TILE_VARIANTS   5
+    #define TILE_GRID_SIZE  10
+    #define TILE_WORLD_SIZE 20.0f
+
+    Model tileModels[TILE_VARIANTS];
+    Vector3 tileCenters[TILE_VARIANTS]; // OBJ-space center offset per variant
+    const char *tilePaths[TILE_VARIANTS] = {
+        "assets/goblin/environment/tiles/Tile1.obj",
+        "assets/goblin/environment/tiles/Tile2.obj",
+        "assets/goblin/environment/tiles/Tile3.obj",
+        "assets/goblin/environment/tiles/Tile4.obj",
+        "assets/goblin/environment/tiles/Tile5.obj",
+    };
+    Texture2D tileDiffuse = LoadTexture("assets/goblin/environment/tiles/T_Tiles_BC.png");
+
+    for (int i = 0; i < TILE_VARIANTS; i++) {
+        tileModels[i] = LoadModel(tilePaths[i]);
+        // Compute OBJ-space center from bounding box
+        BoundingBox bb = GetMeshBoundingBox(tileModels[i].meshes[0]);
+        tileCenters[i] = (Vector3){
+            (bb.min.x + bb.max.x) * 0.5f,
+            (bb.min.y + bb.max.y) * 0.5f,
+            (bb.min.z + bb.max.z) * 0.5f,
+        };
+        // Assign diffuse texture and lighting shader to all materials
+        for (int m = 0; m < tileModels[i].materialCount; m++) {
+            tileModels[i].materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = tileDiffuse;
+            tileModels[i].materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            tileModels[i].materials[m].shader = lightShader;
+        }
+    }
+
+    // Tile layout system: 0=random, 1=checkerboard, 2=amongus
+    #define TILE_LAYOUT_COUNT 3
+    int tileLayout = 0;
+    int tileVariantGrid[TILE_GRID_SIZE][TILE_GRID_SIZE];
+    float tileRotationGrid[TILE_GRID_SIZE][TILE_GRID_SIZE];
+    float tileJitterAngle[TILE_GRID_SIZE][TILE_GRID_SIZE];  // small random rotation offset (degrees)
+    float tileJitterX[TILE_GRID_SIZE][TILE_GRID_SIZE];      // small random X position offset
+    float tileJitterZ[TILE_GRID_SIZE][TILE_GRID_SIZE];      // small random Z position offset
+    float tileWobble[TILE_GRID_SIZE][TILE_GRID_SIZE];       // current wobble amplitude (degrees)
+    float tileWobbleTime[TILE_GRID_SIZE][TILE_GRID_SIZE];  // elapsed time since wobble started
+    float tileWobbleDirX[TILE_GRID_SIZE][TILE_GRID_SIZE];  // tilt axis direction (from impact)
+    float tileWobbleDirZ[TILE_GRID_SIZE][TILE_GRID_SIZE];
+    memset(tileWobble, 0, sizeof(tileWobble));
+    memset(tileWobbleTime, 0, sizeof(tileWobbleTime));
+    memset(tileWobbleDirX, 0, sizeof(tileWobbleDirX));
+    memset(tileWobbleDirZ, 0, sizeof(tileWobbleDirZ));
+    #define TILE_WOBBLE_MAX   25.0f   // max tilt angle at impact center (degrees)
+    #define TILE_WOBBLE_DECAY  3.0f   // exponential decay rate (per second)
+    #define TILE_WOBBLE_FREQ   6.0f   // oscillation frequency (Hz)
+    #define TILE_WOBBLE_RADIUS 90.0f  // max radius of effect in game units
+    #define TILE_WOBBLE_BOUNCE 3.0f   // max Y bounce at impact center (game units)
+    const float tileRotations[4] = { 0.0f, 90.0f, 180.0f, 270.0f };
+    const char *tileLayoutNames[TILE_LAYOUT_COUNT] = { "Random", "Checkerboard", "Amongus" };
+
+    // Amongus pixel art: 1 = dark tile (variant 0-1), 0 = light tile (variant 2-4)
+    const int amongusPattern[TILE_GRID_SIZE][TILE_GRID_SIZE] = {
+        { 0, 0, 0, 1, 1, 1, 1, 0, 0, 0 },
+        { 0, 0, 1, 1, 1, 1, 1, 1, 0, 0 },
+        { 0, 1, 1, 0, 0, 0, 0, 1, 1, 0 },
+        { 0, 1, 1, 0, 0, 0, 0, 1, 1, 0 },
+        { 0, 1, 1, 1, 1, 1, 1, 1, 1, 0 },
+        { 0, 1, 1, 1, 1, 1, 1, 1, 1, 0 },
+        { 0, 1, 1, 1, 1, 1, 1, 1, 1, 0 },
+        { 0, 0, 1, 1, 1, 0, 1, 1, 0, 0 },
+        { 0, 0, 1, 1, 0, 0, 0, 1, 1, 0 },
+        { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    };
+
+    // Generate tile grid for current layout
+    #define TILE_JITTER_ANGLE 3.0f   // max rotation jitter in degrees (+/-)
+    #define TILE_JITTER_POS   0.4f   // max position jitter in game units (+/-)
+    #define GENERATE_TILE_GRID() do { \
+        for (int r = 0; r < TILE_GRID_SIZE; r++) { \
+            for (int c = 0; c < TILE_GRID_SIZE; c++) { \
+                if (tileLayout == 0) { \
+                    tileVariantGrid[r][c] = GetRandomValue(0, TILE_VARIANTS - 1); \
+                    tileRotationGrid[r][c] = tileRotations[GetRandomValue(0, 3)]; \
+                } else if (tileLayout == 1) { \
+                    int dark = (r + c) % 2; \
+                    tileVariantGrid[r][c] = dark ? GetRandomValue(0, 1) : GetRandomValue(2, TILE_VARIANTS - 1); \
+                    tileRotationGrid[r][c] = tileRotations[GetRandomValue(0, 3)]; \
+                } else { \
+                    int dark = amongusPattern[r][c]; \
+                    tileVariantGrid[r][c] = dark ? GetRandomValue(0, 1) : GetRandomValue(2, TILE_VARIANTS - 1); \
+                    tileRotationGrid[r][c] = tileRotations[GetRandomValue(0, 3)]; \
+                } \
+                tileJitterAngle[r][c] = (GetRandomValue(-100, 100) / 100.0f) * TILE_JITTER_ANGLE; \
+                tileJitterX[r][c] = (GetRandomValue(-100, 100) / 100.0f) * TILE_JITTER_POS; \
+                tileJitterZ[r][c] = (GetRandomValue(-100, 100) / 100.0f) * TILE_JITTER_POS; \
+            } \
+        } \
+    } while(0)
+    GENERATE_TILE_GRID();
+    const float tileScale = TILE_WORLD_SIZE / 156.0f * 0.9f;
 
     // Border barrier shader + mesh
     Shader borderShader = LoadShader("resources/shaders/glsl330/border.vs",
@@ -261,6 +365,18 @@ int main(void)
         UpdateShake(&shake, dt);
         if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
 
+        // Debug: cycle tile layouts with arrow keys
+        if (debugMode) {
+            if (IsKeyPressed(KEY_RIGHT)) {
+                tileLayout = (tileLayout + 1) % TILE_LAYOUT_COUNT;
+                GENERATE_TILE_GRID();
+            }
+            if (IsKeyPressed(KEY_LEFT)) {
+                tileLayout = (tileLayout - 1 + TILE_LAYOUT_COUNT) % TILE_LAYOUT_COUNT;
+                GENERATE_TILE_GRID();
+            }
+        }
+
         // Update unit intro animation
         if (intro.active) {
             intro.timer += dt;
@@ -301,6 +417,29 @@ int main(void)
             } else {
                 UpdateStatueSpawn(&statueSpawn, particles, &shake, units[si].position, dt);
                 if (statueSpawn.phase == SSPAWN_DONE) {
+                    // Trigger tile wobble from impact point
+                    {
+                        float impX = units[si].position.x;
+                        float impZ = units[si].position.z;
+                        float gridOriginW = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
+                        for (int tr = 0; tr < TILE_GRID_SIZE; tr++) {
+                            for (int tc = 0; tc < TILE_GRID_SIZE; tc++) {
+                                float cx = gridOriginW + (tc + 0.5f) * TILE_WORLD_SIZE;
+                                float cz = gridOriginW + (tr + 0.5f) * TILE_WORLD_SIZE;
+                                float dx = cx - impX, dz = cz - impZ;
+                                float dist = sqrtf(dx*dx + dz*dz);
+                                if (dist < TILE_WOBBLE_RADIUS) {
+                                    float strength = expf(-2.5f * dist / TILE_WOBBLE_RADIUS);
+                                    tileWobble[tr][tc] = TILE_WOBBLE_MAX * strength;
+                                    tileWobbleTime[tr][tc] = -(dist * 0.008f); // negative = propagation delay
+                                    // Tilt direction: away from impact point
+                                    float len = dist > 0.1f ? dist : 1.0f;
+                                    tileWobbleDirX[tr][tc] = dz / len; // tilt around X pushes Z edge up
+                                    tileWobbleDirZ[tr][tc] = -dx / len; // tilt around Z pushes X edge up
+                                }
+                            }
+                        }
+                    }
                     units[si].position.y = 0.0f;
                     units[si].currentAnim = ANIM_IDLE;
                     units[si].animFrame = 0;
@@ -308,6 +447,14 @@ int main(void)
                 }
             }
         }
+
+        // Update tile wobble timers
+        for (int tr = 0; tr < TILE_GRID_SIZE; tr++)
+            for (int tc = 0; tc < TILE_GRID_SIZE; tc++)
+                if (tileWobble[tr][tc] > 0.01f)
+                    tileWobbleTime[tr][tc] += dt;
+                else
+                    tileWobble[tr][tc] = 0.0f;
 
         // Hover tooltip tracking
         int prevHoverAbilityId = hoverAbilityId;
@@ -620,8 +767,8 @@ int main(void)
                 if (nfcInputErrorTimer <= 0.0f) nfcInputError[0] = '\0';
             }
 
-            // NFC emulation text input handling
-            if (nfcInputActive && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
+            // NFC emulation text input handling (debug only)
+            if (debugMode && nfcInputActive && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
                 int key = GetCharPressed();
                 while (key > 0) {
                     // Uppercase the character
@@ -723,8 +870,8 @@ int main(void)
                 Rectangle playBtn = { (float)(sw/2 - playBtnW/2), (float)(hudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 bool clickedButton = false;
 
-                // NFC input box click check
-                {
+                // NFC input box click check (debug only)
+                if (debugMode) {
                     int nfcBoxW = 200, nfcBoxH = 28;
                     int nfcBoxX = sw/2 - nfcBoxW/2;
                     int nfcBoxY = btnYStart - 55;
@@ -1763,7 +1910,7 @@ int main(void)
         // DRAW
         //==============================================================================
         BeginDrawing();
-        ClearBackground(RAYWHITE);
+        ClearBackground((Color){ 45, 40, 35, 255 });
 
         // Collect active blue units for HUD
         int blueHudUnits[BLUE_TEAM_MAX_SIZE];
@@ -1802,7 +1949,61 @@ int main(void)
         camera.position.y += shake.offset.y;
 
         BeginMode3D(camera);
-            DrawGrid(20, 10.0f);
+            // Draw tiled floor
+            {
+                float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
+                for (int r = 0; r < TILE_GRID_SIZE; r++) {
+                    for (int c = 0; c < TILE_GRID_SIZE; c++) {
+                        int vi = tileVariantGrid[r][c];
+                        float cellX = gridOrigin + (c + 0.5f) * TILE_WORLD_SIZE + tileJitterX[r][c];
+                        float cellZ = gridOrigin + (r + 0.5f) * TILE_WORLD_SIZE + tileJitterZ[r][c];
+                        float totalRot = tileRotationGrid[r][c] + tileJitterAngle[r][c];
+                        // DrawModelEx applies scale→rotate→translate, so the OBJ-space
+                        // center offset gets rotated. Rotate it by the same angle to compensate.
+                        float angle = totalRot * DEG2RAD;
+                        float cosA = cosf(angle);
+                        float sinA = sinf(angle);
+                        float sxo = tileCenters[vi].x * tileScale;
+                        float szo = tileCenters[vi].z * tileScale;
+                        float rxo = sxo * cosA + szo * sinA;
+                        float rzo = -sxo * sinA + szo * cosA;
+
+                        // Wobble: tilt tile around its cell center (propagating wave)
+                        float wobbleY = 0.0f;
+                        float wobbleTiltX = 0.0f, wobbleTiltZ = 0.0f;
+                        float wt = tileWobbleTime[r][c];
+                        if (tileWobble[r][c] > 0.01f && wt > 0.0f) {
+                            float envelope = tileWobble[r][c] * expf(-TILE_WOBBLE_DECAY * wt);
+                            float osc = sinf(wt * TILE_WOBBLE_FREQ * 2.0f * PI);
+                            wobbleTiltX = envelope * osc * tileWobbleDirX[r][c];
+                            wobbleTiltZ = envelope * osc * tileWobbleDirZ[r][c];
+                            wobbleY = envelope * fabsf(osc) * (TILE_WOBBLE_BOUNCE / TILE_WOBBLE_MAX);
+                            // Kill wobble when envelope is negligible
+                            if (envelope < 0.05f) tileWobble[r][c] = 0.0f;
+                        }
+
+                        Vector3 pos = {
+                            cellX - rxo,
+                            wobbleY - tileCenters[vi].y * tileScale,
+                            cellZ - rzo,
+                        };
+                        // Apply tilt via rlgl matrix if wobbling
+                        if (wobbleTiltX != 0.0f || wobbleTiltZ != 0.0f) {
+                            rlPushMatrix();
+                            rlTranslatef(cellX, 0.0f, cellZ);
+                            rlRotatef(wobbleTiltX, 1.0f, 0.0f, 0.0f);
+                            rlRotatef(wobbleTiltZ, 0.0f, 0.0f, 1.0f);
+                            rlTranslatef(-cellX, 0.0f, -cellZ);
+                        }
+                        DrawModelEx(tileModels[vi], pos,
+                            (Vector3){ 0.0f, 1.0f, 0.0f }, totalRot,
+                            (Vector3){ tileScale, tileScale, tileScale }, WHITE);
+                        if (wobbleTiltX != 0.0f || wobbleTiltZ != 0.0f) {
+                            rlPopMatrix();
+                        }
+                    }
+                }
+            }
 
             // Draw units
             for (int i = 0; i < unitCount; i++)
@@ -1977,6 +2178,7 @@ int main(void)
         camera.position = camSaved;
 
         // --- Floor label: Blue team unit count (projected from 3D floor position) ---
+        if (phase != PHASE_COMBAT)
         {
             int blueCount = CountTeamUnits(units, unitCount, TEAM_BLUE);
             int redCount  = CountTeamUnits(units, unitCount, TEAM_RED);
@@ -2158,6 +2360,7 @@ int main(void)
                 }
 
                 DrawText("[F1] DEBUG MODE", dBtnXBlue, dBtnYStart - 20, 12, YELLOW);
+                DrawText(TextFormat("[</>] Tiles: %s", tileLayoutNames[tileLayout]), dBtnXBlue, dBtnYStart - 36, 12, YELLOW);
             }
 
             // Round info label
@@ -2167,8 +2370,8 @@ int main(void)
                 DrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, 16, WHITE);
             }
 
-            // NFC emulation input box
-            {
+            // NFC emulation input box (debug only)
+            if (debugMode) {
                 int nfcBoxW = 200, nfcBoxH = 28;
                 int nfcBoxX = sw/2 - nfcBoxW/2;
                 int nfcBoxY = dBtnYStart - 55;
@@ -3481,6 +3684,8 @@ int main(void)
             UnloadModelAnimations(unitTypes[i].idleAnims, unitTypes[i].idleAnimCount);
         UnloadModel(unitTypes[i].model);
     }
+    for (int i = 0; i < TILE_VARIANTS; i++) UnloadModel(tileModels[i]);
+    UnloadTexture(tileDiffuse);
     CloseWindow();
     return 0;
 }

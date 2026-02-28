@@ -29,6 +29,8 @@ struct Light {
 uniform Light lights[MAX_LIGHTS];
 uniform vec4 ambient;
 uniform vec3 viewPos;
+uniform vec3 fogColor;
+uniform float fogDensity;
 
 void main()
 {
@@ -71,4 +73,10 @@ void main()
 
     // Gamma correction
     finalColor = pow(finalColor, vec4(1.0/2.2));
+
+    // Distance fog
+    float dist = length(viewPos - fragPosition);
+    float fogFactor = 1.0 - exp(-fogDensity * dist);
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    finalColor = mix(finalColor, vec4(fogColor, 1.0), fogFactor);
 }
