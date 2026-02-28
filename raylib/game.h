@@ -25,9 +25,11 @@ typedef enum { TEAM_BLUE = 0, TEAM_RED = 1 } Team;
 // Game phases
 //------------------------------------------------------------------------------------
 typedef enum {
+    PHASE_MENU,       // main menu + leaderboard view
     PHASE_PREP,       // place / arrange units
     PHASE_COMBAT,     // units fight automatically
     PHASE_ROUND_OVER, // brief pause showing round result
+    PHASE_MILESTONE,  // "Set in Stone" selection screen
     PHASE_GAME_OVER,  // all rounds finished
 } GamePhase;
 

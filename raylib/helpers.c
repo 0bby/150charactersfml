@@ -851,6 +851,18 @@ void ClearRedUnits(Unit units[], int *unitCount)
     *unitCount = write;
 }
 
+// Remove inactive blue units and compact the array
+void CompactBlueUnits(Unit units[], int *unitCount)
+{
+    int write = 0;
+    for (int read = 0; read < *unitCount; read++) {
+        if (units[read].team == TEAM_BLUE && !units[read].active) continue;
+        if (write != read) units[write] = units[read];
+        write++;
+    }
+    *unitCount = write;
+}
+
 // Static wave definitions for rounds 1-5
 static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
     // Round 1: "Skirmish" — no abilities

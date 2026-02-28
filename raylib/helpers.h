@@ -83,3 +83,4 @@ int FindHighestHPAlly(Unit units[], int unitCount, int selfIndex);
 Vector3 FindValidSpawnPos(Unit units[], int unitCount, float minDist);
 void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount);
 void ClearRedUnits(Unit units[], int *unitCount);
+void CompactBlueUnits(Unit units[], int *unitCount);

@@ -24,6 +24,7 @@
 
 #include "game.h"
 #include "helpers.h"
+#include "leaderboard.h"
 
 //------------------------------------------------------------------------------------
 // Main
@@ -31,7 +32,7 @@
 int main(void)
 {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-    InitWindow(1280, 720, "Autochess — Best of 5");
+    InitWindow(1280, 720, "Autochess — Set in Stone");
     SetWindowMinSize(640, 360);
 
     // Camera presets — prep (top-down auto-chess) vs combat (diagonal MOBA)
@@ -187,18 +188,27 @@ int main(void)
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
 
-    // Initial free shop roll
-    RollShop(shopSlots, &playerGold, 0);
-
     // Round / score state
-    GamePhase phase = PHASE_PREP;
+    GamePhase phase = PHASE_MENU;
     int currentRound = 0;          // 0-indexed, displayed as 1-indexed
     int blueWins = 0;
     int redWins  = 0;
     float roundOverTimer = 0.0f;   // brief pause after a round ends
     const char *roundResultText = "";
-    bool showContinuePrompt = false;
     bool debugMode = true;
+
+    // Leaderboard & prestige state
+    Leaderboard leaderboard = {0};
+    LoadLeaderboard(&leaderboard);
+    bool showLeaderboard = false;
+    int leaderboardScroll = 0;
+    int lastMilestoneRound = 0;
+    bool milestoneSelection[BLUE_TEAM_MAX_SIZE] = {0};
+    bool blueLostLastRound = false;
+    bool deathPenalty = false;
+    char playerName[32] = "Player";
+    int playerNameLen = 6;
+    bool nameInputActive = false;
 
     // UI button sizes (positions computed each frame for resize support)
     const int btnWidth = 150;
@@ -219,9 +229,6 @@ int main(void)
     } else {
         printf("[NFC] Failed to launch bridge\n");
     }
-
-    // Spawn initial wave (round 1)
-    SpawnWave(units, &unitCount, 0, unitTypeCount);
 
     //==================================================================================
     // MAIN LOOP
@@ -301,9 +308,100 @@ int main(void)
         }
 
         //------------------------------------------------------------------------------
+        // PHASE: MENU — main menu + leaderboard view
+        //------------------------------------------------------------------------------
+        if (phase == PHASE_MENU)
+        {
+            // Name input handling
+            if (nameInputActive) {
+                int key = GetCharPressed();
+                while (key > 0) {
+                    if (key >= 32 && key <= 125 && playerNameLen < 30) {
+                        playerName[playerNameLen] = (char)key;
+                        playerNameLen++;
+                        playerName[playerNameLen] = '\0';
+                    }
+                    key = GetCharPressed();
+                }
+                if (IsKeyPressed(KEY_BACKSPACE) && playerNameLen > 0) {
+                    playerNameLen--;
+                    playerName[playerNameLen] = '\0';
+                }
+                if (IsKeyPressed(KEY_ENTER)) nameInputActive = false;
+            }
+
+            // Click handling
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                Vector2 mouse = GetMousePosition();
+                int sw = GetScreenWidth();
+                int sh = GetScreenHeight();
+
+                if (showLeaderboard) {
+                    // Close button for leaderboard overlay
+                    Rectangle closeBtn = { (float)(sw/2 + 280), (float)(sh/2 - 250), 40, 40 };
+                    if (CheckCollisionPointRec(mouse, closeBtn))
+                        showLeaderboard = false;
+                } else {
+                    // Name input field
+                    Rectangle nameField = { (float)(sw/2 - 120), (float)(sh/2 - 40), 240, 36 };
+                    if (CheckCollisionPointRec(mouse, nameField))
+                        nameInputActive = true;
+                    else
+                        nameInputActive = false;
+
+                    // PLAY button
+                    Rectangle playMenuBtn = { (float)(sw/2 - 80), (float)(sh/2 + 20), 160, 50 };
+                    if (CheckCollisionPointRec(mouse, playMenuBtn)) {
+                        // Initialize game state
+                        unitCount = 0;
+                        snapshotCount = 0;
+                        currentRound = 0;
+                        blueWins = 0;
+                        redWins = 0;
+                        lastMilestoneRound = 0;
+                        blueLostLastRound = false;
+                        deathPenalty = false;
+                        roundResultText = "";
+                        ClearAllModifiers(modifiers);
+                        ClearAllProjectiles(projectiles);
+                        ClearAllParticles(particles);
+                        ClearAllFloatingTexts(floatingTexts);
+                        ClearAllFissures(fissures);
+                        playerGold = 100;
+                        for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
+                        RollShop(shopSlots, &playerGold, 0);
+                        dragState.dragging = false;
+                        SpawnWave(units, &unitCount, 0, unitTypeCount);
+                        phase = PHASE_PREP;
+                    }
+
+                    // LEADERBOARD button
+                    Rectangle lbBtn = { (float)(sw/2 - 80), (float)(sh/2 + 80), 160, 40 };
+                    if (CheckCollisionPointRec(mouse, lbBtn)) {
+                        showLeaderboard = true;
+                        leaderboardScroll = 0;
+                    }
+                }
+            }
+
+            // ESC closes leaderboard overlay
+            if (showLeaderboard && IsKeyPressed(KEY_ESCAPE))
+                showLeaderboard = false;
+
+            // Leaderboard scroll
+            if (showLeaderboard) {
+                int wheel = (int)GetMouseWheelMove();
+                leaderboardScroll -= wheel * 40;
+                if (leaderboardScroll < 0) leaderboardScroll = 0;
+                int maxScroll = leaderboard.entryCount * 80 - 400;
+                if (maxScroll < 0) maxScroll = 0;
+                if (leaderboardScroll > maxScroll) leaderboardScroll = maxScroll;
+            }
+        }
+        //------------------------------------------------------------------------------
         // PHASE: PREP — place units, click Play to start
         //------------------------------------------------------------------------------
-        if (phase == PHASE_PREP)
+        else if (phase == PHASE_PREP)
         {
             // Smooth Y lift
             for (int i = 0; i < unitCount; i++)
@@ -1027,9 +1125,9 @@ int main(void)
             int ba, ra;
             CountTeams(units, unitCount, &ba, &ra);
             if (ba == 0 || ra == 0) {
-                if (ba > 0) { blueWins++; roundResultText = "BLUE WINS THE ROUND!"; }
-                else if (ra > 0) { redWins++; roundResultText = "RED WINS THE ROUND!"; }
-                else { roundResultText = "DRAW — NO SURVIVORS!"; }
+                if (ba > 0) { blueWins++; roundResultText = "BLUE WINS THE ROUND!"; blueLostLastRound = false; }
+                else if (ra > 0) { redWins++; roundResultText = "RED WINS THE ROUND!"; blueLostLastRound = true; }
+                else { roundResultText = "DRAW — NO SURVIVORS!"; blueLostLastRound = true; }
                 currentRound++;
                 phase = PHASE_ROUND_OVER;
                 roundOverTimer = 2.5f;
@@ -1039,18 +1137,37 @@ int main(void)
             }
         }
         //------------------------------------------------------------------------------
-        // PHASE: ROUND_OVER — brief pause, then back to prep or game over
+        // PHASE: ROUND_OVER — brief pause, then milestone/death/prep
         //------------------------------------------------------------------------------
         else if (phase == PHASE_ROUND_OVER)
         {
             roundOverTimer -= dt;
             if (roundOverTimer <= 0.0f)
             {
-                if (currentRound >= TOTAL_ROUNDS && !showContinuePrompt) {
-                    // After round 5+: show continue/stop prompt
-                    showContinuePrompt = true;
-                } else if (!showContinuePrompt) {
-                    // Normal round transition (rounds 1-4): auto-advance
+                if (blueLostLastRound && lastMilestoneRound > 0) {
+                    // DEATH PENALTY: lost after a milestone — units gone
+                    deathPenalty = true;
+                    phase = PHASE_GAME_OVER;
+                } else if (currentRound > 0 && currentRound % 5 == 0) {
+                    // Milestone reached — go to selection screen
+                    for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) milestoneSelection[i] = false;
+                    // Restore blue units for milestone screen
+                    RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
+                    for (int i = 0; i < unitCount; i++) {
+                        units[i].nextAbilitySlot = 0;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            units[i].abilities[a].cooldownRemaining = 0;
+                            units[i].abilities[a].triggered = false;
+                        }
+                    }
+                    ClearAllModifiers(modifiers);
+                    ClearAllProjectiles(projectiles);
+                    ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
+                    ClearRedUnits(units, &unitCount);
+                    phase = PHASE_MILESTONE;
+                } else {
+                    // Normal round transition
                     RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
                     for (int i = 0; i < unitCount; i++) {
                         units[i].nextAbilitySlot = 0;
@@ -1069,63 +1186,153 @@ int main(void)
                     RollShop(shopSlots, &playerGold, 0);
                     phase = PHASE_PREP;
                 }
+            }
+        }
+        //------------------------------------------------------------------------------
+        // PHASE: MILESTONE — "Set in Stone" selection screen
+        //------------------------------------------------------------------------------
+        else if (phase == PHASE_MILESTONE)
+        {
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                Vector2 mouse = GetMousePosition();
+                int sw = GetScreenWidth();
+                int sh = GetScreenHeight();
 
-                // Continue/Stop prompt input handling
-                if (showContinuePrompt) {
-                    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_Y)) {
-                        // Continue: advance to next wave
-                        showContinuePrompt = false;
-                        RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
-                        for (int i = 0; i < unitCount; i++) {
-                            units[i].nextAbilitySlot = 0;
-                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                                units[i].abilities[a].cooldownRemaining = 0;
-                                units[i].abilities[a].triggered = false;
-                            }
+                // Collect active blue units
+                int msBlue[BLUE_TEAM_MAX_SIZE]; int msCount = 0;
+                for (int i = 0; i < unitCount && msCount < BLUE_TEAM_MAX_SIZE; i++)
+                    if (units[i].active && units[i].team == TEAM_BLUE) msBlue[msCount++] = i;
+
+                // Card layout (display only, no toggles)
+                int cardW = 200, cardH = 140, cardGap = 20;
+                int totalW = msCount * cardW + (msCount > 1 ? (msCount - 1) * cardGap : 0);
+                int startX = (sw - totalW) / 2;
+                int cardY = sh / 2 - cardH / 2 - 20;
+                (void)startX; (void)cardY; // used only for button positioning
+
+                // Buttons (two: SET IN STONE, CONTINUE)
+                int btnW = 180, btnH = 44;
+                int btnY = cardY + cardH + 40;
+                int btnGap = 30;
+                int totalBtnW = 2 * btnW + btnGap;
+                int btnStartX = (sw - totalBtnW) / 2;
+
+                // SET IN STONE button — saves entire party to leaderboard, then game over
+                Rectangle setBtn = { (float)btnStartX, (float)btnY, (float)btnW, (float)btnH };
+                if (CheckCollisionPointRec(mouse, setBtn) && msCount > 0) {
+                    // Build leaderboard entry from all blue units
+                    LeaderboardEntry entry = {0};
+                    strncpy(entry.playerName, playerName, 31);
+                    entry.playerName[31] = '\0';
+                    entry.highestRound = currentRound;
+                    entry.unitCount = msCount;
+                    for (int h = 0; h < msCount; h++) {
+                        int ui = msBlue[h];
+                        entry.units[h].typeIndex = units[ui].typeIndex;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            entry.units[h].abilities[a].abilityId = units[ui].abilities[a].abilityId;
+                            entry.units[h].abilities[a].level = units[ui].abilities[a].level;
                         }
-                        ClearAllModifiers(modifiers);
-                        ClearAllProjectiles(projectiles);
-                        ClearAllFloatingTexts(floatingTexts);
-                        ClearAllFissures(fissures);
-                        ClearRedUnits(units, &unitCount);
-                        SpawnWave(units, &unitCount, currentRound, unitTypeCount);
-                        playerGold += goldPerRound;
-                        RollShop(shopSlots, &playerGold, 0);
-                        phase = PHASE_PREP;
-                    } else if (IsKeyPressed(KEY_N) || IsKeyPressed(KEY_ESCAPE)) {
-                        // Stop: game over
-                        showContinuePrompt = false;
-                        phase = PHASE_GAME_OVER;
                     }
+                    InsertLeaderboardEntry(&leaderboard, &entry);
+                    SaveLeaderboard(&leaderboard);
+
+                    lastMilestoneRound = currentRound;
+                    deathPenalty = false;
+                    phase = PHASE_GAME_OVER;
+                }
+
+                // CONTINUE button — skip prestige, keep playing
+                Rectangle contBtn = { (float)(btnStartX + btnW + btnGap), (float)btnY, (float)btnW, (float)btnH };
+                if (CheckCollisionPointRec(mouse, contBtn)) {
+                    lastMilestoneRound = currentRound;
+                    SpawnWave(units, &unitCount, currentRound, unitTypeCount);
+                    playerGold += goldPerRound;
+                    RollShop(shopSlots, &playerGold, 0);
+                    phase = PHASE_PREP;
                 }
             }
         }
         //------------------------------------------------------------------------------
-        // PHASE: GAME_OVER — show final result, press R to restart
+        // PHASE: GAME_OVER — show final result, press R to return to menu
         //------------------------------------------------------------------------------
         else if (phase == PHASE_GAME_OVER)
         {
-            if (IsKeyPressed(KEY_R))
-            {
-                // Full reset
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !deathPenalty) {
+                Vector2 mouse = GetMousePosition();
+                int sw = GetScreenWidth();
+                int sh = GetScreenHeight();
+
+                // Collect surviving blue units for withdraw
+                int goBlue[BLUE_TEAM_MAX_SIZE]; int goCount = 0;
+                for (int i = 0; i < unitCount && goCount < BLUE_TEAM_MAX_SIZE; i++)
+                    if (units[i].active && units[i].team == TEAM_BLUE) goBlue[goCount++] = i;
+
+                // Withdraw buttons per unit card
+                int cardW = 200, cardH = 140, cardGap = 20;
+                int totalW = goCount * cardW + (goCount > 1 ? (goCount - 1) * cardGap : 0);
+                int startX = (sw - totalW) / 2;
+                int cardY = sh / 2 - 40;
+                for (int h = 0; h < goCount; h++) {
+                    int cx = startX + h * (cardW + cardGap);
+                    Rectangle wdBtn = { (float)(cx + 10), (float)(cardY + cardH - 34), (float)(cardW - 20), 28 };
+                    if (CheckCollisionPointRec(mouse, wdBtn)) {
+                        // Withdraw placeholder — mark unit for NFC export
+                        printf("[WITHDRAW] Unit %d (%s) withdrawn for NFC export\n",
+                               goBlue[h], unitTypes[units[goBlue[h]].typeIndex].name);
+                        units[goBlue[h]].active = false;
+                        CompactBlueUnits(units, &unitCount);
+                        break; // re-layout next frame
+                    }
+                }
+
+                // RESET button
+                int resetBtnW = 180, resetBtnH = 44;
+                int resetBtnY = cardY + cardH + 30;
+                Rectangle resetBtn = { (float)(sw/2 - resetBtnW/2), (float)resetBtnY, (float)resetBtnW, (float)resetBtnH };
+                if (CheckCollisionPointRec(mouse, resetBtn)) {
+                    // Full reset — go to menu
+                    unitCount = 0;
+                    snapshotCount = 0;
+                    currentRound = 0;
+                    blueWins = 0;
+                    redWins = 0;
+                    roundResultText = "";
+                    lastMilestoneRound = 0;
+                    blueLostLastRound = false;
+                    deathPenalty = false;
+                    ClearAllModifiers(modifiers);
+                    ClearAllProjectiles(projectiles);
+                    ClearAllParticles(particles);
+                    ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
+                    playerGold = 100;
+                    for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
+                    dragState.dragging = false;
+                    phase = PHASE_MENU;
+                }
+            }
+
+            // Death penalty: just press R (no withdraw possible)
+            if (deathPenalty && IsKeyPressed(KEY_R)) {
                 unitCount = 0;
                 snapshotCount = 0;
                 currentRound = 0;
                 blueWins = 0;
                 redWins = 0;
                 roundResultText = "";
-                showContinuePrompt = false;
+                lastMilestoneRound = 0;
+                blueLostLastRound = false;
+                deathPenalty = false;
                 ClearAllModifiers(modifiers);
                 ClearAllProjectiles(projectiles);
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
-                playerGold = 100; // DEBUG: was 10
+                playerGold = 100;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
-                RollShop(shopSlots, &playerGold, 0);
                 dragState.dragging = false;
-                SpawnWave(units, &unitCount, 0, unitTypeCount);
-                phase = PHASE_PREP;
+                phase = PHASE_MENU;
             }
         }
 
@@ -1526,6 +1733,17 @@ int main(void)
                 DrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, 16, WHITE);
             }
 
+            // Danger zone indicator (pushing past a milestone)
+            if (lastMilestoneRound > 0) {
+                const char *dangerText = "DANGER ZONE - Losing means permanent death!";
+                int dtw = MeasureText(dangerText, 18);
+                DrawText(dangerText, sw/2 - dtw/2, 60, 18, RED);
+                int nextMilestone = ((currentRound / 5) + 1) * 5;
+                const char *nextText = TextFormat("Next milestone: Wave %d", nextMilestone);
+                int ntw = MeasureText(nextText, 14);
+                DrawText(nextText, sw/2 - ntw/2, 82, 14, ORANGE);
+            }
+
             // PLAY button (centre-bottom)
             {
                 Rectangle dPlayBtn = { (float)(sw/2 - playBtnW/2), (float)(dHudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
@@ -1568,28 +1786,31 @@ int main(void)
                 const char *scoreText = TextFormat("Score: %d - %d", blueWins, redWins);
                 int stw = MeasureText(scoreText, 18);
                 DrawText(scoreText, sw/2 - stw/2, sh/2 - 10, 18, WHITE);
-
-                if (showContinuePrompt) {
-                    const char *promptText = TextFormat("Wave %d Complete!", currentRound);
-                    int pw = MeasureText(promptText, 24);
-                    DrawText(promptText, sw/2 - pw/2, sh/2 + 20, 24, GOLD);
-
-                    const char *choiceText = "[ENTER] Continue   [ESC] Stop";
-                    int cw = MeasureText(choiceText, 18);
-                    DrawText(choiceText, sw/2 - cw/2, sh/2 + 50, 18, LIGHTGRAY);
-                }
             }
             else if (phase == PHASE_GAME_OVER)
             {
-                const char *winner = (blueWins > redWins) ? "BLUE TEAM WINS!" :
-                                     (redWins > blueWins) ? "RED TEAM WINS!" : "IT'S A DRAW!";
-                int ww = MeasureText(winner, 36);
-                DrawText(winner, sw/2 - ww/2, sh/2 - 50, 36,
-                         (blueWins > redWins) ? DARKBLUE : (redWins > blueWins) ? MAROON : DARKGRAY);
+                if (deathPenalty) {
+                    const char *deathMsg = TextFormat("YOUR UNITS HAVE FALLEN - Wave %d", currentRound);
+                    int dw = MeasureText(deathMsg, 30);
+                    DrawText(deathMsg, sw/2 - dw/2, sh/2 - 50, 30, RED);
 
-                const char *restartMsg = "Press R to restart";
+                    const char *deathSub = "Defeated! Your units are lost forever!";
+                    int dsw = MeasureText(deathSub, 18);
+                    DrawText(deathSub, sw/2 - dsw/2, sh/2 - 10, 18, (Color){255,100,100,255});
+                } else {
+                    const char *winner = (blueWins > redWins) ? "BLUE TEAM WINS!" :
+                                         (redWins > blueWins) ? "RED TEAM WINS!" : "GAME OVER";
+                    int ww = MeasureText(winner, 36);
+                    DrawText(winner, sw/2 - ww/2, sh/2 - 50, 36,
+                             (blueWins > redWins) ? DARKBLUE : (redWins > blueWins) ? MAROON : DARKGRAY);
+
+                    const char *roundInfo = TextFormat("Reached Wave %d  |  Score: %d - %d", currentRound, blueWins, redWins);
+                    int riw = MeasureText(roundInfo, 18);
+                    DrawText(roundInfo, sw/2 - riw/2, sh/2 - 10, 18, WHITE);
+                }
+                const char *restartMsg = "Press R to return to menu";
                 int rw = MeasureText(restartMsg, 20);
-                DrawText(restartMsg, sw/2 - rw/2, sh/2, 20, GRAY);
+                DrawText(restartMsg, sw/2 - rw/2, sh/2 + 30, 20, GRAY);
             }
         }
 
@@ -1628,8 +1849,8 @@ int main(void)
             { camFOV = (GetMousePosition().x - 10) / 150.0f * 120.0f; if (camFOV < 1) camFOV = 1; }
         }
 
-        // ── UNIT HUD BAR + SHOP ── (visible in all phases except GAME_OVER)
-        if (phase != PHASE_GAME_OVER)
+        // ── UNIT HUD BAR + SHOP ── (visible during prep, combat, round_over only)
+        if (phase != PHASE_GAME_OVER && phase != PHASE_MENU && phase != PHASE_MILESTONE)
         {
             int hudSw = GetScreenWidth();
             int hudSh = GetScreenHeight();
@@ -2051,6 +2272,286 @@ int main(void)
                 }
                 lineY += 14;
             }
+        }
+
+        //==============================================================================
+        // PHASE_MENU DRAWING
+        //==============================================================================
+        if (phase == PHASE_MENU)
+        {
+            int msw = GetScreenWidth();
+            int msh = GetScreenHeight();
+
+            // Dark background
+            DrawRectangle(0, 0, msw, msh, (Color){ 20, 20, 30, 255 });
+
+            // Title
+            const char *title = "AUTOCHESS";
+            int titleSize = 48;
+            int tw = MeasureText(title, titleSize);
+            DrawText(title, msw/2 - tw/2, msh/4 - 40, titleSize, (Color){200, 180, 255, 255});
+
+            const char *subtitle = "Set in Stone";
+            int subSize = 24;
+            int sw2 = MeasureText(subtitle, subSize);
+            DrawText(subtitle, msw/2 - sw2/2, msh/4 + 20, subSize, (Color){160,140,200,200});
+
+            // Name input field
+            {
+                const char *nameLabel = "Player Name:";
+                int nlw = MeasureText(nameLabel, 16);
+                DrawText(nameLabel, msw/2 - nlw/2, msh/2 - 65, 16, (Color){180,180,200,255});
+
+                Rectangle nameField = { (float)(msw/2 - 120), (float)(msh/2 - 40), 240, 36 };
+                Color nameBg = nameInputActive ? (Color){50,50,70,255} : (Color){35,35,50,255};
+                DrawRectangleRec(nameField, nameBg);
+                Color nameBorder = nameInputActive ? (Color){150,140,200,255} : (Color){80,80,100,255};
+                DrawRectangleLinesEx(nameField, 2, nameBorder);
+
+                // Draw player name with cursor
+                int nameTextW = MeasureText(playerName, 18);
+                DrawText(playerName, msw/2 - nameTextW/2, msh/2 - 31, 18, WHITE);
+                if (nameInputActive) {
+                    // Blinking cursor
+                    float blinkTime = (float)GetTime();
+                    if ((int)(blinkTime * 2) % 2 == 0) {
+                        int cursorX = msw/2 - nameTextW/2 + nameTextW;
+                        DrawRectangle(cursorX + 2, msh/2 - 31, 2, 18, WHITE);
+                    }
+                }
+            }
+
+            // PLAY button
+            {
+                Rectangle playMenuBtn = { (float)(msw/2 - 80), (float)(msh/2 + 20), 160, 50 };
+                Color playBg = (Color){50,180,80,255};
+                if (CheckCollisionPointRec(GetMousePosition(), playMenuBtn))
+                    playBg = (Color){30,220,60,255};
+                DrawRectangleRec(playMenuBtn, playBg);
+                DrawRectangleLinesEx(playMenuBtn, 2, DARKGREEN);
+                const char *playText = "PLAY";
+                int ptw2 = MeasureText(playText, 24);
+                DrawText(playText, (int)(playMenuBtn.x + 80 - ptw2/2), (int)(playMenuBtn.y + 13), 24, WHITE);
+            }
+
+            // LEADERBOARD button
+            {
+                Rectangle lbBtn = { (float)(msw/2 - 80), (float)(msh/2 + 80), 160, 40 };
+                Color lbBg = (Color){60,60,80,255};
+                if (CheckCollisionPointRec(GetMousePosition(), lbBtn))
+                    lbBg = (Color){80,80,110,255};
+                DrawRectangleRec(lbBtn, lbBg);
+                DrawRectangleLinesEx(lbBtn, 2, (Color){100,100,130,255});
+                const char *lbText = "LEADERBOARD";
+                int lbw = MeasureText(lbText, 16);
+                DrawText(lbText, (int)(lbBtn.x + 80 - lbw/2), (int)(lbBtn.y + 12), 16, WHITE);
+            }
+
+            // Leaderboard overlay
+            if (showLeaderboard)
+            {
+                // Dim overlay
+                DrawRectangle(0, 0, msw, msh, (Color){0,0,0,180});
+
+                int panelW = 600, panelH = 500;
+                int panelX = msw/2 - panelW/2;
+                int panelY = msh/2 - panelH/2;
+                DrawRectangle(panelX, panelY, panelW, panelH, (Color){24,24,32,240});
+                DrawRectangleLinesEx((Rectangle){(float)panelX,(float)panelY,(float)panelW,(float)panelH}, 2, (Color){100,100,130,255});
+
+                // Title
+                const char *lbTitle = "LEADERBOARD";
+                int ltw = MeasureText(lbTitle, 24);
+                DrawText(lbTitle, panelX + panelW/2 - ltw/2, panelY + 10, 24, GOLD);
+
+                // Close button
+                Rectangle closeBtn = { (float)(panelX + panelW - 40), (float)panelY, 40, 40 };
+                Color closeBg = (Color){180,50,50,200};
+                if (CheckCollisionPointRec(GetMousePosition(), closeBtn))
+                    closeBg = (Color){230,70,70,255};
+                DrawRectangleRec(closeBtn, closeBg);
+                int xw = MeasureText("X", 18);
+                DrawText("X", (int)(closeBtn.x + 20 - xw/2), (int)(closeBtn.y + 11), 18, WHITE);
+
+                // Entries
+                int listTop = panelY + 50;
+                int listH = panelH - 60;
+                int rowH = 70;
+                BeginScissorMode(panelX + 4, listTop, panelW - 8, listH);
+                for (int e = 0; e < leaderboard.entryCount; e++) {
+                    int rowY = listTop + e * rowH - leaderboardScroll;
+                    if (rowY + rowH < listTop || rowY > listTop + listH) continue;
+
+                    LeaderboardEntry *le = &leaderboard.entries[e];
+                    Color rowBg = (e % 2 == 0) ? (Color){30,30,42,255} : (Color){36,36,48,255};
+                    DrawRectangle(panelX + 4, rowY, panelW - 8, rowH - 2, rowBg);
+
+                    // Rank
+                    const char *rankText = TextFormat("#%d", e + 1);
+                    DrawText(rankText, panelX + 12, rowY + 8, 20, GOLD);
+
+                    // Round
+                    const char *roundText = TextFormat("Wave %d", le->highestRound);
+                    DrawText(roundText, panelX + 60, rowY + 8, 18, WHITE);
+
+                    // Player name
+                    DrawText(le->playerName, panelX + 180, rowY + 8, 16, (Color){180,180,200,255});
+
+                    // Unit info
+                    int ux = panelX + 180;
+                    int uy = rowY + 32;
+                    for (int u = 0; u < le->unitCount && u < BLUE_TEAM_MAX_SIZE; u++) {
+                        SavedUnit *su = &le->units[u];
+                        // Unit type name
+                        const char *uname = (su->typeIndex < unitTypeCount) ? unitTypes[su->typeIndex].name : "???";
+                        DrawText(uname, ux, uy, 12, (Color){150,180,255,255});
+                        int nameW = MeasureText(uname, 12);
+
+                        // 2x2 ability mini-grid
+                        int gridX = ux + nameW + 6;
+                        int miniSize = 14;
+                        int miniGap = 2;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            int col = a % 2, row = a / 2;
+                            int ax = gridX + col * (miniSize + miniGap);
+                            int ay = uy + row * (miniSize + miniGap) - 4;
+                            if (su->abilities[a].abilityId >= 0 && su->abilities[a].abilityId < ABILITY_COUNT) {
+                                DrawRectangle(ax, ay, miniSize, miniSize, ABILITY_DEFS[su->abilities[a].abilityId].color);
+                                const char *abbr = ABILITY_DEFS[su->abilities[a].abilityId].abbrev;
+                                DrawText(abbr, ax + 1, ay + 2, 7, WHITE);
+                            } else {
+                                DrawRectangle(ax, ay, miniSize, miniSize, (Color){40,40,55,255});
+                            }
+                        }
+                        ux += nameW + 6 + 2 * (miniSize + miniGap) + 12;
+                    }
+                }
+                EndScissorMode();
+
+                if (leaderboard.entryCount == 0) {
+                    const char *emptyText = "No entries yet - play and Set in Stone!";
+                    int etw = MeasureText(emptyText, 16);
+                    DrawText(emptyText, panelX + panelW/2 - etw/2, panelY + panelH/2, 16, (Color){100,100,120,255});
+                }
+            }
+        }
+
+        //==============================================================================
+        // PHASE_MILESTONE DRAWING
+        //==============================================================================
+        if (phase == PHASE_MILESTONE)
+        {
+            int msw = GetScreenWidth();
+            int msh = GetScreenHeight();
+
+            // Dim overlay on top of 3D scene
+            DrawRectangle(0, 0, msw, msh, (Color){0,0,0,160});
+
+            // Title
+            const char *msTitle = TextFormat("MILESTONE REACHED - Wave %d", currentRound);
+            int mstw = MeasureText(msTitle, 32);
+            DrawText(msTitle, msw/2 - mstw/2, 40, 32, GOLD);
+
+            const char *msSubtitle = "Set your party in stone, or risk it all and continue";
+            int mssw = MeasureText(msSubtitle, 16);
+            DrawText(msSubtitle, msw/2 - mssw/2, 80, 16, (Color){200,200,220,200});
+
+            // Collect active blue units
+            int msBlue[BLUE_TEAM_MAX_SIZE]; int msCount = 0;
+            for (int i = 0; i < unitCount && msCount < BLUE_TEAM_MAX_SIZE; i++)
+                if (units[i].active && units[i].team == TEAM_BLUE) msBlue[msCount++] = i;
+
+            // Unit cards (display only)
+            int cardW = 200, cardH = 140, cardGap = 20;
+            int totalW = msCount * cardW + (msCount > 1 ? (msCount - 1) * cardGap : 0);
+            int startX = (msw - totalW) / 2;
+            int cardY = msh / 2 - cardH / 2 - 20;
+
+            for (int h = 0; h < msCount; h++) {
+                int cx = startX + h * (cardW + cardGap);
+                int ui = msBlue[h];
+                UnitType *type = &unitTypes[units[ui].typeIndex];
+
+                // Card background
+                DrawRectangle(cx, cardY, cardW, cardH, (Color){35,35,50,240});
+                DrawRectangleLinesEx((Rectangle){(float)cx,(float)cardY,(float)cardW,(float)cardH}, 2, (Color){60,60,80,255});
+
+                // Portrait
+                if (h < blueHudCount) {
+                    int portSize = 80;
+                    Rectangle srcRect = { 0, 0, (float)HUD_PORTRAIT_SIZE, -(float)HUD_PORTRAIT_SIZE };
+                    Rectangle dstRect = { (float)(cx + 10), (float)(cardY + 10), (float)portSize, (float)portSize };
+                    DrawTexturePro(portraits[h].texture, srcRect, dstRect, (Vector2){0,0}, 0.0f, WHITE);
+                    DrawRectangleLines(cx + 10, cardY + 10, portSize, portSize, (Color){60,60,80,255});
+                }
+
+                // Unit name
+                DrawText(type->name, cx + 10, cardY + 96, 14, (Color){200,200,220,255});
+
+                // 2x2 ability grid
+                int abilX = cx + 100;
+                int abilY2 = cardY + 14;
+                int slotSize = 28;
+                int slotGap = 4;
+                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                    int col = a % 2, row = a / 2;
+                    int ax = abilX + col * (slotSize + slotGap);
+                    int ay = abilY2 + row * (slotSize + slotGap);
+                    AbilitySlot *aslot = &units[ui].abilities[a];
+                    if (aslot->abilityId >= 0 && aslot->abilityId < ABILITY_COUNT) {
+                        DrawRectangle(ax, ay, slotSize, slotSize, ABILITY_DEFS[aslot->abilityId].color);
+                        const char *abbr = ABILITY_DEFS[aslot->abilityId].abbrev;
+                        int aw = MeasureText(abbr, 10);
+                        DrawText(abbr, ax + (slotSize - aw)/2, ay + (slotSize - 10)/2, 10, WHITE);
+                        const char *lvl = TextFormat("L%d", aslot->level + 1);
+                        DrawText(lvl, ax + 2, ay + slotSize - 8, 7, (Color){220,220,220,200});
+                    } else {
+                        DrawRectangle(ax, ay, slotSize, slotSize, (Color){40,40,55,255});
+                    }
+                    DrawRectangleLines(ax, ay, slotSize, slotSize, (Color){90,90,110,255});
+                }
+            }
+
+            // Buttons (two: SET IN STONE, CONTINUE)
+            int btnW2 = 180, btnH2 = 44;
+            int btnY2 = cardY + cardH + 40;
+            int btnGap2 = 30;
+            int totalBtnW2 = 2 * btnW2 + btnGap2;
+            int btnStartX2 = (msw - totalBtnW2) / 2;
+
+            // SET IN STONE button
+            {
+                Rectangle setBtn = { (float)btnStartX2, (float)btnY2, (float)btnW2, (float)btnH2 };
+                Color setBg = (Color){200,170,40,255};
+                if (CheckCollisionPointRec(GetMousePosition(), setBtn))
+                    setBg = (Color){240,200,60,255};
+                DrawRectangleRec(setBtn, setBg);
+                DrawRectangleLinesEx(setBtn, 2, (Color){140,120,30,255});
+                const char *setText = "SET IN STONE";
+                int setW = MeasureText(setText, 16);
+                DrawText(setText, (int)(setBtn.x + btnW2/2 - setW/2), (int)(setBtn.y + 14), 16, WHITE);
+            }
+
+            // CONTINUE button
+            {
+                Rectangle contBtn = { (float)(btnStartX2 + btnW2 + btnGap2), (float)btnY2, (float)btnW2, (float)btnH2 };
+                Color contBg = (Color){50,160,70,255};
+                if (CheckCollisionPointRec(GetMousePosition(), contBtn))
+                    contBg = (Color){30,200,50,255};
+                DrawRectangleRec(contBtn, contBg);
+                DrawRectangleLinesEx(contBtn, 2, DARKGREEN);
+                const char *contText = "CONTINUE";
+                int contW = MeasureText(contText, 16);
+                DrawText(contText, (int)(contBtn.x + btnW2/2 - contW/2), (int)(contBtn.y + 14), 16, WHITE);
+            }
+
+            // Risk warning
+            const char *warnText = "SET IN STONE saves your party to the leaderboard and ends the run.";
+            int warnW = MeasureText(warnText, 12);
+            DrawText(warnText, msw/2 - warnW/2, btnY2 + btnH2 + 10, 12, (Color){255,180,80,200});
+            const char *riskText = "CONTINUE risks everything - losing past this point means permanent death!";
+            int riskW = MeasureText(riskText, 12);
+            DrawText(riskText, msw/2 - riskW/2, btnY2 + btnH2 + 26, 12, (Color){255,100,80,200});
         }
 
         //==============================================================================
