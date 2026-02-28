@@ -27,6 +27,8 @@ typedef enum {
     PHASE_GAME_OVER,  // all rounds finished
 } GamePhase;
 
+typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_COUNT } AnimState;
+
 #define MAX_SHOP_SLOTS 3
 #define MAX_MODIFIERS 128
 #define MAX_PROJECTILES 32
@@ -134,6 +136,12 @@ typedef struct {
     BoundingBox baseBounds;
     float scale;
     bool loaded;
+    ModelAnimation *anims;          // walk animations (NULL if none)
+    int animCount;                  // number of walk animations
+    ModelAnimation *idleAnims;      // idle animations (NULL if none)
+    int idleAnimCount;              // number of idle animations
+    int animIndex[ANIM_COUNT];      // index into respective anim array (-1 = not found)
+    bool hasAnimations;
 } UnitType;
 
 //------------------------------------------------------------------------------------
@@ -150,6 +158,8 @@ typedef struct {
     bool selected;
     bool dragging;
     float facingAngle;     // degrees around Y axis (for smooth turning)
+    AnimState currentAnim;
+    int animFrame;
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
     int nextAbilitySlot;   // index into ACTIVATION_ORDER for clockwise cycling
 } Unit;

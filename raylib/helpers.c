@@ -34,6 +34,8 @@ bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
         .selected       = false,
         .dragging       = false,
         .facingAngle    = (team == TEAM_BLUE) ? 180.0f : 0.0f,
+        .currentAnim    = ANIM_IDLE,
+        .animFrame      = 0,
     };
     for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
         units[*unitCount].abilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
@@ -132,6 +134,8 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             .selected       = false,
             .dragging       = false,
             .facingAngle    = (snaps[i].team == TEAM_BLUE) ? 180.0f : 0.0f,
+            .currentAnim    = ANIM_IDLE,
+            .animFrame      = 0,
         };
         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
             units[i].abilities[a] = snaps[i].abilities[a];

@@ -51,8 +51,8 @@ int main(void)
     unitTypes[0].modelPath = "MUSHROOMmixamotest.obj";
     unitTypes[0].scale = 0.07f;
     unitTypes[1].name = "Goblin";
-    unitTypes[1].modelPath = "goblin.obj";
-    unitTypes[1].scale = 0.07f;
+    unitTypes[1].modelPath = "assets/goblin/animations/PluginGoblinWalk.glb";
+    unitTypes[1].scale = 9.0f;
 
     for (int i = 0; i < unitTypeCount; i++)
     {
@@ -63,7 +63,25 @@ int main(void)
             unitTypes[i].loaded = true;
         }
         else unitTypes[i].loaded = false;
+
+        // Fix GLB alpha: force all material diffuse maps to full opacity
+        for (int m = 0; m < unitTypes[i].model.materialCount; m++)
+            unitTypes[i].model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
     }
+
+    // Load goblin animations from separate GLBs
+    int walkAnimCount = 0, idleAnimCount = 0;
+    ModelAnimation *walkAnims = LoadModelAnimations("assets/goblin/animations/PluginGoblinWalk.glb", &walkAnimCount);
+    ModelAnimation *idleAnims = LoadModelAnimations("assets/goblin/animations/PluginGoblinIdle.glb", &idleAnimCount);
+    // Store walk anims as the main array, keep idle separate
+    unitTypes[1].anims = walkAnims;
+    unitTypes[1].animCount = walkAnimCount;
+    unitTypes[1].idleAnims = idleAnims;
+    unitTypes[1].idleAnimCount = idleAnimCount;
+    for (int s = 0; s < ANIM_COUNT; s++) unitTypes[1].animIndex[s] = -1;
+    if (walkAnimCount > 0) unitTypes[1].animIndex[ANIM_WALK] = 0;
+    if (idleAnimCount > 0) unitTypes[1].animIndex[ANIM_IDLE] = 0;
+    unitTypes[1].hasAnimations = (walkAnimCount > 0 || idleAnimCount > 0);
 
     // Portrait render textures for HUD (one per max blue unit)
     RenderTexture2D portraits[BLUE_TEAM_MAX_SIZE];
@@ -883,6 +901,37 @@ int main(void)
         }
 
         //==============================================================================
+        // ANIMATION UPDATE
+        //==============================================================================
+        for (int i = 0; i < unitCount; i++) {
+            if (!units[i].active) continue;
+            UnitType *type = &unitTypes[units[i].typeIndex];
+            if (!type->hasAnimations) continue;
+
+            // Determine desired anim state
+            AnimState desired = ANIM_IDLE;
+            if (phase == PHASE_COMBAT && units[i].targetIndex >= 0) {
+                float dist = DistXZ(units[i].position, units[units[i].targetIndex].position);
+                if (dist > ATTACK_RANGE) desired = ANIM_WALK;
+            }
+
+            // Reset frame on anim change
+            if (desired != units[i].currentAnim) {
+                units[i].currentAnim = desired;
+                units[i].animFrame = 0;
+            }
+
+            // Advance frame
+            int idx = type->animIndex[units[i].currentAnim];
+            if (idx >= 0) {
+                ModelAnimation *arr = (units[i].currentAnim == ANIM_IDLE) ? type->idleAnims : type->anims;
+                int frameCount = arr[idx].frameCount;
+                if (frameCount > 0)
+                    units[i].animFrame = (units[i].animFrame + 1) % frameCount;
+            }
+        }
+
+        //==============================================================================
         // DRAW
         //==============================================================================
         BeginDrawing();
@@ -912,6 +961,8 @@ int main(void)
             BeginTextureMode(portraits[h]);
                 ClearBackground((Color){ 30, 30, 40, 255 });
                 BeginMode3D(portraitCam);
+                    if (type->hasAnimations && type->animIndex[ANIM_IDLE] >= 0)
+                        UpdateModelAnimation(type->model, type->idleAnims[type->animIndex[ANIM_IDLE]], 0);
                     DrawModel(type->model, (Vector3){ 0, 0, 0 }, type->scale, GetTeamTint(TEAM_BLUE));
                 EndMode3D();
             EndTextureMode();
@@ -927,6 +978,13 @@ int main(void)
                 UnitType *type = &unitTypes[units[i].typeIndex];
                 if (!type->loaded) continue;
                 Color tint = GetTeamTint(units[i].team);
+                if (type->hasAnimations) {
+                    int idx = type->animIndex[units[i].currentAnim];
+                    if (idx >= 0) {
+                        ModelAnimation *arr = (units[i].currentAnim == ANIM_IDLE) ? type->idleAnims : type->anims;
+                        UpdateModelAnimation(type->model, arr[idx], units[i].animFrame);
+                    }
+                }
                 DrawModelEx(type->model, units[i].position, (Vector3){0,1,0}, units[i].facingAngle,
                     (Vector3){type->scale, type->scale, type->scale}, tint);
 
@@ -1438,7 +1496,13 @@ int main(void)
     }
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     UnloadShader(lightShader);
-    for (int i = 0; i < unitTypeCount; i++) UnloadModel(unitTypes[i].model);
+    for (int i = 0; i < unitTypeCount; i++) {
+        if (unitTypes[i].anims)
+            UnloadModelAnimations(unitTypes[i].anims, unitTypes[i].animCount);
+        if (unitTypes[i].idleAnims)
+            UnloadModelAnimations(unitTypes[i].idleAnims, unitTypes[i].idleAnimCount);
+        UnloadModel(unitTypes[i].model);
+    }
     CloseWindow();
     return 0;
 }
