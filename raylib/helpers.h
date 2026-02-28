@@ -56,6 +56,9 @@ void ClearAllFissures(Fissure fissures[]);
 bool CheckFissureCollision(Fissure fissures[], Vector3 pos, float unitRadius);
 Vector3 ResolveFissureCollision(Fissure fissures[], Vector3 pos, Vector3 oldPos, float unitRadius);
 
+// Drawing helpers
+void DrawArc3D(Vector3 center, float radius, float fraction, Color color);
+
 // Ability casting handlers (return true if cast succeeded)
 bool CastMagicMissile(CombatState *state, int caster, AbilitySlot *slot, int target);
 bool CastVacuum(CombatState *state, int caster, AbilitySlot *slot);

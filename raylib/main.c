@@ -183,6 +183,7 @@ int main(void)
     Fissure fissures[MAX_FISSURES] = {0};
     UnitIntro intro = { .active = false, .timer = 0.0f };
     int hoverAbilityId = -1;
+    int hoverAbilityLevel = 0;
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
 
@@ -245,6 +246,7 @@ int main(void)
         // Hover tooltip tracking
         int prevHoverAbilityId = hoverAbilityId;
         hoverAbilityId = -1;
+        hoverAbilityLevel = 0;
 
         // Lerp camera toward phase preset
         {
@@ -913,6 +915,22 @@ int main(void)
                     // Fissure collision — slide along impassable terrain
                     float unitRadius = 2.0f;
                     units[i].position = ResolveFissureCollision(fissures, units[i].position, oldPos, unitRadius);
+
+                    // Unit-unit collision — push overlapping units apart on XZ plane
+                    for (int j = 0; j < unitCount; j++) {
+                        if (j == i || !units[j].active) continue;
+                        float cdist = DistXZ(units[i].position, units[j].position);
+                        float minDist = UNIT_COLLISION_RADIUS * 2.0f;
+                        if (cdist < minDist && cdist > 0.001f) {
+                            float overlap = minDist - cdist;
+                            float pushX = (units[i].position.x - units[j].position.x) / cdist;
+                            float pushZ = (units[i].position.z - units[j].position.z) / cdist;
+                            units[i].position.x += pushX * overlap * 0.5f;
+                            units[i].position.z += pushZ * overlap * 0.5f;
+                            units[j].position.x -= pushX * overlap * 0.5f;
+                            units[j].position.z -= pushZ * overlap * 0.5f;
+                        }
+                    }
                 }
                 else
                 {
@@ -1212,13 +1230,54 @@ int main(void)
                 }
             }
 
-            // Draw stun indicator (yellow ring at feet)
-            for (int i = 0; i < unitCount; i++) {
-                if (!units[i].active) continue;
-                if (UnitHasModifier(modifiers, i, MOD_STUN)) {
+            // Draw modifier timer rings (duration-aware arcs, stacked outward per modifier type)
+            {
+                // Fixed ordering for ring stacking
+                const ModifierType ringOrder[] = {
+                    MOD_STUN, MOD_SPELL_PROTECT, MOD_CRAGGY_ARMOR, MOD_STONE_GAZE,
+                    MOD_INVULNERABLE, MOD_LIFESTEAL, MOD_ARMOR, MOD_DIG_HEAL, MOD_SPEED_MULT,
+                };
+                const Color ringColors[] = {
+                    {255,255,0,255},     // STUN - yellow
+                    {200,240,255,255},   // SPELL_PROTECT - cyan
+                    {140,140,160,255},   // CRAGGY_ARMOR - gray
+                    {160,80,200,255},    // STONE_GAZE - purple
+                    {135,206,235,255},   // INVULNERABLE - skyblue
+                    {230,40,40,255},     // LIFESTEAL - red
+                    {130,130,130,255},   // ARMOR - gray
+                    {139,90,43,255},     // DIG_HEAL - brown
+                    {0,228,48,255},      // SPEED_MULT - green
+                };
+                const int ringOrderCount = sizeof(ringOrder) / sizeof(ringOrder[0]);
+
+                for (int i = 0; i < unitCount; i++) {
+                    if (!units[i].active) continue;
                     Vector3 ringPos = { units[i].position.x, units[i].position.y + 0.3f, units[i].position.z };
-                    DrawCircle3D(ringPos, 4.0f, (Vector3){1,0,0}, 90.0f, YELLOW);
-                    DrawCircle3D(ringPos, 3.5f, (Vector3){1,0,0}, 90.0f, YELLOW);
+                    int ringIdx = 0;
+                    for (int r = 0; r < ringOrderCount; r++) {
+                        // Find this modifier on unit i
+                        Modifier *found = NULL;
+                        for (int m = 0; m < MAX_MODIFIERS; m++) {
+                            if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == ringOrder[r]) {
+                                found = &modifiers[m];
+                                break;
+                            }
+                        }
+                        if (!found) continue;
+                        float radius = 3.5f + ringIdx * 1.5f;
+                        float frac = (found->maxDuration > 0.0f) ? found->duration / found->maxDuration : 0.0f;
+                        if (frac < 0.0f) frac = 0.0f;
+                        if (frac > 1.0f) frac = 1.0f;
+                        Color bright = ringColors[r];
+                        Color dim = { (unsigned char)(bright.r / 4), (unsigned char)(bright.g / 4), (unsigned char)(bright.b / 4), 100 };
+                        // Track ring (full circle in dim)
+                        DrawArc3D(ringPos, radius, 1.0f, dim);
+                        // Active arc (partial in bright) — draw 3 concentric for thickness
+                        DrawArc3D(ringPos, radius - 0.15f, frac, bright);
+                        DrawArc3D(ringPos, radius, frac, bright);
+                        DrawArc3D(ringPos, radius + 0.15f, frac, bright);
+                        ringIdx++;
+                    }
                 }
             }
 
@@ -1255,23 +1314,7 @@ int main(void)
                 }
             }
 
-            // Draw modifier indicator rings (Spell Protect = cyan, Craggy Armor = gray)
-            for (int i = 0; i < unitCount; i++) {
-                if (!units[i].active) continue;
-                Vector3 ringPos = { units[i].position.x, units[i].position.y + 0.2f, units[i].position.z };
-                if (UnitHasModifier(modifiers, i, MOD_SPELL_PROTECT)) {
-                    DrawCircle3D(ringPos, 5.0f, (Vector3){1,0,0}, 90.0f, (Color){200,240,255,200});
-                    DrawCircle3D(ringPos, 4.5f, (Vector3){1,0,0}, 90.0f, (Color){200,240,255,140});
-                }
-                if (UnitHasModifier(modifiers, i, MOD_CRAGGY_ARMOR)) {
-                    DrawCircle3D(ringPos, 4.0f, (Vector3){1,0,0}, 90.0f, (Color){140,140,160,200});
-                    DrawCircle3D(ringPos, 3.5f, (Vector3){1,0,0}, 90.0f, (Color){140,140,160,140});
-                }
-                if (UnitHasModifier(modifiers, i, MOD_STONE_GAZE)) {
-                    DrawCircle3D(ringPos, 5.5f, (Vector3){1,0,0}, 90.0f, (Color){160,80,200,200});
-                    DrawCircle3D(ringPos, 5.0f, (Vector3){1,0,0}, 90.0f, (Color){160,80,200,140});
-                }
-            }
+            // (modifier rings now drawn above via DrawArc3D)
 
             // Arena boundary wall (fades in as blue unit is dragged near it)
             if (phase == PHASE_PREP) {
@@ -1357,7 +1400,8 @@ int main(void)
             int htw = MeasureText(hpT, 10);
             DrawText(hpT, (int)sp.x - htw/2, by + bh + 2, 10, DARKGRAY);
 
-            // Modifier labels
+            // Modifier labels (deduplicated — only one per type due to AddModifier dedup)
+            // Duration-colored text: active portion in modColor, expired portion in dim gray
             int modY = by + bh + 14;
             for (int m = 0; m < MAX_MODIFIERS; m++) {
                 if (!modifiers[m].active || modifiers[m].unitIndex != i) continue;
@@ -1375,8 +1419,23 @@ int main(void)
                     case MOD_STONE_GAZE:    modLabel = "STONE GAZE";   modColor = (Color){160,80,200,255};  break;
                 }
                 if (modLabel) {
+                    int totalLen = (int)strlen(modLabel);
                     int mlw = MeasureText(modLabel, 9);
-                    DrawText(modLabel, (int)sp.x - mlw/2, modY, 9, modColor);
+                    int startX = (int)sp.x - mlw / 2;
+                    float frac = (modifiers[m].maxDuration > 0.0f)
+                        ? modifiers[m].duration / modifiers[m].maxDuration : 0.0f;
+                    if (frac < 0.0f) frac = 0.0f;
+                    if (frac > 1.0f) frac = 1.0f;
+                    int activeChars = (int)(frac * totalLen + 0.5f);
+                    Color dimGray = { 100, 100, 120, 255 };
+                    int cx = startX;
+                    char tmp[2] = { 0, 0 };
+                    for (int k = 0; k < totalLen; k++) {
+                        tmp[0] = modLabel[k];
+                        Color charCol = (k < activeChars) ? modColor : dimGray;
+                        DrawText(tmp, cx, modY, 9, charCol);
+                        cx += MeasureText(tmp, 9);
+                    }
                     modY += 10;
                 }
             }
@@ -1674,7 +1733,7 @@ int main(void)
                             // Hover detection
                             bool slotHovered = CheckCollisionPointRec(GetMousePosition(),
                                 (Rectangle){(float)ax,(float)ay,(float)HUD_ABILITY_SLOT_SIZE,(float)HUD_ABILITY_SLOT_SIZE});
-                            if (slotHovered) hoverAbilityId = aslot->abilityId;
+                            if (slotHovered) { hoverAbilityId = aslot->abilityId; hoverAbilityLevel = aslot->level; }
                             // Abbreviation (scale up when charging tooltip)
                             int abbrSize = 11;
                             if (slotHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
@@ -1750,7 +1809,7 @@ int main(void)
                         // Hover detection
                         bool invHovered = CheckCollisionPointRec(GetMousePosition(),
                             (Rectangle){(float)ix,(float)iy,(float)HUD_ABILITY_SLOT_SIZE,(float)HUD_ABILITY_SLOT_SIZE});
-                        if (invHovered) hoverAbilityId = inventory[inv].abilityId;
+                        if (invHovered) { hoverAbilityId = inventory[inv].abilityId; hoverAbilityLevel = inventory[inv].level; }
                         int invAbbrSize = 11;
                         if (invHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
                             invAbbrSize = 11 + (int)(3.0f * (hoverTimer / tooltipDelay));
@@ -1812,7 +1871,7 @@ int main(void)
                         Color cardBg = canAfford ? ABILITY_DEFS[shopSlots[s].abilityId].color : (Color){50,50,65,255};
                         bool shopHovered = CheckCollisionPointRec(GetMousePosition(),
                             (Rectangle){(float)scx,(float)scy,(float)shopCardW,(float)shopCardH});
-                        if (shopHovered) hoverAbilityId = shopSlots[s].abilityId;
+                        if (shopHovered) { hoverAbilityId = shopSlots[s].abilityId; hoverAbilityLevel = 0; }
                         if (canAfford && shopHovered)
                             cardBg = (Color){ cardBg.r + 30, cardBg.g + 30, cardBg.b + 30, 255 };
                         DrawRectangle(scx, scy, shopCardW, shopCardH, cardBg);
@@ -1878,16 +1937,120 @@ int main(void)
         if (hoverAbilityId >= 0 && hoverTimer >= tooltipDelay) {
             const AbilityDef *tipDef = &ABILITY_DEFS[hoverAbilityId];
             Vector2 mpos = GetMousePosition();
-            int tipW = 170, tipH = 44;
+
+            // Build stat lines for this ability
+            typedef struct { const char *label; int valueIndex; bool isPercent; } StatLine;
+            StatLine statLines[8];
+            int numStatLines = 0;
+
+            switch (hoverAbilityId) {
+            case ABILITY_MAGIC_MISSILE:
+                statLines[numStatLines++] = (StatLine){ "Damage", AV_MM_DAMAGE, true };
+                statLines[numStatLines++] = (StatLine){ "Stun", AV_MM_STUN_DUR, false };
+                break;
+            case ABILITY_DIG:
+                statLines[numStatLines++] = (StatLine){ "HP Thresh", AV_DIG_HP_THRESH, true };
+                statLines[numStatLines++] = (StatLine){ "Heal Dur", AV_DIG_HEAL_DUR, false };
+                break;
+            case ABILITY_VACUUM:
+                statLines[numStatLines++] = (StatLine){ "Radius", AV_VAC_RADIUS, false };
+                statLines[numStatLines++] = (StatLine){ "Stun", AV_VAC_STUN_DUR, false };
+                break;
+            case ABILITY_CHAIN_FROST:
+                statLines[numStatLines++] = (StatLine){ "Damage", AV_CF_DAMAGE, false };
+                statLines[numStatLines++] = (StatLine){ "Bounces", AV_CF_BOUNCES, false };
+                break;
+            case ABILITY_BLOOD_RAGE:
+                statLines[numStatLines++] = (StatLine){ "Lifesteal", AV_BR_LIFESTEAL, true };
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_BR_DURATION, false };
+                break;
+            case ABILITY_EARTHQUAKE:
+                statLines[numStatLines++] = (StatLine){ "Damage", AV_EQ_DAMAGE, false };
+                statLines[numStatLines++] = (StatLine){ "Radius", AV_EQ_RADIUS, false };
+                break;
+            case ABILITY_SPELL_PROTECT:
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_SP_DURATION, false };
+                break;
+            case ABILITY_CRAGGY_ARMOR:
+                statLines[numStatLines++] = (StatLine){ "Armor", AV_CA_ARMOR, false };
+                statLines[numStatLines++] = (StatLine){ "Stun %", AV_CA_STUN_CHANCE, true };
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_CA_DURATION, false };
+                break;
+            case ABILITY_STONE_GAZE:
+                statLines[numStatLines++] = (StatLine){ "Gaze Time", AV_SG_GAZE_THRESH, false };
+                statLines[numStatLines++] = (StatLine){ "Stun", AV_SG_STUN_DUR, false };
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_SG_DURATION, false };
+                break;
+            case ABILITY_SUNDER:
+                statLines[numStatLines++] = (StatLine){ "HP Thresh", AV_SU_HP_THRESH, true };
+                break;
+            case ABILITY_FISSURE:
+                statLines[numStatLines++] = (StatLine){ "Damage", AV_FI_DAMAGE, false };
+                statLines[numStatLines++] = (StatLine){ "Length", AV_FI_LENGTH, false };
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_FI_DURATION, false };
+                break;
+            default: break;
+            }
+            // Always add cooldown as last line
+            int cdLineIdx = numStatLines; // special: cooldown uses cooldown[] not values[]
+            numStatLines++; // reserve a line for cooldown
+
+            int tipW = 200;
+            int tipH = 44 + numStatLines * 14;
             int tipX = (int)mpos.x + 14;
             int tipY = (int)mpos.y - tipH - 4;
-            // Keep on screen
             if (tipX + tipW > GetScreenWidth()) tipX = (int)mpos.x - tipW - 4;
             if (tipY < 0) tipY = (int)mpos.y + 20;
             DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
             DrawRectangleLines(tipX, tipY, tipW, tipH, (Color){100, 100, 130, 255});
             DrawText(tipDef->name, tipX + 6, tipY + 4, 14, WHITE);
             DrawText(tipDef->description, tipX + 6, tipY + 22, 10, (Color){180, 180, 200, 255});
+
+            Color dimStatColor = { 100, 100, 120, 255 };
+            int lineY = tipY + 38;
+            for (int sl = 0; sl < numStatLines; sl++) {
+                int lx = tipX + 6;
+                if (sl == cdLineIdx) {
+                    // Cooldown line
+                    const char *cdLabel = "CD: ";
+                    DrawText(cdLabel, lx, lineY, 10, (Color){180,180,200,255});
+                    lx += MeasureText(cdLabel, 10);
+                    for (int lv = 0; lv < ABILITY_MAX_LEVELS; lv++) {
+                        const char *val = TextFormat("%.1fs", tipDef->cooldown[lv]);
+                        Color vc = (lv == hoverAbilityLevel) ? WHITE : dimStatColor;
+                        DrawText(val, lx, lineY, 10, vc);
+                        lx += MeasureText(val, 10);
+                        if (lv < ABILITY_MAX_LEVELS - 1) {
+                            DrawText(" / ", lx, lineY, 10, dimStatColor);
+                            lx += MeasureText(" / ", 10);
+                        }
+                    }
+                } else {
+                    // Stat value line
+                    char labelBuf[32];
+                    snprintf(labelBuf, sizeof(labelBuf), "%s: ", statLines[sl].label);
+                    DrawText(labelBuf, lx, lineY, 10, (Color){180,180,200,255});
+                    lx += MeasureText(labelBuf, 10);
+                    for (int lv = 0; lv < ABILITY_MAX_LEVELS; lv++) {
+                        float v = tipDef->values[lv][statLines[sl].valueIndex];
+                        const char *val;
+                        if (statLines[sl].isPercent)
+                            val = TextFormat("%.0f%%", v * 100.0f);
+                        else if (v == (int)v)
+                            val = TextFormat("%.0f", v);
+                        else
+                            val = TextFormat("%.1f", v);
+                        Color vc = (lv == hoverAbilityLevel) ? WHITE : dimStatColor;
+                        DrawText(val, lx, lineY, 10, vc);
+                        lx += MeasureText(val, 10);
+                        if (lv < ABILITY_MAX_LEVELS - 1) {
+                            DrawText(" / ", lx, lineY, 10, dimStatColor);
+                            lx += MeasureText(" / ", 10);
+                        }
+                    }
+                }
+                lineY += 14;
+            }
         }
 
         //==============================================================================

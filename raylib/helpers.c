@@ -172,10 +172,23 @@ void AddModifier(Modifier modifiers[], int unitIndex, ModifierType type, float d
     if (type == MOD_STUN && UnitHasModifier(modifiers, unitIndex, MOD_SPELL_PROTECT))
         return;
 
+    // Dedup: if same (type, unitIndex) already active, refresh duration to max
+    for (int m = 0; m < MAX_MODIFIERS; m++) {
+        if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type) {
+            if (duration > modifiers[m].duration)
+                modifiers[m].duration = duration;
+            if (duration > modifiers[m].maxDuration)
+                modifiers[m].maxDuration = duration;
+            if (value > modifiers[m].value)
+                modifiers[m].value = value;
+            return;
+        }
+    }
+
     for (int m = 0; m < MAX_MODIFIERS; m++) {
         if (!modifiers[m].active) {
             modifiers[m] = (Modifier){ .type = type, .unitIndex = unitIndex,
-                .duration = duration, .value = value, .active = true };
+                .duration = duration, .maxDuration = duration, .value = value, .active = true };
             return;
         }
     }
@@ -415,6 +428,24 @@ void UpdateShake(ScreenShake *shake, float dt)
     shake->offset.x = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
     shake->offset.y = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
     shake->offset.z = 0;
+}
+
+//------------------------------------------------------------------------------------
+// Drawing Helpers
+//------------------------------------------------------------------------------------
+void DrawArc3D(Vector3 center, float radius, float fraction, Color color)
+{
+    if (fraction <= 0.0f) return;
+    if (fraction > 1.0f) fraction = 1.0f;
+    float maxAngle = fraction * 2.0f * PI;
+    float step = 0.1f;
+    for (float angle = 0.0f; angle < maxAngle; angle += step) {
+        float nextAngle = angle + step;
+        if (nextAngle > maxAngle) nextAngle = maxAngle;
+        Vector3 a = { center.x + cosf(angle) * radius, center.y, center.z + sinf(angle) * radius };
+        Vector3 b = { center.x + cosf(nextAngle) * radius, center.y, center.z + sinf(nextAngle) * radius };
+        DrawLine3D(a, b, color);
+    }
 }
 
 //------------------------------------------------------------------------------------

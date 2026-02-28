@@ -9,7 +9,8 @@
 #define MAX_UNIT_TYPES 8
 #define MAX_UNITS 64
 #define TOTAL_ROUNDS 5
-#define ATTACK_RANGE 8.0f       // how close a unit needs to be to attack
+#define ATTACK_RANGE 12.0f      // how close a unit needs to be to attack
+#define UNIT_COLLISION_RADIUS 3.0f  // circle-circle push radius for unit separation
 #define BLUE_TEAM_MAX_SIZE 4   // player team cap (change this to rebalance)
 #define ARENA_BOUNDARY_Z   5.0f // blue units can't be placed below this Z (into red territory)
 #define ARENA_GRID_HALF  100.0f // half the visible grid (grid goes -100 to +100)
@@ -57,6 +58,7 @@ typedef struct {
     ModifierType type;
     int unitIndex;
     float duration;
+    float maxDuration;
     float value;
     bool active;
 } Modifier;
