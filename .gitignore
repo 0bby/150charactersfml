@@ -1,2 +1,21 @@
+# Build outputs
 nfc/build/
-**.o
+raylib/game
+server/server
+*.dSYM/
+
+# Object files
+*.o
+
+# Placeholder materials (generated locally)
+raylib/*.mtl
+
+# OS junk
+.DS_Store
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/

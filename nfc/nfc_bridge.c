@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <errno.h>
+#include <dirent.h>
 
 #define BAUD_RATE B115200
 #define BUF_SIZE 256
@@ -12,20 +13,43 @@
 #define PREFIX_LEN 8
 #define MAX_ACM 10
 
+static int try_open(const char *path)
+{
+    int fd = open(path, O_RDONLY | O_NOCTTY);
+    if (fd >= 0)
+        fprintf(stderr, "Opened %s\n", path);
+    return fd;
+}
+
 int main(void)
 {
     int fd = -1;
-    char port[32];
-    for (int i = 0; i < MAX_ACM; i++) {
+    char port[64];
+
+    /* Try Linux-style /dev/ttyACM* first (Arduino) */
+    for (int i = 0; i < MAX_ACM && fd < 0; i++) {
         snprintf(port, sizeof(port), "/dev/ttyACM%d", i);
-        fd = open(port, O_RDONLY | O_NOCTTY);
-        if (fd >= 0) {
-            fprintf(stderr, "Opened %s\n", port);
-            break;
+        fd = try_open(port);
+    }
+
+    /* Try macOS-style /dev/cu.usbmodem* (Pico / CircuitPython) */
+    if (fd < 0) {
+        DIR *dev = opendir("/dev");
+        if (dev) {
+            struct dirent *ent;
+            while ((ent = readdir(dev)) != NULL) {
+                if (strncmp(ent->d_name, "cu.usbmodem", 11) == 0) {
+                    snprintf(port, sizeof(port), "/dev/%s", ent->d_name);
+                    fd = try_open(port);
+                    if (fd >= 0) break;
+                }
+            }
+            closedir(dev);
         }
     }
+
     if (fd < 0) {
-        fprintf(stderr, "No /dev/ttyACM* port found\n");
+        fprintf(stderr, "No serial port found (tried /dev/ttyACM* and /dev/cu.usbmodem*)\n");
         return 1;
     }
 
@@ -55,54 +79,13 @@ int main(void)
         return 1;
     }
 
-    /* Wait for Arduino startup and check for PN532 detection.
-       The Arduino prints "Found chip PN5..." on success or
-       "Didn't find PN53x board" on failure, then halts. */
+    /* Read lines from the device and forward PAYLOAD: lines to stdout.
+       Works with both Arduino (which prints startup messages first) and
+       Pico/CircuitPython (which may already be running when we connect). */
     char buf[BUF_SIZE];
     int pos = 0;
-    int startup_timeout = 50; /* ~5 seconds (50 * 100ms VTIME reads) */
-    int pn532_found = 0;
-
-    while (startup_timeout > 0) {
-        char c;
-        int n = read(fd, &c, 1);
-        if (n < 0) {
-            fprintf(stderr, "read error: %s\n", strerror(errno));
-            close(fd);
-            return 1;
-        }
-        if (n == 0) {
-            startup_timeout--;
-            continue;
-        }
-        if (c == '\n' || c == '\r') {
-            if (pos > 0) {
-                buf[pos] = '\0';
-                fprintf(stderr, "[Arduino] %s\n", buf);
-                if (strstr(buf, "Didn't find PN53x")) {
-                    fprintf(stderr, "ERROR: PN532 not detected on %s\n", port);
-                    close(fd);
-                    return 1;
-                }
-                if (strstr(buf, "Found chip PN5")) {
-                    pn532_found = 1;
-                }
-                if (strstr(buf, "Waiting for")) {
-                    break; /* Arduino is ready */
-                }
-                pos = 0;
-            }
-        } else if (pos < BUF_SIZE - 1) {
-            buf[pos++] = c;
-        }
-    }
-
-    if (!pn532_found) {
-        fprintf(stderr, "WARNING: Did not see PN532 confirmation from Arduino\n");
-    }
 
     fprintf(stderr, "Waiting for NFC cards...\n");
-    pos = 0;
 
     while (1) {
         char c;
@@ -121,7 +104,12 @@ int main(void)
                     printf("%s\n", buf + PREFIX_LEN);
                     fflush(stdout);
                 }
-                fprintf(stderr, "[Arduino] %s\n", buf);
+                if (strstr(buf, "Didn't find PN53x")) {
+                    fprintf(stderr, "ERROR: PN532 not detected on %s\n", port);
+                    close(fd);
+                    return 1;
+                }
+                fprintf(stderr, "[NFC] %s\n", buf);
                 pos = 0;
             }
         } else if (pos < BUF_SIZE - 1) {
