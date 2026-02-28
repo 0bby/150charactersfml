@@ -28,6 +28,11 @@
 #include "net_client.h"
 #include "pve_waves.h"
 
+// --- Win/loss sound split point (seconds) — tweak & re-split with ffmpeg if needed ---
+// Loss = first 6.5s of "cgj loss and win demo 2.mp3" → sfx/loss.wav
+// Win  = from 6.5s onward                            → sfx/win.wav
+#define ENDGAME_SFX_VOL  0.8f
+
 //------------------------------------------------------------------------------------
 // Main
 //------------------------------------------------------------------------------------
@@ -36,6 +41,14 @@ int main(void)
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 720, "Autochess — Set in Stone");
     SetWindowMinSize(640, 360);
+    InitAudioDevice();
+
+    // Win/loss sounds — pre-split into separate files
+    Sound sfxWin  = LoadSound("sfx/win.wav");
+    Sound sfxLoss = LoadSound("sfx/loss.wav");
+    SetSoundVolume(sfxWin,  ENDGAME_SFX_VOL);
+    SetSoundVolume(sfxLoss, ENDGAME_SFX_VOL);
+    bool lastOutcomeWin = false;
 
     // Camera presets — prep (top-down auto-chess) vs combat (diagonal MOBA)
     const float prepHeight = 200.0f, prepDistance = 150.0f, prepFOV = 48.0f, prepX = 0.0f;
@@ -363,6 +376,7 @@ int main(void)
     while (!WindowShouldClose())
     {
         float dt = GetFrameTime();
+        GamePhase prevPhase = phase;
         UpdateShake(&shake, dt);
         if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
 
@@ -1745,6 +1759,7 @@ int main(void)
                     else if (netClient.roundWinner == 1) { redWins++; roundResultText = "OPPONENT WINS!"; }
                     else roundResultText = "DRAW — NO SURVIVORS!";
                     currentRound = netClient.currentRound;
+                    lastOutcomeWin = (netClient.roundWinner == 0);
                     phase = PHASE_ROUND_OVER;
                     roundOverTimer = 2.5f;
                     ClearAllParticles(particles);
@@ -1755,6 +1770,7 @@ int main(void)
                     netClient.gameOver = false;
                     if (netClient.gameWinner == 0) roundResultText = "YOU WIN THE MATCH!";
                     else roundResultText = "OPPONENT WINS THE MATCH!";
+                    lastOutcomeWin = (netClient.gameWinner == 0);
                     phase = PHASE_GAME_OVER;
                     ClearAllParticles(particles);
                     ClearAllFloatingTexts(floatingTexts);
@@ -1768,6 +1784,7 @@ int main(void)
                     else if (ra > 0) { redWins++; roundResultText = "RED WINS THE ROUND!"; blueLostLastRound = true; }
                     else { roundResultText = "DRAW — NO SURVIVORS!"; blueLostLastRound = true; }
                     currentRound++;
+                    lastOutcomeWin = (ba > 0);
                     phase = PHASE_ROUND_OVER;
                     roundOverTimer = 2.5f;
                     ClearAllParticles(particles);
@@ -1808,6 +1825,7 @@ int main(void)
                     netClient.gameOver = false;
                     if (netClient.gameWinner == 0) roundResultText = "YOU WIN THE MATCH!";
                     else roundResultText = "OPPONENT WINS THE MATCH!";
+                    lastOutcomeWin = (netClient.gameWinner == 0);
                     phase = PHASE_GAME_OVER;
                 }
             }
@@ -1819,6 +1837,7 @@ int main(void)
                 if (blueLostLastRound && lastMilestoneRound > 0) {
                     // DEATH PENALTY: lost after a milestone — units gone
                     deathPenalty = true;
+                    lastOutcomeWin = false;
                     phase = PHASE_GAME_OVER;
                 } else if (currentRound > 0 && currentRound % 5 == 0) {
                     // Milestone reached — go to selection screen
@@ -1911,6 +1930,7 @@ int main(void)
 
                     lastMilestoneRound = currentRound;
                     deathPenalty = false;
+                    lastOutcomeWin = true;
                     phase = PHASE_GAME_OVER;
                 }
 
@@ -2064,6 +2084,15 @@ int main(void)
                 if (frameCount > 0)
                     units[i].animFrame = (units[i].animFrame + 1) % frameCount;
             }
+        }
+
+        //==============================================================================
+        // WIN/LOSS SFX
+        //==============================================================================
+        if (phase != prevPhase && (phase == PHASE_GAME_OVER || phase == PHASE_ROUND_OVER)) {
+            StopSound(sfxWin);
+            StopSound(sfxLoss);
+            PlaySound(lastOutcomeWin ? sfxWin : sfxLoss);
         }
 
         //==============================================================================
@@ -3873,6 +3902,9 @@ int main(void)
     }
     for (int i = 0; i < TILE_VARIANTS; i++) UnloadModel(tileModels[i]);
     UnloadTexture(tileDiffuse);
+    UnloadSound(sfxWin);
+    UnloadSound(sfxLoss);
+    CloseAudioDevice();
     CloseWindow();
     return 0;
 }
