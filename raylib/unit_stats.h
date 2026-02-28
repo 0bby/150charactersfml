@@ -13,6 +13,6 @@ typedef struct {
 } UnitStats;
 
 static const UnitStats UNIT_STATS[] = {
-    /* 0  Mushroom */ { .health = 15.0f, .movementSpeed = 12.0f, .attackDamage = 3.0f, .attackSpeed = 1.2f },
-    /* 1  Goblin   */ { .health =  5.0f, .movementSpeed = 20.0f, .attackDamage = 2.0f, .attackSpeed = 0.5f },
+    /* 0  Mushroom */ { .health = 40.0f, .movementSpeed = 12.0f, .attackDamage = 3.0f, .attackSpeed = 1.2f },
+    /* 1  Goblin   */ { .health = 20.0f, .movementSpeed = 20.0f, .attackDamage = 2.0f, .attackSpeed = 0.5f },
 };

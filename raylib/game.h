@@ -35,6 +35,7 @@ typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_COUNT } AnimState;
 #define MAX_PARTICLES 256
 #define MAX_FLOATING_TEXTS 16
 #define MAX_INVENTORY_SLOTS 6
+#define MAX_FISSURES 8
 
 //------------------------------------------------------------------------------------
 // Ability Slot (on units)
@@ -163,6 +164,7 @@ typedef struct {
     int animFrame;
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
     int nextAbilitySlot;   // index into ACTIVATION_ORDER for clockwise cycling
+    float gazeAccum;       // Stone Gaze: time spent facing a stone-gazer
 } Unit;
 
 //------------------------------------------------------------------------------------
@@ -216,3 +218,31 @@ typedef struct {
     int     unitIndex;    // index in units[] array
     int     animFrame;    // dedicated anim counter for intro model
 } UnitIntro;
+
+//------------------------------------------------------------------------------------
+// Fissure (terrain obstacle)
+//------------------------------------------------------------------------------------
+typedef struct {
+    Vector3 position;     // center of fissure
+    float   rotation;     // angle in degrees on XZ plane
+    float   length;       // along rotation axis
+    float   width;        // perpendicular to rotation
+    float   duration;     // remaining lifetime
+    bool    active;
+    Team    sourceTeam;
+    int     sourceIndex;
+} Fissure;
+
+//------------------------------------------------------------------------------------
+// Combat State (bundled game state for ability handlers)
+//------------------------------------------------------------------------------------
+typedef struct {
+    Unit *units;
+    int unitCount;
+    Modifier *modifiers;
+    Projectile *projectiles;
+    Particle *particles;
+    Fissure *fissures;
+    FloatingText *floatingTexts;
+    ScreenShake *shake;
+} CombatState;

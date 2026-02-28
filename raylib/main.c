@@ -135,7 +135,7 @@ int main(void)
     Modifier modifiers[MAX_MODIFIERS] = { 0 };
     Projectile projectiles[MAX_PROJECTILES] = { 0 };
     Particle particles[MAX_PARTICLES] = { 0 };
-    int playerGold = 10;
+    int playerGold = 100; // DEBUG: was 10
     int goldPerRound = 5;
     int rollCost = 2;
     ShopSlot shopSlots[MAX_SHOP_SLOTS];
@@ -146,6 +146,7 @@ int main(void)
     int removeConfirmUnit = -1;  // unit index awaiting removal confirmation (-1 = none)
     ScreenShake shake = {0};
     FloatingText floatingTexts[MAX_FLOATING_TEXTS] = {0};
+    Fissure fissures[MAX_FISSURES] = {0};
     UnitIntro intro = { .active = false, .timer = 0.0f };
     int hoverAbilityId = -1;
     float hoverTimer = 0.0f;
@@ -348,6 +349,7 @@ int main(void)
                         ClearAllProjectiles(projectiles);
                         ClearAllParticles(particles);
                         ClearAllFloatingTexts(floatingTexts);
+                        ClearAllFissures(fissures);
                         dragState.dragging = false;
                         removeConfirmUnit = -1;
                         // Reset ability state for combat start
@@ -723,6 +725,17 @@ int main(void)
                 }
             }
 
+            // Update fissure lifetimes
+            UpdateFissures(fissures, dt);
+
+            // Build shared combat state for ability handlers
+            CombatState combatState = {
+                .units = units, .unitCount = unitCount,
+                .modifiers = modifiers, .projectiles = projectiles,
+                .particles = particles, .fissures = fissures,
+                .floatingTexts = floatingTexts, .shake = &shake,
+            };
+
             // === STEP 3: Process each unit ===
             for (int i = 0; i < unitCount; i++)
             {
@@ -737,21 +750,24 @@ int main(void)
                         units[i].abilities[a].cooldownRemaining -= dt;
                 }
 
-                // Passive triggers (Dig) — blocked by stun
+                // Passive triggers (Dig, Sunder) — blocked by stun
                 if (!stunned) {
                     for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
                         AbilitySlot *slot = &units[i].abilities[a];
-                        if (slot->abilityId != ABILITY_DIG) continue;
-                        if (slot->triggered || slot->cooldownRemaining > 0) continue;
-                        const AbilityDef *def = &ABILITY_DEFS[ABILITY_DIG];
-                        float threshold = def->values[slot->level][AV_DIG_HP_THRESH];
-                        if (units[i].currentHealth > 0 && units[i].currentHealth <= stats->health * threshold) {
-                            slot->triggered = true;
-                            slot->cooldownRemaining = def->cooldown[slot->level];
-                            float healDur = def->values[slot->level][AV_DIG_HEAL_DUR];
-                            float healPerSec = stats->health / healDur;
-                            AddModifier(modifiers, i, MOD_INVULNERABLE, healDur, 0);
-                            AddModifier(modifiers, i, MOD_DIG_HEAL, healDur, healPerSec);
+                        if (slot->abilityId == ABILITY_DIG) {
+                            if (slot->triggered || slot->cooldownRemaining > 0) continue;
+                            const AbilityDef *def = &ABILITY_DEFS[ABILITY_DIG];
+                            float threshold = def->values[slot->level][AV_DIG_HP_THRESH];
+                            if (units[i].currentHealth > 0 && units[i].currentHealth <= stats->health * threshold) {
+                                slot->triggered = true;
+                                slot->cooldownRemaining = def->cooldown[slot->level];
+                                float healDur = def->values[slot->level][AV_DIG_HEAL_DUR];
+                                float healPerSec = stats->health / healDur;
+                                AddModifier(modifiers, i, MOD_INVULNERABLE, healDur, 0);
+                                AddModifier(modifiers, i, MOD_DIG_HEAL, healDur, healPerSec);
+                            }
+                        } else if (slot->abilityId == ABILITY_SUNDER) {
+                            CheckPassiveSunder(&combatState, i);
                         }
                     }
                 }
@@ -787,67 +803,33 @@ int main(void)
 
                     AbilitySlot *slot = &units[i].abilities[slotIdx];
                     if (slot->abilityId < 0 || slot->cooldownRemaining > 0) continue;
-                    if (slot->abilityId == ABILITY_DIG) continue; // passive
-
                     const AbilityDef *def = &ABILITY_DEFS[slot->abilityId];
+                    if (def->isPassive) continue; // skip passives (Dig, Sunder)
+
+                    // Range gate: if ability has a cast range, check closest enemy is within it
+                    float castRange = def->range[slot->level];
+                    if (castRange > 0 && target >= 0) {
+                        float d = DistXZ(units[i].position, units[target].position);
+                        if (d > castRange) continue;
+                    } else if (castRange > 0 && target < 0) {
+                        continue; // need a target but none exists
+                    }
 
                     switch (slot->abilityId) {
-                    case ABILITY_MAGIC_MISSILE: {
-                        if (target < 0) break;
-                        float d = DistXZ(units[i].position, units[target].position);
-                        if (d > def->range[slot->level]) break;
-                        SpawnProjectile(projectiles, PROJ_MAGIC_MISSILE,
-                            units[i].position, target, i, units[i].team, slot->level,
-                            def->values[slot->level][AV_MM_PROJ_SPEED],
-                            def->values[slot->level][AV_MM_DAMAGE],
-                            def->values[slot->level][AV_MM_STUN_DUR],
-                            (Color){120, 80, 255, 255});
-                        slot->cooldownRemaining = def->cooldown[slot->level];
-                        castThisFrame = true;
-                    } break;
-                    case ABILITY_VACUUM: {
-                        float radius = def->values[slot->level][AV_VAC_RADIUS];
-                        float stunDur = def->values[slot->level][AV_VAC_STUN_DUR];
-                        bool hitAny = false;
-                        for (int j = 0; j < unitCount; j++) {
-                            if (!units[j].active || units[j].team == units[i].team) continue;
-                            if (UnitHasModifier(modifiers, j, MOD_INVULNERABLE)) continue;
-                            float d = DistXZ(units[i].position, units[j].position);
-                            if (d <= radius) {
-                                units[j].position.x = units[i].position.x;
-                                units[j].position.z = units[i].position.z;
-                                AddModifier(modifiers, j, MOD_STUN, stunDur, 0);
-                                TriggerShake(&shake, 5.0f, 0.25f);
-                                hitAny = true;
-                            }
-                        }
-                        slot->cooldownRemaining = def->cooldown[slot->level];
-                        castThisFrame = true;
-                    } break;
-                    case ABILITY_CHAIN_FROST: {
-                        if (target < 0) break;
-                        float d = DistXZ(units[i].position, units[target].position);
-                        if (d > def->range[slot->level]) break;
-                        SpawnChainFrostProjectile(projectiles,
-                            units[i].position, target, i, units[i].team, slot->level,
-                            def->values[slot->level][AV_CF_PROJ_SPEED],
-                            def->values[slot->level][AV_CF_DAMAGE],
-                            (int)def->values[slot->level][AV_CF_BOUNCES],
-                            def->values[slot->level][AV_CF_BOUNCE_RANGE]);
-                        slot->cooldownRemaining = def->cooldown[slot->level];
-                        castThisFrame = true;
-                    } break;
-                    case ABILITY_BLOOD_RAGE: {
-                        float dur = def->values[slot->level][AV_BR_DURATION];
-                        float ls = def->values[slot->level][AV_BR_LIFESTEAL];
-                        AddModifier(modifiers, i, MOD_LIFESTEAL, dur, ls);
-                        slot->cooldownRemaining = def->cooldown[slot->level];
-                        castThisFrame = true;
-                    } break;
+                    case ABILITY_MAGIC_MISSILE: castThisFrame = CastMagicMissile(&combatState, i, slot, target); break;
+                    case ABILITY_VACUUM:        castThisFrame = CastVacuum(&combatState, i, slot); break;
+                    case ABILITY_CHAIN_FROST:   castThisFrame = CastChainFrost(&combatState, i, slot, target); break;
+                    case ABILITY_BLOOD_RAGE:    castThisFrame = CastBloodRage(&combatState, i, slot); break;
+                    case ABILITY_EARTHQUAKE:    castThisFrame = CastEarthquake(&combatState, i, slot); break;
+                    case ABILITY_SPELL_PROTECT: castThisFrame = CastSpellProtect(&combatState, i, slot); break;
+                    case ABILITY_CRAGGY_ARMOR:  castThisFrame = CastCraggyArmor(&combatState, i, slot); break;
+                    case ABILITY_STONE_GAZE:    castThisFrame = CastStoneGaze(&combatState, i, slot); break;
+                    case ABILITY_FISSURE:       castThisFrame = CastFissure(&combatState, i, slot, target); break;
+                    default: break;
                     }
                     if (castThisFrame) {
                         SpawnFloatingText(floatingTexts, units[i].position,
-                            def->name, ABILITY_COLORS[slot->abilityId], 1.0f);
+                            def->name, def->color, 1.0f);
                     }
                 }
 
@@ -860,6 +842,7 @@ int main(void)
                 float dist = DistXZ(units[i].position, units[target].position);
                 if (dist > ATTACK_RANGE)
                 {
+                    Vector3 oldPos = units[i].position;
                     float dx = units[target].position.x - units[i].position.x;
                     float dz = units[target].position.z - units[i].position.z;
                     float len = sqrtf(dx*dx + dz*dz);
@@ -867,6 +850,9 @@ int main(void)
                         units[i].position.x += (dx/len) * moveSpeed * dt;
                         units[i].position.z += (dz/len) * moveSpeed * dt;
                     }
+                    // Fissure collision — slide along impassable terrain
+                    float unitRadius = 2.0f;
+                    units[i].position = ResolveFissureCollision(fissures, units[i].position, oldPos, unitRadius);
                 }
                 else
                 {
@@ -886,10 +872,69 @@ int main(void)
                                 if (units[i].currentHealth > stats->health)
                                     units[i].currentHealth = stats->health;
                             }
+                            // Craggy Armor retaliation — chance to stun attacker
+                            CheckCraggyArmorRetaliation(&combatState, i, target);
                             if (units[target].currentHealth <= 0) units[target].active = false;
                         }
                         units[i].attackCooldown = stats->attackSpeed;
                     }
+                }
+            }
+
+            // Stone Gaze update — enemies facing a stone-gazer accumulate gaze
+            for (int i = 0; i < unitCount; i++) {
+                if (!units[i].active) continue;
+                // Check if any enemy has Stone Gaze active
+                bool beingGazed = false;
+                for (int g = 0; g < unitCount; g++) {
+                    if (!units[g].active || units[g].team == units[i].team) continue;
+                    if (!UnitHasModifier(modifiers, g, MOD_STONE_GAZE)) continue;
+                    // Check if unit i is facing toward gazer g (within cone)
+                    float dx = units[g].position.x - units[i].position.x;
+                    float dz = units[g].position.z - units[i].position.z;
+                    float distToGazer = sqrtf(dx*dx + dz*dz);
+                    if (distToGazer < 0.1f) continue;
+                    // Unit i's facing direction
+                    float facingRad = units[i].facingAngle * (PI / 180.0f);
+                    float faceDirX = sinf(facingRad);
+                    float faceDirZ = cosf(facingRad);
+                    // Dot product to check if facing toward gazer
+                    float dot = (dx/distToGazer) * faceDirX + (dz/distToGazer) * faceDirZ;
+                    float coneAngle = 45.0f; // default cone half-angle
+                    // Get cone angle from the gazer's Stone Gaze ability
+                    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                        if (units[g].abilities[a].abilityId == ABILITY_STONE_GAZE) {
+                            int lvl = units[g].abilities[a].level;
+                            coneAngle = ABILITY_DEFS[ABILITY_STONE_GAZE].values[lvl][AV_SG_CONE_ANGLE];
+                            break;
+                        }
+                    }
+                    float coneThresh = cosf(coneAngle * (PI / 180.0f));
+                    if (dot >= coneThresh) {
+                        units[i].gazeAccum += dt;
+                        beingGazed = true;
+                        // Check if threshold reached — find gazer's ability level
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            if (units[g].abilities[a].abilityId == ABILITY_STONE_GAZE) {
+                                int lvl = units[g].abilities[a].level;
+                                float thresh = ABILITY_DEFS[ABILITY_STONE_GAZE].values[lvl][AV_SG_GAZE_THRESH];
+                                float stunDur = ABILITY_DEFS[ABILITY_STONE_GAZE].values[lvl][AV_SG_STUN_DUR];
+                                if (units[i].gazeAccum >= thresh) {
+                                    AddModifier(modifiers, i, MOD_STUN, stunDur, 0);
+                                    units[i].gazeAccum = 0;
+                                    TriggerShake(&shake, 3.0f, 0.2f);
+                                    SpawnFloatingText(floatingTexts, units[i].position,
+                                        "PETRIFIED!", (Color){160, 80, 200, 255}, 1.0f);
+                                }
+                                break;
+                            }
+                        }
+                        break; // only accumulate from one gazer at a time
+                    }
+                }
+                if (!beingGazed && units[i].gazeAccum > 0) {
+                    units[i].gazeAccum -= dt * 2.0f; // decay twice as fast
+                    if (units[i].gazeAccum < 0) units[i].gazeAccum = 0;
                 }
             }
 
@@ -911,6 +956,7 @@ int main(void)
                 roundOverTimer = 2.5f;
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
+                ClearAllFissures(fissures);
             }
         }
         //------------------------------------------------------------------------------
@@ -940,6 +986,7 @@ int main(void)
                     ClearAllModifiers(modifiers);
                     ClearAllProjectiles(projectiles);
                     ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0); // free roll
                     phase = PHASE_PREP;
@@ -964,6 +1011,7 @@ int main(void)
                 ClearAllProjectiles(projectiles);
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
+                ClearAllFissures(fissures);
                 playerGold = 10;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 RollShop(shopSlots, &playerGold, 0);
@@ -1093,6 +1141,45 @@ int main(void)
                 if (!particles[p].active) continue;
                 DrawSphere(particles[p].position, particles[p].size, particles[p].color);
             }
+
+            // Draw fissures (gray cubes along the line)
+            for (int f = 0; f < MAX_FISSURES; f++) {
+                if (!fissures[f].active) continue;
+                float rot = fissures[f].rotation * (PI / 180.0f);
+                float dirX = sinf(rot), dirZ = cosf(rot);
+                int numSegments = (int)(fissures[f].length / 7.0f);
+                if (numSegments < 1) numSegments = 1;
+                float segLen = fissures[f].length / numSegments;
+                float startOffset = -fissures[f].length * 0.5f;
+                for (int s = 0; s < numSegments; s++) {
+                    float t = startOffset + segLen * (s + 0.5f);
+                    Vector3 segPos = {
+                        fissures[f].position.x + dirX * t,
+                        fissures[f].position.y + 2.5f,
+                        fissures[f].position.z + dirZ * t,
+                    };
+                    DrawCube(segPos, fissures[f].width, 5.0f, segLen * 0.95f, (Color){100, 95, 85, 255});
+                    DrawCubeWires(segPos, fissures[f].width, 5.0f, segLen * 0.95f, (Color){70, 65, 55, 255});
+                }
+            }
+
+            // Draw modifier indicator rings (Spell Protect = cyan, Craggy Armor = gray)
+            for (int i = 0; i < unitCount; i++) {
+                if (!units[i].active) continue;
+                Vector3 ringPos = { units[i].position.x, units[i].position.y + 0.2f, units[i].position.z };
+                if (UnitHasModifier(modifiers, i, MOD_SPELL_PROTECT)) {
+                    DrawCircle3D(ringPos, 5.0f, (Vector3){1,0,0}, 90.0f, (Color){200,240,255,200});
+                    DrawCircle3D(ringPos, 4.5f, (Vector3){1,0,0}, 90.0f, (Color){200,240,255,140});
+                }
+                if (UnitHasModifier(modifiers, i, MOD_CRAGGY_ARMOR)) {
+                    DrawCircle3D(ringPos, 4.0f, (Vector3){1,0,0}, 90.0f, (Color){140,140,160,200});
+                    DrawCircle3D(ringPos, 3.5f, (Vector3){1,0,0}, 90.0f, (Color){140,140,160,140});
+                }
+                if (UnitHasModifier(modifiers, i, MOD_STONE_GAZE)) {
+                    DrawCircle3D(ringPos, 5.5f, (Vector3){1,0,0}, 90.0f, (Color){160,80,200,200});
+                    DrawCircle3D(ringPos, 5.0f, (Vector3){1,0,0}, 90.0f, (Color){160,80,200,140});
+                }
+            }
         EndMode3D();
 
         // Restore camera position after shake
@@ -1156,12 +1243,15 @@ int main(void)
                 const char *modLabel = NULL;
                 Color modColor = WHITE;
                 switch (modifiers[m].type) {
-                    case MOD_STUN:         modLabel = "STUNNED";   modColor = YELLOW;  break;
-                    case MOD_INVULNERABLE: modLabel = "INVULN";    modColor = SKYBLUE; break;
-                    case MOD_LIFESTEAL:    modLabel = "LIFESTEAL"; modColor = RED;     break;
-                    case MOD_SPEED_MULT:   modLabel = "SPEED";     modColor = GREEN;   break;
-                    case MOD_ARMOR:        modLabel = "ARMOR";     modColor = GRAY;    break;
-                    case MOD_DIG_HEAL:     modLabel = "DIGGING";   modColor = BROWN;   break;
+                    case MOD_STUN:          modLabel = "STUNNED";      modColor = YELLOW;                  break;
+                    case MOD_INVULNERABLE:  modLabel = "INVULN";       modColor = SKYBLUE;                 break;
+                    case MOD_LIFESTEAL:     modLabel = "LIFESTEAL";    modColor = RED;                     break;
+                    case MOD_SPEED_MULT:    modLabel = "SPEED";        modColor = GREEN;                   break;
+                    case MOD_ARMOR:         modLabel = "ARMOR";        modColor = GRAY;                    break;
+                    case MOD_DIG_HEAL:      modLabel = "DIGGING";      modColor = BROWN;                   break;
+                    case MOD_SPELL_PROTECT: modLabel = "SPELL SHIELD"; modColor = (Color){200,240,255,255}; break;
+                    case MOD_CRAGGY_ARMOR:  modLabel = "CRAGGY";       modColor = (Color){140,140,160,255}; break;
+                    case MOD_STONE_GAZE:    modLabel = "STONE GAZE";   modColor = (Color){160,80,200,255};  break;
                 }
                 if (modLabel) {
                     int mlw = MeasureText(modLabel, 9);
@@ -1169,6 +1259,33 @@ int main(void)
                     modY += 10;
                 }
             }
+        }
+
+        // 2D overlay: Stone Gaze progress bars
+        for (int i = 0; i < unitCount; i++) {
+            if (!units[i].active || units[i].gazeAccum <= 0) continue;
+            // Find the gaze threshold from the active Stone Gaze buff on an enemy
+            float gazeThresh = 2.0f; // default
+            for (int g = 0; g < unitCount; g++) {
+                if (!units[g].active || units[g].team == units[i].team) continue;
+                if (!UnitHasModifier(modifiers, g, MOD_STONE_GAZE)) continue;
+                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                    if (units[g].abilities[a].abilityId == ABILITY_STONE_GAZE) {
+                        gazeThresh = ABILITY_DEFS[ABILITY_STONE_GAZE].values[units[g].abilities[a].level][AV_SG_GAZE_THRESH];
+                        break;
+                    }
+                }
+                break;
+            }
+            Vector2 gsp = GetWorldToScreen(units[i].position, camera);
+            float progress = units[i].gazeAccum / gazeThresh;
+            if (progress > 1.0f) progress = 1.0f;
+            int barW = 30, barH = 4;
+            int gx = (int)gsp.x - barW/2;
+            int gy = (int)gsp.y - 30;
+            DrawRectangle(gx, gy, barW, barH, (Color){40,20,60,180});
+            DrawRectangle(gx, gy, (int)(barW * progress), barH, (Color){160,80,200,220});
+            DrawRectangleLines(gx, gy, barW, barH, (Color){160,80,200,255});
         }
 
         // 2D overlay: floating texts (spell shouts)
@@ -1395,7 +1512,7 @@ int main(void)
                         if (aslot->abilityId >= 0 && aslot->abilityId < ABILITY_COUNT) {
                             // Filled slot — colored background
                             DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
-                                         ABILITY_COLORS[aslot->abilityId]);
+                                         ABILITY_DEFS[aslot->abilityId].color);
                             // Hover detection
                             bool slotHovered = CheckCollisionPointRec(GetMousePosition(),
                                 (Rectangle){(float)ax,(float)ay,(float)HUD_ABILITY_SLOT_SIZE,(float)HUD_ABILITY_SLOT_SIZE});
@@ -1404,7 +1521,7 @@ int main(void)
                             int abbrSize = 11;
                             if (slotHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
                                 abbrSize = 11 + (int)(3.0f * (hoverTimer / tooltipDelay));
-                            const char *abbr = ABILITY_ABBREV[aslot->abilityId];
+                            const char *abbr = ABILITY_DEFS[aslot->abilityId].abbrev;
                             int aw2 = MeasureText(abbr, abbrSize);
                             DrawText(abbr, ax + (HUD_ABILITY_SLOT_SIZE - aw2) / 2,
                                     ay + (HUD_ABILITY_SLOT_SIZE - abbrSize) / 2, abbrSize, WHITE);
@@ -1471,7 +1588,7 @@ int main(void)
                     DrawRectangleLines(ix, iy, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE, (Color){90,90,110,255});
                     if (inventory[inv].abilityId >= 0 && inventory[inv].abilityId < ABILITY_COUNT) {
                         DrawRectangle(ix+1, iy+1, HUD_ABILITY_SLOT_SIZE-2, HUD_ABILITY_SLOT_SIZE-2,
-                                      ABILITY_COLORS[inventory[inv].abilityId]);
+                                      ABILITY_DEFS[inventory[inv].abilityId].color);
                         // Hover detection
                         bool invHovered = CheckCollisionPointRec(GetMousePosition(),
                             (Rectangle){(float)ix,(float)iy,(float)HUD_ABILITY_SLOT_SIZE,(float)HUD_ABILITY_SLOT_SIZE});
@@ -1479,7 +1596,7 @@ int main(void)
                         int invAbbrSize = 11;
                         if (invHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
                             invAbbrSize = 11 + (int)(3.0f * (hoverTimer / tooltipDelay));
-                        const char *iabbr = ABILITY_ABBREV[inventory[inv].abilityId];
+                        const char *iabbr = ABILITY_DEFS[inventory[inv].abilityId].abbrev;
                         int iaw = MeasureText(iabbr, invAbbrSize);
                         DrawText(iabbr, ix + (HUD_ABILITY_SLOT_SIZE-iaw)/2,
                                  iy + (HUD_ABILITY_SLOT_SIZE-invAbbrSize)/2, invAbbrSize, WHITE);
@@ -1493,9 +1610,9 @@ int main(void)
             if (dragState.dragging && dragState.abilityId >= 0 && dragState.abilityId < ABILITY_COUNT) {
                 Vector2 dmouse = GetMousePosition();
                 DrawRectangle((int)dmouse.x - 16, (int)dmouse.y - 16, 32, 32,
-                              ABILITY_COLORS[dragState.abilityId]);
+                              ABILITY_DEFS[dragState.abilityId].color);
                 DrawRectangleLines((int)dmouse.x - 16, (int)dmouse.y - 16, 32, 32, WHITE);
-                const char *dabbr = ABILITY_ABBREV[dragState.abilityId];
+                const char *dabbr = ABILITY_DEFS[dragState.abilityId].abbrev;
                 int daw = MeasureText(dabbr, 11);
                 DrawText(dabbr, (int)dmouse.x - daw/2, (int)dmouse.y - 5, 11, WHITE);
             }
@@ -1534,7 +1651,7 @@ int main(void)
                     if (shopSlots[s].abilityId >= 0 && shopSlots[s].abilityId < ABILITY_COUNT) {
                         const AbilityDef *sdef = &ABILITY_DEFS[shopSlots[s].abilityId];
                         bool canAfford = (playerGold >= sdef->goldCost);
-                        Color cardBg = canAfford ? ABILITY_COLORS[shopSlots[s].abilityId] : (Color){50,50,65,255};
+                        Color cardBg = canAfford ? ABILITY_DEFS[shopSlots[s].abilityId].color : (Color){50,50,65,255};
                         bool shopHovered = CheckCollisionPointRec(GetMousePosition(),
                             (Rectangle){(float)scx,(float)scy,(float)shopCardW,(float)shopCardH});
                         if (shopHovered) hoverAbilityId = shopSlots[s].abilityId;
@@ -1783,10 +1900,10 @@ int main(void)
                     AbilitySlot *slot = &units[intro.unitIndex].abilities[a];
 
                     if (slot->abilityId >= 0 && slot->abilityId < ABILITY_COUNT) {
-                        Color abilCol = ABILITY_COLORS[slot->abilityId];
+                        Color abilCol = ABILITY_DEFS[slot->abilityId].color;
                         abilCol.a = aa;
                         DrawRectangle(ax, abilY, slotSize, slotSize, abilCol);
-                        const char *abbr = ABILITY_ABBREV[slot->abilityId];
+                        const char *abbr = ABILITY_DEFS[slot->abilityId].abbrev;
                         int aw = MeasureText(abbr, 16);
                         DrawText(abbr, ax + (slotSize - aw)/2,
                             abilY + (slotSize - 16)/2, 16, (Color){ 255, 255, 255, aa });

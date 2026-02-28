@@ -47,3 +47,31 @@ void ClearAllFloatingTexts(FloatingText texts[]);
 // Screen shake helpers
 void TriggerShake(ScreenShake *shake, float intensity, float duration);
 void UpdateShake(ScreenShake *shake, float dt);
+
+// Fissure helpers
+void SpawnFissure(Fissure fissures[], Vector3 casterPos, Vector3 targetPos,
+    float length, float width, float duration, Team team, int sourceIndex);
+void UpdateFissures(Fissure fissures[], float dt);
+void ClearAllFissures(Fissure fissures[]);
+bool CheckFissureCollision(Fissure fissures[], Vector3 pos, float unitRadius);
+Vector3 ResolveFissureCollision(Fissure fissures[], Vector3 pos, Vector3 oldPos, float unitRadius);
+
+// Ability casting handlers (return true if cast succeeded)
+bool CastMagicMissile(CombatState *state, int caster, AbilitySlot *slot, int target);
+bool CastVacuum(CombatState *state, int caster, AbilitySlot *slot);
+bool CastChainFrost(CombatState *state, int caster, AbilitySlot *slot, int target);
+bool CastBloodRage(CombatState *state, int caster, AbilitySlot *slot);
+bool CastEarthquake(CombatState *state, int caster, AbilitySlot *slot);
+bool CastSpellProtect(CombatState *state, int caster, AbilitySlot *slot);
+bool CastCraggyArmor(CombatState *state, int caster, AbilitySlot *slot);
+bool CastStoneGaze(CombatState *state, int caster, AbilitySlot *slot);
+bool CastFissure(CombatState *state, int caster, AbilitySlot *slot, int target);
+
+// Passive ability checks
+void CheckPassiveSunder(CombatState *state, int unitIndex);
+
+// On-hit checks
+void CheckCraggyArmorRetaliation(CombatState *state, int attacker, int defender);
+
+// Shared combat helpers
+int FindHighestHPAlly(Unit units[], int unitCount, int selfIndex);

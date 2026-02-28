@@ -164,6 +164,10 @@ float GetModifierValue(Modifier modifiers[], int unitIndex, ModifierType type)
 
 void AddModifier(Modifier modifiers[], int unitIndex, ModifierType type, float duration, float value)
 {
+    // Spell Protect blocks negative modifiers (stun)
+    if (type == MOD_STUN && UnitHasModifier(modifiers, unitIndex, MOD_SPELL_PROTECT))
+        return;
+
     for (int m = 0; m < MAX_MODIFIERS; m++) {
         if (!modifiers[m].active) {
             modifiers[m] = (Modifier){ .type = type, .unitIndex = unitIndex,
@@ -407,4 +411,352 @@ void UpdateShake(ScreenShake *shake, float dt)
     shake->offset.x = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
     shake->offset.y = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
     shake->offset.z = 0;
+}
+
+//------------------------------------------------------------------------------------
+// Fissure Helpers
+//------------------------------------------------------------------------------------
+void SpawnFissure(Fissure fissures[], Vector3 casterPos, Vector3 targetPos,
+    float length, float width, float duration, Team team, int sourceIndex)
+{
+    float dx = targetPos.x - casterPos.x;
+    float dz = targetPos.z - casterPos.z;
+    float angle = atan2f(dx, dz) * (180.0f / PI);
+    float dist = sqrtf(dx * dx + dz * dz);
+    // Place fissure center halfway along the direction
+    float halfLen = length / 2.0f;
+    float norm = (dist > 0.001f) ? 1.0f / dist : 0.0f;
+    Vector3 center = {
+        casterPos.x + dx * norm * halfLen,
+        0.0f,
+        casterPos.z + dz * norm * halfLen,
+    };
+    for (int i = 0; i < MAX_FISSURES; i++) {
+        if (!fissures[i].active) {
+            fissures[i] = (Fissure){
+                .position = center, .rotation = angle,
+                .length = length, .width = width,
+                .duration = duration, .active = true,
+                .sourceTeam = team, .sourceIndex = sourceIndex,
+            };
+            return;
+        }
+    }
+}
+
+void UpdateFissures(Fissure fissures[], float dt)
+{
+    for (int i = 0; i < MAX_FISSURES; i++) {
+        if (!fissures[i].active) continue;
+        fissures[i].duration -= dt;
+        if (fissures[i].duration <= 0) fissures[i].active = false;
+    }
+}
+
+void ClearAllFissures(Fissure fissures[])
+{
+    for (int i = 0; i < MAX_FISSURES; i++) fissures[i].active = false;
+}
+
+// Check if a point collides with any fissure (for movement blocking)
+bool CheckFissureCollision(Fissure fissures[], Vector3 pos, float unitRadius)
+{
+    for (int i = 0; i < MAX_FISSURES; i++) {
+        if (!fissures[i].active) continue;
+        // Transform pos into fissure-local space
+        float dx = pos.x - fissures[i].position.x;
+        float dz = pos.z - fissures[i].position.z;
+        float rad = fissures[i].rotation * (PI / 180.0f);
+        float cosA = cosf(-rad), sinA = sinf(-rad);
+        float localX = dx * cosA - dz * sinA;
+        float localZ = dx * sinA + dz * cosA;
+        float halfL = fissures[i].length / 2.0f + unitRadius;
+        float halfW = fissures[i].width / 2.0f + unitRadius;
+        if (fabsf(localX) < halfW && fabsf(localZ) < halfL)
+            return true;
+    }
+    return false;
+}
+
+// Resolve collision: return the closest valid position outside fissures
+Vector3 ResolveFissureCollision(Fissure fissures[], Vector3 pos, Vector3 oldPos, float unitRadius)
+{
+    (void)oldPos; // reserved for future fallback logic
+    for (int i = 0; i < MAX_FISSURES; i++) {
+        if (!fissures[i].active) continue;
+        float dx = pos.x - fissures[i].position.x;
+        float dz = pos.z - fissures[i].position.z;
+        float rad = fissures[i].rotation * (PI / 180.0f);
+        float cosA = cosf(-rad), sinA = sinf(-rad);
+        float localX = dx * cosA - dz * sinA;
+        float localZ = dx * sinA + dz * cosA;
+        float halfL = fissures[i].length / 2.0f + unitRadius;
+        float halfW = fissures[i].width / 2.0f + unitRadius;
+        if (fabsf(localX) < halfW && fabsf(localZ) < halfL) {
+            // Push out along the shortest axis
+            float overlapX = halfW - fabsf(localX);
+            float overlapZ = halfL - fabsf(localZ);
+            if (overlapX < overlapZ)
+                localX += (localX >= 0 ? overlapX : -overlapX);
+            else
+                localZ += (localZ >= 0 ? overlapZ : -overlapZ);
+            // Transform back to world space
+            float cosB = cosf(rad), sinB = sinf(rad);
+            pos.x = fissures[i].position.x + localX * cosB - localZ * sinB;
+            pos.z = fissures[i].position.z + localX * sinB + localZ * cosB;
+        }
+    }
+    return pos;
+}
+
+//------------------------------------------------------------------------------------
+// Shared Combat Helpers
+//------------------------------------------------------------------------------------
+int FindHighestHPAlly(Unit units[], int unitCount, int selfIndex)
+{
+    Team myTeam = units[selfIndex].team;
+    float bestHP = -1.0f;
+    int bestIdx = -1;
+    for (int j = 0; j < unitCount; j++) {
+        if (j == selfIndex || !units[j].active) continue;
+        if (units[j].team != myTeam) continue;
+        if (units[j].currentHealth > bestHP) {
+            bestHP = units[j].currentHealth;
+            bestIdx = j;
+        }
+    }
+    return bestIdx;
+}
+
+//------------------------------------------------------------------------------------
+// Ability Casting Handlers
+//------------------------------------------------------------------------------------
+bool CastMagicMissile(CombatState *state, int caster, AbilitySlot *slot, int target)
+{
+    if (target < 0) return false;
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_MAGIC_MISSILE];
+    float d = DistXZ(state->units[caster].position, state->units[target].position);
+    if (d > def->range[slot->level]) return false;
+    SpawnProjectile(state->projectiles, PROJ_MAGIC_MISSILE,
+        state->units[caster].position, target, caster, state->units[caster].team, slot->level,
+        def->values[slot->level][AV_MM_PROJ_SPEED],
+        def->values[slot->level][AV_MM_DAMAGE],
+        def->values[slot->level][AV_MM_STUN_DUR],
+        def->color);
+    slot->cooldownRemaining = def->cooldown[slot->level];
+    return true;
+}
+
+bool CastVacuum(CombatState *state, int caster, AbilitySlot *slot)
+{
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_VACUUM];
+    float radius = def->values[slot->level][AV_VAC_RADIUS];
+    float stunDur = def->values[slot->level][AV_VAC_STUN_DUR];
+    bool hitAny = false;
+    for (int j = 0; j < state->unitCount; j++) {
+        if (!state->units[j].active || state->units[j].team == state->units[caster].team) continue;
+        if (UnitHasModifier(state->modifiers, j, MOD_INVULNERABLE)) continue;
+        float d = DistXZ(state->units[caster].position, state->units[j].position);
+        if (d <= radius) {
+            state->units[j].position.x = state->units[caster].position.x;
+            state->units[j].position.z = state->units[caster].position.z;
+            AddModifier(state->modifiers, j, MOD_STUN, stunDur, 0);
+            TriggerShake(state->shake, 5.0f, 0.25f);
+            hitAny = true;
+        }
+    }
+    if (!hitAny) return false;
+    slot->cooldownRemaining = def->cooldown[slot->level];
+    return true;
+}
+
+bool CastChainFrost(CombatState *state, int caster, AbilitySlot *slot, int target)
+{
+    if (target < 0) return false;
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_CHAIN_FROST];
+    float d = DistXZ(state->units[caster].position, state->units[target].position);
+    if (d > def->range[slot->level]) return false;
+    SpawnChainFrostProjectile(state->projectiles,
+        state->units[caster].position, target, caster, state->units[caster].team, slot->level,
+        def->values[slot->level][AV_CF_PROJ_SPEED],
+        def->values[slot->level][AV_CF_DAMAGE],
+        (int)def->values[slot->level][AV_CF_BOUNCES],
+        def->values[slot->level][AV_CF_BOUNCE_RANGE]);
+    slot->cooldownRemaining = def->cooldown[slot->level];
+    return true;
+}
+
+bool CastBloodRage(CombatState *state, int caster, AbilitySlot *slot)
+{
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_BLOOD_RAGE];
+    float dur = def->values[slot->level][AV_BR_DURATION];
+    float ls = def->values[slot->level][AV_BR_LIFESTEAL];
+    AddModifier(state->modifiers, caster, MOD_LIFESTEAL, dur, ls);
+    slot->cooldownRemaining = def->cooldown[slot->level];
+    return true;
+}
+
+bool CastEarthquake(CombatState *state, int caster, AbilitySlot *slot)
+{
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_EARTHQUAKE];
+    float radius = def->values[slot->level][AV_EQ_RADIUS];
+    float damage = def->values[slot->level][AV_EQ_DAMAGE];
+    for (int j = 0; j < state->unitCount; j++) {
+        if (j == caster || !state->units[j].active) continue;
+        if (UnitHasModifier(state->modifiers, j, MOD_INVULNERABLE)) continue;
+        float d = DistXZ(state->units[caster].position, state->units[j].position);
+        if (d <= radius) {
+            state->units[j].currentHealth -= damage;
+            if (state->units[j].currentHealth <= 0) state->units[j].active = false;
+        }
+    }
+    TriggerShake(state->shake, 10.0f, 0.5f);
+    // Spawn earth particles
+    for (int p = 0; p < 20; p++) {
+        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+        float r = (float)GetRandomValue(0, (int)(radius * 10.0f)) / 10.0f;
+        Vector3 pos = {
+            state->units[caster].position.x + cosf(angle) * r,
+            0.5f,
+            state->units[caster].position.z + sinf(angle) * r
+        };
+        Vector3 vel = { cosf(angle) * 5.0f, (float)GetRandomValue(30, 80) / 10.0f, sinf(angle) * 5.0f };
+        int shade = GetRandomValue(80, 160);
+        Color brown = { (unsigned char)shade, (unsigned char)(shade * 0.7f), (unsigned char)(shade * 0.3f), 255 };
+        SpawnParticle(state->particles, pos, vel, 0.6f, (float)GetRandomValue(4, 10) / 10.0f, brown);
+    }
+    slot->cooldownRemaining = def->cooldown[slot->level];
+    return true;
+}
+
+bool CastSpellProtect(CombatState *state, int caster, AbilitySlot *slot)
+{
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_SPELL_PROTECT];
+    float dur = def->values[slot->level][AV_SP_DURATION];
+    AddModifier(state->modifiers, caster, MOD_SPELL_PROTECT, dur, 0);
+    slot->cooldownRemaining = def->cooldown[slot->level];
+    return true;
+}
+
+bool CastCraggyArmor(CombatState *state, int caster, AbilitySlot *slot)
+{
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_CRAGGY_ARMOR];
+    float armor = def->values[slot->level][AV_CA_ARMOR];
+    float stunChance = def->values[slot->level][AV_CA_STUN_CHANCE];
+    float dur = def->values[slot->level][AV_CA_DURATION];
+    AddModifier(state->modifiers, caster, MOD_ARMOR, dur, armor);
+    AddModifier(state->modifiers, caster, MOD_CRAGGY_ARMOR, dur, stunChance);
+    slot->cooldownRemaining = def->cooldown[slot->level];
+    return true;
+}
+
+bool CastStoneGaze(CombatState *state, int caster, AbilitySlot *slot)
+{
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_STONE_GAZE];
+    float dur = def->values[slot->level][AV_SG_DURATION];
+    float gazeThresh = def->values[slot->level][AV_SG_GAZE_THRESH];
+    AddModifier(state->modifiers, caster, MOD_STONE_GAZE, dur, gazeThresh);
+    slot->cooldownRemaining = def->cooldown[slot->level];
+    return true;
+}
+
+bool CastFissure(CombatState *state, int caster, AbilitySlot *slot, int target)
+{
+    if (target < 0) return false;
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_FISSURE];
+    float d = DistXZ(state->units[caster].position, state->units[target].position);
+    if (d > def->values[slot->level][AV_FI_RANGE]) return false;
+
+    float length = def->values[slot->level][AV_FI_LENGTH];
+    float width = def->values[slot->level][AV_FI_WIDTH];
+    float duration = def->values[slot->level][AV_FI_DURATION];
+    float damage = def->values[slot->level][AV_FI_DAMAGE];
+
+    SpawnFissure(state->fissures, state->units[caster].position,
+        state->units[target].position, length, width, duration,
+        state->units[caster].team, caster);
+
+    // Deal damage in area around fissure on spawn
+    float dx = state->units[target].position.x - state->units[caster].position.x;
+    float dz = state->units[target].position.z - state->units[caster].position.z;
+    float dist = sqrtf(dx * dx + dz * dz);
+    float norm = (dist > 0.001f) ? 1.0f / dist : 0.0f;
+    // Check all units along the fissure line
+    for (int j = 0; j < state->unitCount; j++) {
+        if (j == caster || !state->units[j].active) continue;
+        if (UnitHasModifier(state->modifiers, j, MOD_INVULNERABLE)) continue;
+        // Distance from unit to fissure line (approximate with distance to center line)
+        float ux = state->units[j].position.x - state->units[caster].position.x;
+        float uz = state->units[j].position.z - state->units[caster].position.z;
+        // Project onto fissure direction
+        float proj = (ux * dx + uz * dz) * norm * norm;
+        if (proj < 0 || proj > length) continue;
+        // Perpendicular distance
+        float perpX = ux - dx * norm * proj;
+        float perpZ = uz - dz * norm * proj;
+        float perpDist = sqrtf(perpX * perpX + perpZ * perpZ);
+        if (perpDist <= width + 3.0f) { // slightly wider than fissure
+            state->units[j].currentHealth -= damage;
+            if (state->units[j].currentHealth <= 0) state->units[j].active = false;
+        }
+    }
+    TriggerShake(state->shake, 6.0f, 0.3f);
+    slot->cooldownRemaining = def->cooldown[slot->level];
+    return true;
+}
+
+//------------------------------------------------------------------------------------
+// Passive Ability Checks
+//------------------------------------------------------------------------------------
+void CheckPassiveSunder(CombatState *state, int unitIndex)
+{
+    Unit *unit = &state->units[unitIndex];
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+        AbilitySlot *slot = &unit->abilities[a];
+        if (slot->abilityId != ABILITY_SUNDER) continue;
+        if (slot->triggered || slot->cooldownRemaining > 0) continue;
+        const AbilityDef *def = &ABILITY_DEFS[ABILITY_SUNDER];
+        float threshold = def->values[slot->level][AV_SU_HP_THRESH];
+        float maxHP = UNIT_STATS[unit->typeIndex].health;
+        if (unit->currentHealth > 0 && unit->currentHealth <= maxHP * threshold) {
+            int ally = FindHighestHPAlly(state->units, state->unitCount, unitIndex);
+            if (ally >= 0) {
+                float myHP = unit->currentHealth;
+                float allyHP = state->units[ally].currentHealth;
+                unit->currentHealth = allyHP;
+                state->units[ally].currentHealth = myHP;
+                // Clamp to max HP
+                float allyMax = UNIT_STATS[state->units[ally].typeIndex].health;
+                if (unit->currentHealth > maxHP) unit->currentHealth = maxHP;
+                if (state->units[ally].currentHealth > allyMax) state->units[ally].currentHealth = allyMax;
+                slot->triggered = true;
+                slot->cooldownRemaining = def->cooldown[slot->level];
+                SpawnFloatingText(state->floatingTexts, unit->position,
+                    def->name, def->color, 1.0f);
+            }
+        }
+    }
+}
+
+//------------------------------------------------------------------------------------
+// On-Hit Checks
+//------------------------------------------------------------------------------------
+void CheckCraggyArmorRetaliation(CombatState *state, int attacker, int defender)
+{
+    if (!UnitHasModifier(state->modifiers, defender, MOD_CRAGGY_ARMOR)) return;
+    float stunChance = GetModifierValue(state->modifiers, defender, MOD_CRAGGY_ARMOR);
+    float roll = (float)GetRandomValue(0, 100) / 100.0f;
+    if (roll < stunChance) {
+        // Find the craggy armor ability on defender to get stun duration
+        float stunDur = 1.0f; // default
+        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+            if (state->units[defender].abilities[a].abilityId == ABILITY_CRAGGY_ARMOR) {
+                int lvl = state->units[defender].abilities[a].level;
+                stunDur = ABILITY_DEFS[ABILITY_CRAGGY_ARMOR].values[lvl][AV_CA_STUN_DUR];
+                break;
+            }
+        }
+        AddModifier(state->modifiers, attacker, MOD_STUN, stunDur, 0);
+        TriggerShake(state->shake, 3.0f, 0.15f);
+    }
 }

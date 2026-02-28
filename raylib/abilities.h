@@ -14,6 +14,12 @@ typedef enum {
     ABILITY_VACUUM,
     ABILITY_CHAIN_FROST,
     ABILITY_BLOOD_RAGE,
+    ABILITY_EARTHQUAKE,
+    ABILITY_SPELL_PROTECT,
+    ABILITY_CRAGGY_ARMOR,
+    ABILITY_STONE_GAZE,
+    ABILITY_SUNDER,
+    ABILITY_FISSURE,
     ABILITY_COUNT,
 } AbilityId;
 
@@ -30,6 +36,9 @@ typedef enum {
     MOD_SPEED_MULT,
     MOD_ARMOR,
     MOD_DIG_HEAL,
+    MOD_SPELL_PROTECT,
+    MOD_CRAGGY_ARMOR,    // value = stun chance (0-1), stun dur stored separately
+    MOD_STONE_GAZE,      // value = gaze threshold (seconds to stun)
 } ModifierType;
 
 typedef enum {
@@ -38,35 +47,67 @@ typedef enum {
 } ProjectileType;
 
 // Named value indices into AbilityDef.values[level][]
-#define AV_MM_DAMAGE      0
-#define AV_MM_STUN_DUR    1
-#define AV_MM_PROJ_SPEED  2
-#define AV_DIG_HP_THRESH  0
-#define AV_DIG_HEAL_DUR   1
-#define AV_VAC_RADIUS     0
-#define AV_VAC_STUN_DUR   1
-#define AV_VAC_PULL_DUR   2
-#define AV_CF_DAMAGE      0
-#define AV_CF_BOUNCES     1
-#define AV_CF_PROJ_SPEED  2
+// -- Magic Missile
+#define AV_MM_DAMAGE       0
+#define AV_MM_STUN_DUR     1
+#define AV_MM_PROJ_SPEED   2
+// -- Dig
+#define AV_DIG_HP_THRESH   0
+#define AV_DIG_HEAL_DUR    1
+// -- Vacuum
+#define AV_VAC_RADIUS      0
+#define AV_VAC_STUN_DUR    1
+#define AV_VAC_PULL_DUR    2
+// -- Chain Frost
+#define AV_CF_DAMAGE       0
+#define AV_CF_BOUNCES      1
+#define AV_CF_PROJ_SPEED   2
 #define AV_CF_BOUNCE_RANGE 3
-#define AV_BR_LIFESTEAL   0
-#define AV_BR_DURATION    1
+// -- Blood Rage
+#define AV_BR_LIFESTEAL    0
+#define AV_BR_DURATION     1
+// -- Earthquake
+#define AV_EQ_DAMAGE       0
+#define AV_EQ_RADIUS       1
+// -- Spell Protect
+#define AV_SP_DURATION     0
+// -- Craggy Armor
+#define AV_CA_ARMOR        0
+#define AV_CA_STUN_CHANCE  1
+#define AV_CA_STUN_DUR     2
+#define AV_CA_DURATION     3
+// -- Stone Gaze
+#define AV_SG_GAZE_THRESH  0
+#define AV_SG_STUN_DUR     1
+#define AV_SG_DURATION     2
+#define AV_SG_CONE_ANGLE   3
+// -- Sunder
+#define AV_SU_HP_THRESH    0
+// -- Fissure
+#define AV_FI_LENGTH       0
+#define AV_FI_WIDTH        1
+#define AV_FI_DURATION     2
+#define AV_FI_DAMAGE       3
+#define AV_FI_RANGE        4
 
 typedef struct {
     const char *name;
     const char *description;
+    const char *abbrev;
+    Color       color;
     AbilityTargetType targetType;
-    int goldCost;
-    float range[ABILITY_MAX_LEVELS];
-    float cooldown[ABILITY_MAX_LEVELS];
-    float values[ABILITY_MAX_LEVELS][ABILITY_MAX_VALUES];
+    bool        isPassive;
+    int         goldCost;
+    float       range[ABILITY_MAX_LEVELS];
+    float       cooldown[ABILITY_MAX_LEVELS];
+    float       values[ABILITY_MAX_LEVELS][ABILITY_MAX_VALUES];
 } AbilityDef;
 
 static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_MAGIC_MISSILE] = {
         .name = "Magic Missile", .description = "Ranged stun projectile",
-        .targetType = TARGET_CLOSEST_ENEMY, .goldCost = 3,
+        .abbrev = "MM", .color = { 120, 80, 255, 255 },
+        .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 3,
         .range    = { 50.0f, 58.0f, 66.0f },
         .cooldown = { 10.0f, 9.0f, 8.0f },
         .values = {
@@ -77,7 +118,8 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     },
     [ABILITY_DIG] = {
         .name = "Dig", .description = "Invuln + heal at low HP",
-        .targetType = TARGET_NONE, .goldCost = 4,
+        .abbrev = "DG", .color = { 160, 120, 60, 255 },
+        .targetType = TARGET_NONE, .isPassive = true, .goldCost = 4,
         .range    = { 0 },
         .cooldown = { 30.0f, 25.0f, 20.0f },
         .values = {
@@ -88,8 +130,9 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     },
     [ABILITY_VACUUM] = {
         .name = "Vacuum", .description = "Pull + stun enemies in AoE",
-        .targetType = TARGET_SELF_AOE, .goldCost = 5,
-        .range    = { 0 },
+        .abbrev = "VC", .color = { 60, 180, 180, 255 },
+        .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 5,
+        .range    = { 40.0f, 48.0f, 56.0f },
         .cooldown = { 22.0f, 18.0f, 14.0f },
         .values = {
             { [AV_VAC_RADIUS]=30.0f, [AV_VAC_STUN_DUR]=1.0f, [AV_VAC_PULL_DUR]=0.5f },
@@ -99,7 +142,8 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     },
     [ABILITY_CHAIN_FROST] = {
         .name = "Chain Frost", .description = "Bouncing damage projectile",
-        .targetType = TARGET_CLOSEST_ENEMY, .goldCost = 5,
+        .abbrev = "CF", .color = { 80, 140, 255, 255 },
+        .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 5,
         .range    = { 50.0f, 58.0f, 66.0f },
         .cooldown = { 20.0f, 17.0f, 14.0f },
         .values = {
@@ -110,7 +154,8 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     },
     [ABILITY_BLOOD_RAGE] = {
         .name = "Blood Rage", .description = "Grants lifesteal on attacks",
-        .targetType = TARGET_NONE, .goldCost = 3,
+        .abbrev = "BR", .color = { 220, 40, 40, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
         .range    = { 0 },
         .cooldown = { 18.0f, 15.0f, 12.0f },
         .values = {
@@ -119,17 +164,79 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
             { [AV_BR_LIFESTEAL]=0.50f, [AV_BR_DURATION]=7.0f },
         },
     },
+    [ABILITY_EARTHQUAKE] = {
+        .name = "Earthquake", .description = "AoE damage (hits allies!)",
+        .abbrev = "EQ", .color = { 180, 120, 40, 255 },
+        .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 5,
+        .range    = { 30.0f, 38.0f, 46.0f },
+        .cooldown = { 20.0f, 17.0f, 14.0f },
+        .values = {
+            { [AV_EQ_DAMAGE]=3.0f, [AV_EQ_RADIUS]=25.0f },
+            { [AV_EQ_DAMAGE]=5.0f, [AV_EQ_RADIUS]=32.0f },
+            { [AV_EQ_DAMAGE]=7.0f, [AV_EQ_RADIUS]=40.0f },
+        },
+    },
+    [ABILITY_SPELL_PROTECT] = {
+        .name = "Spell Protect", .description = "Blocks stuns & debuffs",
+        .abbrev = "SP", .color = { 200, 240, 255, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .range    = { 0 },
+        .cooldown = { 22.0f, 18.0f, 14.0f },
+        .values = {
+            { [AV_SP_DURATION]=4.0f },
+            { [AV_SP_DURATION]=5.0f },
+            { [AV_SP_DURATION]=6.0f },
+        },
+    },
+    [ABILITY_CRAGGY_ARMOR] = {
+        .name = "Craggy Armor", .description = "Armor + stun attackers",
+        .abbrev = "CA", .color = { 140, 140, 160, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .range    = { 0 },
+        .cooldown = { 20.0f, 17.0f, 14.0f },
+        .values = {
+            { [AV_CA_ARMOR]=1.0f, [AV_CA_STUN_CHANCE]=0.15f, [AV_CA_STUN_DUR]=0.8f, [AV_CA_DURATION]=6.0f },
+            { [AV_CA_ARMOR]=1.5f, [AV_CA_STUN_CHANCE]=0.25f, [AV_CA_STUN_DUR]=1.0f, [AV_CA_DURATION]=7.0f },
+            { [AV_CA_ARMOR]=2.0f, [AV_CA_STUN_CHANCE]=0.35f, [AV_CA_STUN_DUR]=1.2f, [AV_CA_DURATION]=8.0f },
+        },
+    },
+    [ABILITY_STONE_GAZE] = {
+        .name = "Stone Gaze", .description = "Stuns enemies facing you",
+        .abbrev = "SG", .color = { 160, 80, 200, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 5,
+        .range    = { 0 },
+        .cooldown = { 24.0f, 20.0f, 16.0f },
+        .values = {
+            { [AV_SG_GAZE_THRESH]=2.0f, [AV_SG_STUN_DUR]=1.5f, [AV_SG_DURATION]=6.0f, [AV_SG_CONE_ANGLE]=45.0f },
+            { [AV_SG_GAZE_THRESH]=1.6f, [AV_SG_STUN_DUR]=2.0f, [AV_SG_DURATION]=7.0f, [AV_SG_CONE_ANGLE]=45.0f },
+            { [AV_SG_GAZE_THRESH]=1.2f, [AV_SG_STUN_DUR]=2.5f, [AV_SG_DURATION]=8.0f, [AV_SG_CONE_ANGLE]=45.0f },
+        },
+    },
+    [ABILITY_SUNDER] = {
+        .name = "Sunder", .description = "Swap HP with ally at low HP",
+        .abbrev = "SU", .color = { 180, 40, 80, 255 },
+        .targetType = TARGET_NONE, .isPassive = true, .goldCost = 3,
+        .range    = { 0 },
+        .cooldown = { 30.0f, 25.0f, 20.0f },
+        .values = {
+            { [AV_SU_HP_THRESH]=0.25f },
+            { [AV_SU_HP_THRESH]=0.30f },
+            { [AV_SU_HP_THRESH]=0.35f },
+        },
+    },
+    [ABILITY_FISSURE] = {
+        .name = "Fissure", .description = "Impassable terrain + damage",
+        .abbrev = "FI", .color = { 120, 110, 100, 255 },
+        .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 5,
+        .range    = { 70.0f, 80.0f, 90.0f },
+        .cooldown = { 22.0f, 18.0f, 14.0f },
+        .values = {
+            { [AV_FI_LENGTH]=45.0f, [AV_FI_WIDTH]=8.0f, [AV_FI_DURATION]=4.0f, [AV_FI_DAMAGE]=2.0f, [AV_FI_RANGE]=70.0f },
+            { [AV_FI_LENGTH]=55.0f, [AV_FI_WIDTH]=8.0f, [AV_FI_DURATION]=5.0f, [AV_FI_DAMAGE]=3.5f, [AV_FI_RANGE]=80.0f },
+            { [AV_FI_LENGTH]=65.0f, [AV_FI_WIDTH]=8.0f, [AV_FI_DURATION]=6.0f, [AV_FI_DAMAGE]=5.0f, [AV_FI_RANGE]=90.0f },
+        },
+    },
 };
 
-static const Color ABILITY_COLORS[ABILITY_COUNT] = {
-    { 120, 80, 255, 255 },   // Magic Missile — purple
-    { 160, 120, 60, 255 },   // Dig — brown
-    { 60, 180, 180, 255 },   // Vacuum — cyan
-    { 80, 140, 255, 255 },   // Chain Frost — blue
-    { 220, 40, 40, 255 },    // Blood Rage — red
-};
-
-static const char *ABILITY_ABBREV[ABILITY_COUNT] = { "MM", "DG", "VC", "CF", "BR" };
-
-// Clockwise activation order: TL(0) → TR(1) → BR(3) → BL(2)
+// Clockwise activation order: TL(0) -> TR(1) -> BR(3) -> BL(2)
 static const int ACTIVATION_ORDER[MAX_ABILITIES_PER_UNIT] = { 0, 1, 3, 2 };
