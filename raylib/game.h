@@ -173,3 +173,13 @@ typedef struct {
     Team team;
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
 } UnitSnapshot;
+
+//------------------------------------------------------------------------------------
+// Screen Shake
+//------------------------------------------------------------------------------------
+typedef struct {
+    float intensity;  // current intensity (decays over time)
+    float duration;   // total duration
+    float timer;      // time remaining
+    Vector3 offset;   // current frame offset (applied to camera)
+} ScreenShake;

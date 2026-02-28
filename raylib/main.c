@@ -33,12 +33,17 @@ int main(void)
     InitWindow(1280, 720, "Autochess — Best of 5");
     SetWindowMinSize(640, 360);
 
-    // Camera
-    float camHeight = 102.0f;
-    float camDistance = 104.0f;
-    float camFOV = 52.0f;
+    // Camera presets — prep (top-down auto-chess) vs combat (diagonal MOBA)
+    const float prepHeight = 200.0f, prepDistance = 150.0f, prepFOV = 48.0f, prepX = 0.0f;
+    const float combatHeight = 135.0f, combatDistance = 165.0f, combatFOV = 55.0f, combatX = 37.0f;
+    const float camLerpSpeed = 2.5f;
+
+    float camHeight = prepHeight;
+    float camDistance = prepDistance;
+    float camFOV = prepFOV;
+    float camX = prepX;
     Camera camera = { 0 };
-    camera.position = (Vector3){ 0.0f, camHeight, camDistance };
+    camera.position = (Vector3){ camX, camHeight, camDistance };
     camera.target   = (Vector3){ 0.0f, 0.0f, 0.0f };
     camera.up       = (Vector3){ 0.0f, 1.0f, 0.0f };
     camera.fovy     = camFOV;
@@ -136,6 +141,7 @@ int main(void)
     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
     DragState dragState = { 0 };
     int removeConfirmUnit = -1;  // unit index awaiting removal confirmation (-1 = none)
+    ScreenShake shake = {0};
 
     // Initial free shop roll
     RollShop(shopSlots, &playerGold, 0);
@@ -174,8 +180,25 @@ int main(void)
     while (!WindowShouldClose())
     {
         float dt = GetFrameTime();
+        UpdateShake(&shake, dt);
+
+        // Lerp camera toward phase preset
+        {
+            bool combat = (phase == PHASE_COMBAT);
+            float tgtH = combat ? combatHeight : prepHeight;
+            float tgtD = combat ? combatDistance : prepDistance;
+            float tgtF = combat ? combatFOV : prepFOV;
+            float tgtX = combat ? combatX : prepX;
+            float t = camLerpSpeed * dt;
+            if (t > 1.0f) t = 1.0f;
+            camHeight  += (tgtH - camHeight)  * t;
+            camDistance += (tgtD - camDistance) * t;
+            camFOV     += (tgtF - camFOV)     * t;
+            camX       += (tgtX - camX)       * t;
+        }
 
         // Update camera
+        camera.position.x = camX;
         camera.position.y = camHeight;
         camera.position.z = camDistance;
         camera.fovy = camFOV;
@@ -337,6 +360,7 @@ int main(void)
                     Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
                     if (CheckCollisionPointRec(mouse, rollBtn)) {
                         RollShop(shopSlots, &playerGold, rollCost);
+                        TriggerShake(&shake, 2.0f, 0.15f);
                         clickedButton = true;
                     }
                 }
@@ -635,8 +659,10 @@ int main(void)
                         if (projectiles[p].type == PROJ_MAGIC_MISSILE)
                             hitDmg *= UNIT_STATS[units[ti].typeIndex].health;
                         units[ti].currentHealth -= hitDmg;
-                        if (projectiles[p].stunDuration > 0)
+                        if (projectiles[p].stunDuration > 0) {
                             AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
+                            TriggerShake(&shake, 5.0f, 0.25f);
+                        }
                         if (units[ti].currentHealth <= 0) units[ti].active = false;
                     }
                     // Chain Frost bounce
@@ -753,6 +779,7 @@ int main(void)
                                 units[j].position.x = units[i].position.x;
                                 units[j].position.z = units[i].position.z;
                                 AddModifier(modifiers, j, MOD_STUN, stunDur, 0);
+                                TriggerShake(&shake, 5.0f, 0.25f);
                                 hitAny = true;
                             }
                         }
@@ -968,6 +995,11 @@ int main(void)
             EndTextureMode();
         }
 
+        // Apply screen shake offset to camera
+        Vector3 camSaved = camera.position;
+        camera.position.x += shake.offset.x;
+        camera.position.y += shake.offset.y;
+
         BeginMode3D(camera);
             DrawGrid(20, 10.0f);
 
@@ -1017,6 +1049,9 @@ int main(void)
                 DrawSphere(particles[p].position, particles[p].size, particles[p].color);
             }
         EndMode3D();
+
+        // Restore camera position after shake
+        camera.position = camSaved;
 
         // --- Floor label: Blue team unit count (projected from 3D floor position) ---
         {

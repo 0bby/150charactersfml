@@ -35,7 +35,7 @@ bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
         .dragging       = false,
         .facingAngle    = (team == TEAM_BLUE) ? 180.0f : 0.0f,
         .currentAnim    = ANIM_IDLE,
-        .animFrame      = 0,
+        .animFrame      = GetRandomValue(0, 999),
     };
     for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
         units[*unitCount].abilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
@@ -135,7 +135,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             .dragging       = false,
             .facingAngle    = (snaps[i].team == TEAM_BLUE) ? 180.0f : 0.0f,
             .currentAnim    = ANIM_IDLE,
-            .animFrame      = 0,
+            .animFrame      = GetRandomValue(0, 999),
         };
         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
             units[i].abilities[a] = snaps[i].abilities[a];
@@ -340,4 +340,36 @@ void AssignRandomAbilities(Unit *unit, int numAbilities)
         unit->abilities[a].cooldownRemaining = 0;
         unit->abilities[a].triggered = false;
     }
+}
+
+//------------------------------------------------------------------------------------
+// Screen Shake Helpers
+//------------------------------------------------------------------------------------
+void TriggerShake(ScreenShake *shake, float intensity, float duration)
+{
+    // Only override if new shake is stronger than remaining shake
+    float remaining = shake->intensity * (shake->duration > 0 ? shake->timer / shake->duration : 0);
+    if (intensity > remaining) {
+        shake->intensity = intensity;
+        shake->duration = duration;
+        shake->timer = duration;
+    }
+}
+
+void UpdateShake(ScreenShake *shake, float dt)
+{
+    if (shake->timer <= 0) {
+        shake->offset = (Vector3){ 0, 0, 0 };
+        return;
+    }
+    shake->timer -= dt;
+    if (shake->timer <= 0) {
+        shake->timer = 0;
+        shake->offset = (Vector3){ 0, 0, 0 };
+        return;
+    }
+    float factor = shake->intensity * (shake->timer / shake->duration);
+    shake->offset.x = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
+    shake->offset.y = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
+    shake->offset.z = 0;
 }

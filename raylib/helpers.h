@@ -38,3 +38,7 @@ void UpdateParticles(Particle particles[], float dt);
 void RollShop(ShopSlot shopSlots[], int *gold, int cost);
 void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold);
 void AssignRandomAbilities(Unit *unit, int numAbilities);
+
+// Screen shake helpers
+void TriggerShake(ScreenShake *shake, float intensity, float duration);
+void UpdateShake(ScreenShake *shake, float dt);
