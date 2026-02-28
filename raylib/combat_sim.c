@@ -49,7 +49,10 @@ int CombatTick(Unit units[], int unitCount,
         }
         if (modifiers[m].duration > 0) {
             modifiers[m].duration -= dt;
-            if (modifiers[m].duration <= 0) { modifiers[m].active = false; continue; }
+            if (modifiers[m].duration <= 0) {
+                if (modifiers[m].type == MOD_SHIELD) units[ui].shieldHP = 0;
+                modifiers[m].active = false; continue;
+            }
         }
         // Per-tick effects
         if (modifiers[m].type == MOD_DIG_HEAL) {
@@ -68,7 +71,7 @@ int CombatTick(Unit units[], int unitCount,
         int ti = projectiles[p].targetIndex;
         // Target gone?
         if (ti < 0 || ti >= unitCount || !units[ti].active) {
-            if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
+            if ((projectiles[p].type == PROJ_CHAIN_FROST || projectiles[p].type == PROJ_MAELSTROM) && projectiles[p].bouncesRemaining > 0) {
                 int next = FindChainFrostTarget(units, unitCount, projectiles[p].position,
                     projectiles[p].sourceTeam, projectiles[p].lastHitUnit, projectiles[p].bounceRange);
                 if (next >= 0) { projectiles[p].targetIndex = next; continue; }
@@ -84,11 +87,58 @@ int CombatTick(Unit units[], int unitCount,
         float pstep = projectiles[p].speed * dt;
 
         if (pdist <= pstep) {
-            // HIT
+            // HIT — Hook: pull target to caster, damage by distance
+            if (projectiles[p].type == PROJ_HOOK) {
+                if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
+                    float hookDist = DistXZ(units[ti].position, units[projectiles[p].sourceIndex].position);
+                    float hitDmg = hookDist * projectiles[p].damage;
+                    if (units[ti].shieldHP > 0) {
+                        if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
+                        else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
+                    }
+                    units[ti].currentHealth -= hitDmg;
+                    units[ti].position.x = units[projectiles[p].sourceIndex].position.x;
+                    units[ti].position.z = units[projectiles[p].sourceIndex].position.z;
+                    EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, ti, -1,
+                              units[ti].position, 6.0f, 0.3f);
+                    if (units[ti].currentHealth <= 0) units[ti].active = false;
+                }
+                projectiles[p].active = false;
+            }
+            // HIT — Maelstrom: bounce like chain frost
+            else if (projectiles[p].type == PROJ_MAELSTROM) {
+                if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
+                    float hitDmg = projectiles[p].damage;
+                    if (units[ti].shieldHP > 0) {
+                        if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
+                        else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
+                    }
+                    units[ti].currentHealth -= hitDmg;
+                    if (units[ti].currentHealth <= 0) units[ti].active = false;
+                }
+                if (projectiles[p].bouncesRemaining > 0) {
+                    projectiles[p].bouncesRemaining--;
+                    projectiles[p].lastHitUnit = ti;
+                    projectiles[p].position = units[ti].position;
+                    projectiles[p].position.y += 3.0f;
+                    int next = FindChainFrostTarget(units, unitCount, units[ti].position,
+                        projectiles[p].sourceTeam, ti, projectiles[p].bounceRange);
+                    if (next >= 0) projectiles[p].targetIndex = next;
+                    else projectiles[p].active = false;
+                } else {
+                    projectiles[p].active = false;
+                }
+            }
+            // HIT — normal (Magic Missile / Chain Frost)
+            else {
             if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
                 float hitDmg = projectiles[p].damage;
                 if (projectiles[p].type == PROJ_MAGIC_MISSILE)
                     hitDmg *= UNIT_STATS[units[ti].typeIndex].health * units[ti].hpMultiplier;
+                if (units[ti].shieldHP > 0) {
+                    if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
+                    else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
+                }
                 units[ti].currentHealth -= hitDmg;
                 if (projectiles[p].stunDuration > 0) {
                     AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
@@ -110,6 +160,7 @@ int CombatTick(Unit units[], int unitCount,
             } else {
                 projectiles[p].active = false;
             }
+            } // end else (normal projectile hit)
         } else {
             projectiles[p].position.x += (pdx / pdist) * pstep;
             projectiles[p].position.y += (pdy / pdist) * pstep;
@@ -194,8 +245,13 @@ int CombatTick(Unit units[], int unitCount,
                 units[i].facingAngle += (diff > 0 ? 1.0f : -1.0f) * turnSpeed * dt;
         }
 
+        // Tick ability cast delay
+        if (units[i].abilityCastDelay > 0)
+            units[i].abilityCastDelay -= dt;
+
         // Active ability casting — one per frame, clockwise rotation
         bool castThisFrame = false;
+        if (units[i].abilityCastDelay <= 0)
         for (int attempt = 0; attempt < MAX_ABILITIES_PER_UNIT && !castThisFrame; attempt++) {
             int slotIdx = ACTIVATION_ORDER[units[i].nextAbilitySlot];
             units[i].nextAbilitySlot = (units[i].nextAbilitySlot + 1) % MAX_ABILITIES_PER_UNIT;
@@ -341,11 +397,154 @@ int CombatTick(Unit units[], int unitCount,
                 slot->cooldownRemaining = def->cooldown[slot->level];
                 castThisFrame = true;
             } break;
+            case ABILITY_VLAD_AURA: {
+                const AbilityDef *vaDef = &ABILITY_DEFS[ABILITY_VLAD_AURA];
+                float ls = vaDef->values[slot->level][AV_VA_LIFESTEAL];
+                float dur = vaDef->values[slot->level][AV_VA_DURATION];
+                for (int j = 0; j < unitCount; j++) {
+                    if (!units[j].active || units[j].team != units[i].team) continue;
+                    AddModifier(modifiers, j, MOD_LIFESTEAL, dur, ls);
+                }
+                AddModifier(modifiers, i, MOD_VLAD_AURA, dur, ls);
+                slot->cooldownRemaining = vaDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
+            case ABILITY_MAELSTROM: {
+                const AbilityDef *mlDef = &ABILITY_DEFS[ABILITY_MAELSTROM];
+                float procChance = mlDef->values[slot->level][AV_ML_PROC_CHANCE];
+                float dur = mlDef->values[slot->level][AV_ML_DURATION];
+                AddModifier(modifiers, i, MOD_MAELSTROM, dur, procChance);
+                slot->cooldownRemaining = mlDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
+            case ABILITY_SWAP: {
+                int swTarget = FindFurthestEnemy(units, unitCount, i);
+                if (swTarget < 0) break;
+                const AbilityDef *swDef = &ABILITY_DEFS[ABILITY_SWAP];
+                float tmpX = units[i].position.x, tmpZ = units[i].position.z;
+                units[i].position.x = units[swTarget].position.x;
+                units[i].position.z = units[swTarget].position.z;
+                units[swTarget].position.x = tmpX;
+                units[swTarget].position.z = tmpZ;
+                float shieldHP = swDef->values[slot->level][AV_SW_SHIELD];
+                float shieldDur = swDef->values[slot->level][AV_SW_SHIELD_DUR];
+                units[i].shieldHP = shieldHP;
+                AddModifier(modifiers, i, MOD_SHIELD, shieldDur, shieldHP);
+                EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, i, -1, units[i].position, 4.0f, 0.2f);
+                slot->cooldownRemaining = swDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
+            case ABILITY_APHOTIC_SHIELD: {
+                int asAlly = FindLowestHPAlly(units, unitCount, i);
+                if (asAlly < 0) asAlly = i;
+                const AbilityDef *asDef = &ABILITY_DEFS[ABILITY_APHOTIC_SHIELD];
+                for (int m = 0; m < MAX_MODIFIERS; m++) {
+                    if (!modifiers[m].active || modifiers[m].unitIndex != asAlly) continue;
+                    if (modifiers[m].type == MOD_STUN || modifiers[m].type == MOD_STONE_GAZE)
+                        modifiers[m].active = false;
+                }
+                float asShield = asDef->values[slot->level][AV_AS_SHIELD];
+                float asDur = asDef->values[slot->level][AV_AS_DURATION];
+                units[asAlly].shieldHP = asShield;
+                AddModifier(modifiers, asAlly, MOD_SHIELD, asDur, asShield);
+                slot->cooldownRemaining = asDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
+            case ABILITY_HOOK: {
+                const AbilityDef *hkDef = &ABILITY_DEFS[ABILITY_HOOK];
+                float range = hkDef->values[slot->level][AV_HK_RANGE];
+                int hkTarget = FindFurthestEnemy(units, unitCount, i);
+                if (hkTarget < 0) break;
+                float hkd = DistXZ(units[i].position, units[hkTarget].position);
+                if (hkd > range) {
+                    hkTarget = FindClosestEnemy(units, unitCount, i);
+                    if (hkTarget < 0) break;
+                    hkd = DistXZ(units[i].position, units[hkTarget].position);
+                    if (hkd > range) break;
+                }
+                SpawnHookProjectile(projectiles, units[i].position,
+                    hkTarget, i, units[i].team, slot->level,
+                    hkDef->values[slot->level][AV_HK_SPEED],
+                    hkDef->values[slot->level][AV_HK_DMG_PER_DIST], range);
+                slot->cooldownRemaining = hkDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
+            case ABILITY_PRIMAL_CHARGE: {
+                int pcTarget = FindFurthestEnemy(units, unitCount, i);
+                if (pcTarget < 0) break;
+                const AbilityDef *pcDef = &ABILITY_DEFS[ABILITY_PRIMAL_CHARGE];
+                float chargeSpeed = pcDef->values[slot->level][AV_PC_CHARGE_SPEED];
+                units[i].chargeTarget = pcTarget;
+                AddModifier(modifiers, i, MOD_CHARGING, 10.0f, chargeSpeed);
+                slot->cooldownRemaining = pcDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
             default: break;
             }
             if (castThisFrame) {
                 EmitEvent(events, eventCount, COMBAT_EVT_ABILITY_CAST, i,
                           slot->abilityId, units[i].position, 0, 0);
+                units[i].abilityCastDelay = 0.75f;
+            }
+        }
+
+        // Primal Charge movement — overrides normal movement
+        if (units[i].chargeTarget >= 0) {
+            int ct = units[i].chargeTarget;
+            if (ct >= unitCount || !units[ct].active) {
+                units[i].chargeTarget = -1;
+            } else {
+                float chargeDist = DistXZ(units[i].position, units[ct].position);
+                float chargeSpeed = GetModifierValue(modifiers, i, MOD_CHARGING);
+                if (chargeSpeed <= 0) chargeSpeed = 80.0f;
+                if (chargeDist <= ATTACK_RANGE) {
+                    // IMPACT — AoE damage + knockback
+                    int chargeLvl = 0;
+                    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                        if (units[i].abilities[a].abilityId == ABILITY_PRIMAL_CHARGE) {
+                            chargeLvl = units[i].abilities[a].level; break;
+                        }
+                    }
+                    const AbilityDef *pcDef = &ABILITY_DEFS[ABILITY_PRIMAL_CHARGE];
+                    float pcDmg = pcDef->values[chargeLvl][AV_PC_DAMAGE];
+                    float pcKnock = pcDef->values[chargeLvl][AV_PC_KNOCKBACK];
+                    float pcRadius = pcDef->values[chargeLvl][AV_PC_AOE_RADIUS];
+                    for (int j = 0; j < unitCount; j++) {
+                        if (!units[j].active || units[j].team == units[i].team) continue;
+                        if (UnitHasModifier(modifiers, j, MOD_INVULNERABLE)) continue;
+                        float dd = DistXZ(units[ct].position, units[j].position);
+                        if (dd <= pcRadius) {
+                            float dmgHit = pcDmg;
+                            if (units[j].shieldHP > 0) {
+                                if (dmgHit <= units[j].shieldHP) { units[j].shieldHP -= dmgHit; dmgHit = 0; }
+                                else { dmgHit -= units[j].shieldHP; units[j].shieldHP = 0; }
+                            }
+                            units[j].currentHealth -= dmgHit;
+                            if (units[j].currentHealth <= 0) units[j].active = false;
+                            float kx = units[j].position.x - units[ct].position.x;
+                            float kz = units[j].position.z - units[ct].position.z;
+                            float klen = sqrtf(kx*kx + kz*kz);
+                            if (klen > 0.001f) {
+                                units[j].position.x += (kx/klen) * pcKnock;
+                                units[j].position.z += (kz/klen) * pcKnock;
+                            }
+                        }
+                    }
+                    EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, i, -1,
+                              units[i].position, 8.0f, 0.4f);
+                    units[i].chargeTarget = -1;
+                    for (int m = 0; m < MAX_MODIFIERS; m++) {
+                        if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_CHARGING)
+                            modifiers[m].active = false;
+                    }
+                } else {
+                    float cdx = units[ct].position.x - units[i].position.x;
+                    float cdz = units[ct].position.z - units[i].position.z;
+                    float clen = sqrtf(cdx*cdx + cdz*cdz);
+                    units[i].position.x += (cdx/clen) * chargeSpeed * dt;
+                    units[i].position.z += (cdz/clen) * chargeSpeed * dt;
+                }
+                continue; // skip normal movement while charging
             }
         }
 
@@ -398,6 +597,11 @@ int CombatTick(Unit units[], int unitCount,
                     float armor = GetModifierValue(modifiers, target, MOD_ARMOR);
                     dmg -= armor;
                     if (dmg < 0) dmg = 0;
+                    // Shield absorption
+                    if (units[target].shieldHP > 0) {
+                        if (dmg <= units[target].shieldHP) { units[target].shieldHP -= dmg; dmg = 0; }
+                        else { dmg -= units[target].shieldHP; units[target].shieldHP = 0; }
+                    }
                     units[target].currentHealth -= dmg;
                     // Lifesteal
                     float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
@@ -422,6 +626,26 @@ int CombatTick(Unit units[], int unitCount,
                             AddModifier(modifiers, i, MOD_STUN, stunDur, 0);
                             EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, i, -1,
                                       units[i].position, 3.0f, 0.15f);
+                        }
+                    }
+                    // Maelstrom on-hit proc (deterministic)
+                    if (UnitHasModifier(modifiers, i, MOD_MAELSTROM)) {
+                        float procChance = GetModifierValue(modifiers, i, MOD_MAELSTROM);
+                        float roll = det_roll(i, target, units[target].currentHealth);
+                        if (roll < procChance) {
+                            int mlLvl = 0;
+                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                if (units[i].abilities[a].abilityId == ABILITY_MAELSTROM) {
+                                    mlLvl = units[i].abilities[a].level; break;
+                                }
+                            }
+                            const AbilityDef *mlDef = &ABILITY_DEFS[ABILITY_MAELSTROM];
+                            SpawnMaelstromProjectile(projectiles,
+                                units[target].position, target, i, units[i].team, mlLvl,
+                                mlDef->values[mlLvl][AV_ML_SPEED],
+                                mlDef->values[mlLvl][AV_ML_DAMAGE],
+                                (int)mlDef->values[mlLvl][AV_ML_BOUNCES],
+                                mlDef->values[mlLvl][AV_ML_BOUNCE_RANGE]);
                         }
                     }
                     if (units[target].currentHealth <= 0) units[target].active = false;

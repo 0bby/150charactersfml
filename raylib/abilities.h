@@ -20,6 +20,12 @@ typedef enum {
     ABILITY_STONE_GAZE,
     ABILITY_SUNDER,
     ABILITY_FISSURE,
+    ABILITY_VLAD_AURA,
+    ABILITY_MAELSTROM,
+    ABILITY_SWAP,
+    ABILITY_APHOTIC_SHIELD,
+    ABILITY_HOOK,
+    ABILITY_PRIMAL_CHARGE,
     ABILITY_COUNT,
 } AbilityId;
 
@@ -39,11 +45,17 @@ typedef enum {
     MOD_SPELL_PROTECT,
     MOD_CRAGGY_ARMOR,    // value = stun chance (0-1), stun dur stored separately
     MOD_STONE_GAZE,      // value = gaze threshold (seconds to stun)
+    MOD_SHIELD,          // value = shield HP remaining
+    MOD_MAELSTROM,       // value = proc chance (0-1)
+    MOD_VLAD_AURA,       // value = lifesteal % granted to allies
+    MOD_CHARGING,        // value = charge speed
 } ModifierType;
 
 typedef enum {
     PROJ_MAGIC_MISSILE = 0,
     PROJ_CHAIN_FROST,
+    PROJ_HOOK,
+    PROJ_MAELSTROM,
 } ProjectileType;
 
 // Named value indices into AbilityDef.values[level][]
@@ -89,6 +101,32 @@ typedef enum {
 #define AV_FI_DURATION     2
 #define AV_FI_DAMAGE       3
 #define AV_FI_RANGE        4
+// -- Vlad's Aura
+#define AV_VA_LIFESTEAL    0  // % lifesteal for allies
+#define AV_VA_DURATION     1
+#define AV_VA_RADIUS       2  // aura radius (0 = global)
+// -- Maelstrom
+#define AV_ML_PROC_CHANCE  0
+#define AV_ML_DAMAGE       1
+#define AV_ML_BOUNCES      2
+#define AV_ML_SPEED        3
+#define AV_ML_DURATION     4
+#define AV_ML_BOUNCE_RANGE 5
+// -- Swap Me
+#define AV_SW_SHIELD       0  // flat shield HP
+#define AV_SW_SHIELD_DUR   1
+// -- Aphotic Shield
+#define AV_AS_SHIELD       0
+#define AV_AS_DURATION     1
+// -- Hook
+#define AV_HK_DMG_PER_DIST 0  // damage per unit of distance
+#define AV_HK_SPEED        1
+#define AV_HK_RANGE        2
+// -- Primal Charge
+#define AV_PC_DAMAGE       0
+#define AV_PC_KNOCKBACK    1  // push distance
+#define AV_PC_AOE_RADIUS   2
+#define AV_PC_CHARGE_SPEED 3
 
 typedef struct {
     const char *name;
@@ -109,7 +147,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "MM", .color = { 120, 80, 255, 255 },
         .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 3,
         .range    = { 50.0f, 58.0f, 66.0f },
-        .cooldown = { 10.0f, 9.0f, 8.0f },
+        .cooldown = { 7.0f, 6.0f, 5.0f },
         .values = {
             { [AV_MM_DAMAGE]=0.30f, [AV_MM_STUN_DUR]=1.5f, [AV_MM_PROJ_SPEED]=60.0f },
             { [AV_MM_DAMAGE]=0.40f, [AV_MM_STUN_DUR]=1.75f,[AV_MM_PROJ_SPEED]=60.0f },
@@ -121,7 +159,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "DG", .color = { 160, 120, 60, 255 },
         .targetType = TARGET_NONE, .isPassive = true, .goldCost = 4,
         .range    = { 0 },
-        .cooldown = { 30.0f, 25.0f, 20.0f },
+        .cooldown = { 22.0f, 18.0f, 14.0f },
         .values = {
             { [AV_DIG_HP_THRESH]=0.25f, [AV_DIG_HEAL_DUR]=4.0f },
             { [AV_DIG_HP_THRESH]=0.25f, [AV_DIG_HEAL_DUR]=3.5f },
@@ -133,7 +171,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "VC", .color = { 60, 180, 180, 255 },
         .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 5,
         .range    = { 40.0f, 48.0f, 56.0f },
-        .cooldown = { 22.0f, 18.0f, 14.0f },
+        .cooldown = { 16.0f, 13.0f, 10.0f },
         .values = {
             { [AV_VAC_RADIUS]=30.0f, [AV_VAC_STUN_DUR]=1.0f, [AV_VAC_PULL_DUR]=0.5f },
             { [AV_VAC_RADIUS]=38.0f, [AV_VAC_STUN_DUR]=1.5f, [AV_VAC_PULL_DUR]=0.5f },
@@ -145,7 +183,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "CF", .color = { 80, 140, 255, 255 },
         .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 5,
         .range    = { 50.0f, 58.0f, 66.0f },
-        .cooldown = { 20.0f, 17.0f, 14.0f },
+        .cooldown = { 14.0f, 12.0f, 10.0f },
         .values = {
             { [AV_CF_DAMAGE]=100.0f, [AV_CF_BOUNCES]=5.0f, [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f },
             { [AV_CF_DAMAGE]=150.0f, [AV_CF_BOUNCES]=7.0f, [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f },
@@ -157,7 +195,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "BR", .color = { 220, 40, 40, 255 },
         .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
         .range    = { 0 },
-        .cooldown = { 18.0f, 15.0f, 12.0f },
+        .cooldown = { 12.0f, 10.0f, 8.0f },
         .values = {
             { [AV_BR_LIFESTEAL]=0.20f, [AV_BR_DURATION]=5.0f },
             { [AV_BR_LIFESTEAL]=0.35f, [AV_BR_DURATION]=6.0f },
@@ -169,7 +207,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "EQ", .color = { 180, 120, 40, 255 },
         .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 5,
         .range    = { 30.0f, 38.0f, 46.0f },
-        .cooldown = { 20.0f, 17.0f, 14.0f },
+        .cooldown = { 14.0f, 12.0f, 10.0f },
         .values = {
             { [AV_EQ_DAMAGE]=3.0f, [AV_EQ_RADIUS]=25.0f },
             { [AV_EQ_DAMAGE]=5.0f, [AV_EQ_RADIUS]=32.0f },
@@ -181,7 +219,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "SP", .color = { 200, 240, 255, 255 },
         .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
         .range    = { 0 },
-        .cooldown = { 22.0f, 18.0f, 14.0f },
+        .cooldown = { 14.0f, 12.0f, 10.0f },
         .values = {
             { [AV_SP_DURATION]=4.0f },
             { [AV_SP_DURATION]=5.0f },
@@ -193,7 +231,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "CA", .color = { 140, 140, 160, 255 },
         .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
         .range    = { 0 },
-        .cooldown = { 20.0f, 17.0f, 14.0f },
+        .cooldown = { 14.0f, 12.0f, 10.0f },
         .values = {
             { [AV_CA_ARMOR]=1.0f, [AV_CA_STUN_CHANCE]=0.15f, [AV_CA_STUN_DUR]=0.8f, [AV_CA_DURATION]=6.0f },
             { [AV_CA_ARMOR]=1.5f, [AV_CA_STUN_CHANCE]=0.25f, [AV_CA_STUN_DUR]=1.0f, [AV_CA_DURATION]=7.0f },
@@ -205,7 +243,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "SG", .color = { 160, 80, 200, 255 },
         .targetType = TARGET_NONE, .isPassive = false, .goldCost = 5,
         .range    = { 0 },
-        .cooldown = { 24.0f, 20.0f, 16.0f },
+        .cooldown = { 16.0f, 14.0f, 12.0f },
         .values = {
             { [AV_SG_GAZE_THRESH]=2.0f, [AV_SG_STUN_DUR]=1.5f, [AV_SG_DURATION]=6.0f, [AV_SG_CONE_ANGLE]=45.0f },
             { [AV_SG_GAZE_THRESH]=1.6f, [AV_SG_STUN_DUR]=2.0f, [AV_SG_DURATION]=7.0f, [AV_SG_CONE_ANGLE]=45.0f },
@@ -217,7 +255,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "SU", .color = { 180, 40, 80, 255 },
         .targetType = TARGET_NONE, .isPassive = true, .goldCost = 3,
         .range    = { 0 },
-        .cooldown = { 30.0f, 25.0f, 20.0f },
+        .cooldown = { 22.0f, 18.0f, 14.0f },
         .values = {
             { [AV_SU_HP_THRESH]=0.25f },
             { [AV_SU_HP_THRESH]=0.30f },
@@ -229,11 +267,83 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "FI", .color = { 120, 110, 100, 255 },
         .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 5,
         .range    = { 70.0f, 80.0f, 90.0f },
-        .cooldown = { 22.0f, 18.0f, 14.0f },
+        .cooldown = { 14.0f, 12.0f, 10.0f },
         .values = {
             { [AV_FI_LENGTH]=45.0f, [AV_FI_WIDTH]=8.0f, [AV_FI_DURATION]=4.0f, [AV_FI_DAMAGE]=2.0f, [AV_FI_RANGE]=70.0f },
             { [AV_FI_LENGTH]=55.0f, [AV_FI_WIDTH]=8.0f, [AV_FI_DURATION]=5.0f, [AV_FI_DAMAGE]=3.5f, [AV_FI_RANGE]=80.0f },
             { [AV_FI_LENGTH]=65.0f, [AV_FI_WIDTH]=8.0f, [AV_FI_DURATION]=6.0f, [AV_FI_DAMAGE]=5.0f, [AV_FI_RANGE]=90.0f },
+        },
+    },
+    [ABILITY_VLAD_AURA] = {
+        .name = "Vlad's Aura", .description = "Grants lifesteal to allies",
+        .abbrev = "VA", .color = { 180, 30, 30, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .range    = { 0 },
+        .cooldown = { 14.0f, 12.0f, 10.0f },
+        .values = {
+            { [AV_VA_LIFESTEAL]=0.15f, [AV_VA_DURATION]=6.0f, [AV_VA_RADIUS]=0.0f },
+            { [AV_VA_LIFESTEAL]=0.25f, [AV_VA_DURATION]=7.0f, [AV_VA_RADIUS]=0.0f },
+            { [AV_VA_LIFESTEAL]=0.35f, [AV_VA_DURATION]=8.0f, [AV_VA_RADIUS]=0.0f },
+        },
+    },
+    [ABILITY_MAELSTROM] = {
+        .name = "Maelstrom", .description = "Attacks proc chain lightning",
+        .abbrev = "ML", .color = { 255, 230, 50, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .range    = { 0 },
+        .cooldown = { 12.0f, 10.0f, 8.0f },
+        .values = {
+            { [AV_ML_PROC_CHANCE]=0.25f, [AV_ML_DAMAGE]=40.0f, [AV_ML_BOUNCES]=3.0f, [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=7.0f, [AV_ML_BOUNCE_RANGE]=40.0f },
+            { [AV_ML_PROC_CHANCE]=0.30f, [AV_ML_DAMAGE]=60.0f, [AV_ML_BOUNCES]=4.0f, [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=8.0f, [AV_ML_BOUNCE_RANGE]=40.0f },
+            { [AV_ML_PROC_CHANCE]=0.40f, [AV_ML_DAMAGE]=80.0f, [AV_ML_BOUNCES]=5.0f, [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=9.0f, [AV_ML_BOUNCE_RANGE]=40.0f },
+        },
+    },
+    [ABILITY_SWAP] = {
+        .name = "Swap Me", .description = "Swap pos with furthest enemy + shield",
+        .abbrev = "SW", .color = { 200, 100, 255, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 5,
+        .range    = { 0 },
+        .cooldown = { 18.0f, 15.0f, 12.0f },
+        .values = {
+            { [AV_SW_SHIELD]=10.0f, [AV_SW_SHIELD_DUR]=4.0f },
+            { [AV_SW_SHIELD]=15.0f, [AV_SW_SHIELD_DUR]=5.0f },
+            { [AV_SW_SHIELD]=20.0f, [AV_SW_SHIELD_DUR]=6.0f },
+        },
+    },
+    [ABILITY_APHOTIC_SHIELD] = {
+        .name = "Aphotic Shield", .description = "Shield ally + purge debuffs",
+        .abbrev = "AS", .color = { 80, 160, 255, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .range    = { 0 },
+        .cooldown = { 14.0f, 12.0f, 10.0f },
+        .values = {
+            { [AV_AS_SHIELD]=8.0f,  [AV_AS_DURATION]=5.0f },
+            { [AV_AS_SHIELD]=12.0f, [AV_AS_DURATION]=6.0f },
+            { [AV_AS_SHIELD]=16.0f, [AV_AS_DURATION]=7.0f },
+        },
+    },
+    [ABILITY_HOOK] = {
+        .name = "Dendi Hook", .description = "Hook furthest enemy, dmg by distance",
+        .abbrev = "HK", .color = { 200, 60, 60, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 5,
+        .range    = { 0 },
+        .cooldown = { 12.0f, 10.0f, 8.0f },
+        .values = {
+            { [AV_HK_DMG_PER_DIST]=0.08f, [AV_HK_SPEED]=45.0f, [AV_HK_RANGE]=80.0f },
+            { [AV_HK_DMG_PER_DIST]=0.12f, [AV_HK_SPEED]=45.0f, [AV_HK_RANGE]=90.0f },
+            { [AV_HK_DMG_PER_DIST]=0.16f, [AV_HK_SPEED]=45.0f, [AV_HK_RANGE]=100.0f },
+        },
+    },
+    [ABILITY_PRIMAL_CHARGE] = {
+        .name = "Primal Charge", .description = "Charge at furthest enemy, AoE impact",
+        .abbrev = "PC", .color = { 255, 140, 0, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 5,
+        .range    = { 0 },
+        .cooldown = { 16.0f, 14.0f, 12.0f },
+        .values = {
+            { [AV_PC_DAMAGE]=5.0f,  [AV_PC_KNOCKBACK]=15.0f, [AV_PC_AOE_RADIUS]=15.0f, [AV_PC_CHARGE_SPEED]=80.0f },
+            { [AV_PC_DAMAGE]=8.0f,  [AV_PC_KNOCKBACK]=20.0f, [AV_PC_AOE_RADIUS]=15.0f, [AV_PC_CHARGE_SPEED]=80.0f },
+            { [AV_PC_DAMAGE]=12.0f, [AV_PC_KNOCKBACK]=25.0f, [AV_PC_AOE_RADIUS]=15.0f, [AV_PC_CHARGE_SPEED]=80.0f },
         },
     },
 };

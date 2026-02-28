@@ -25,6 +25,10 @@ void SpawnProjectile(Projectile projectiles[], ProjectileType type,
 void SpawnChainFrostProjectile(Projectile projectiles[],
     Vector3 startPos, int targetIndex, int sourceIndex, Team sourceTeam, int level,
     float speed, float damage, int bounces, float bounceRange);
+void SpawnHookProjectile(Projectile projectiles[], Vector3 startPos, int targetIndex,
+    int sourceIndex, Team sourceTeam, int level, float speed, float dmgPerDist, float range);
+void SpawnMaelstromProjectile(Projectile projectiles[], Vector3 startPos, int targetIndex,
+    int sourceIndex, Team sourceTeam, int level, float speed, float damage, int bounces, float bounceRange);
 int FindChainFrostTarget(Unit units[], int unitCount, Vector3 fromPos,
     Team sourceTeam, int excludeIndex, float range);
 void ClearAllProjectiles(Projectile projectiles[]);
@@ -74,6 +78,12 @@ bool CastSpellProtect(CombatState *state, int caster, AbilitySlot *slot);
 bool CastCraggyArmor(CombatState *state, int caster, AbilitySlot *slot);
 bool CastStoneGaze(CombatState *state, int caster, AbilitySlot *slot);
 bool CastFissure(CombatState *state, int caster, AbilitySlot *slot, int target);
+bool CastVladAura(CombatState *state, int caster, AbilitySlot *slot);
+bool CastMaelstrom(CombatState *state, int caster, AbilitySlot *slot);
+bool CastSwap(CombatState *state, int caster, AbilitySlot *slot);
+bool CastAphoticShield(CombatState *state, int caster, AbilitySlot *slot);
+bool CastHook(CombatState *state, int caster, AbilitySlot *slot);
+bool CastPrimalCharge(CombatState *state, int caster, AbilitySlot *slot);
 
 // Passive ability checks
 void CheckPassiveSunder(CombatState *state, int unitIndex);
@@ -83,6 +93,8 @@ void CheckCraggyArmorRetaliation(CombatState *state, int attacker, int defender)
 
 // Shared combat helpers
 int FindHighestHPAlly(Unit units[], int unitCount, int selfIndex);
+int FindFurthestEnemy(Unit units[], int unitCount, int selfIndex);
+int FindLowestHPAlly(Unit units[], int unitCount, int selfIndex);
 
 // Wave spawning helpers
 Vector3 FindValidSpawnPos(Unit units[], int unitCount, float minDist);

@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra
 LDFLAGS = -lraylib -lm -lGL -lpthread -ldl
 
-SRC = main.c helpers.c leaderboard.c combat_sim.c net_common.c net_client.c
+SRC = main.c helpers.c abilities_cast.c leaderboard.c combat_sim.c net_common.c net_client.c
 OBJ = $(SRC:.c=.o)
 TARGET = game
 

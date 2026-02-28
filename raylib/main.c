@@ -59,6 +59,7 @@ int main(void)
     unitTypes[0].name = "Mushroom";
     unitTypes[0].modelPath = "MUSHROOMmixamotest.obj";
     unitTypes[0].scale = 0.07f;
+    unitTypes[0].yOffset = 1.5f;
     unitTypes[1].name = "Goblin";
     unitTypes[1].modelPath = "assets/goblin/animations/PluginGoblinWalk.glb";
     unitTypes[1].scale = 9.0f;
@@ -1241,7 +1242,10 @@ int main(void)
                 }
                 if (modifiers[m].duration > 0) {
                     modifiers[m].duration -= dt;
-                    if (modifiers[m].duration <= 0) { modifiers[m].active = false; continue; }
+                    if (modifiers[m].duration <= 0) {
+                        if (modifiers[m].type == MOD_SHIELD) units[ui].shieldHP = 0;
+                        modifiers[m].active = false; continue;
+                    }
                 }
                 // Per-tick effects
                 if (modifiers[m].type == MOD_DIG_HEAL) {
@@ -1289,7 +1293,7 @@ int main(void)
                 int ti = projectiles[p].targetIndex;
                 // Target gone?
                 if (ti < 0 || ti >= unitCount || !units[ti].active) {
-                    if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
+                    if ((projectiles[p].type == PROJ_CHAIN_FROST || projectiles[p].type == PROJ_MAELSTROM) && projectiles[p].bouncesRemaining > 0) {
                         int next = FindChainFrostTarget(units, unitCount, projectiles[p].position,
                             projectiles[p].sourceTeam, projectiles[p].lastHitUnit, projectiles[p].bounceRange);
                         if (next >= 0) { projectiles[p].targetIndex = next; continue; }
@@ -1305,12 +1309,60 @@ int main(void)
                 float pstep = projectiles[p].speed * dt;
 
                 if (pdist <= pstep) {
-                    // HIT
+                    // HIT — Hook: pull target to caster, damage by distance
+                    if (projectiles[p].type == PROJ_HOOK) {
+                        if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
+                            float hookDist = DistXZ(units[ti].position, units[projectiles[p].sourceIndex].position);
+                            float hitDmg = hookDist * projectiles[p].damage;
+                            if (units[ti].shieldHP > 0) {
+                                if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
+                                else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
+                            }
+                            units[ti].currentHealth -= hitDmg;
+                            // Teleport target to caster
+                            units[ti].position.x = units[projectiles[p].sourceIndex].position.x;
+                            units[ti].position.z = units[projectiles[p].sourceIndex].position.z;
+                            TriggerShake(&shake, 6.0f, 0.3f);
+                            if (units[ti].currentHealth <= 0) units[ti].active = false;
+                        }
+                        projectiles[p].active = false;
+                    }
+                    // HIT — Maelstrom: bounce like chain frost
+                    else if (projectiles[p].type == PROJ_MAELSTROM) {
+                        if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
+                            float hitDmg = projectiles[p].damage;
+                            if (units[ti].shieldHP > 0) {
+                                if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
+                                else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
+                            }
+                            units[ti].currentHealth -= hitDmg;
+                            if (units[ti].currentHealth <= 0) units[ti].active = false;
+                        }
+                        if (projectiles[p].bouncesRemaining > 0) {
+                            projectiles[p].bouncesRemaining--;
+                            projectiles[p].lastHitUnit = ti;
+                            projectiles[p].position = units[ti].position;
+                            projectiles[p].position.y += 3.0f;
+                            int next = FindChainFrostTarget(units, unitCount, units[ti].position,
+                                projectiles[p].sourceTeam, ti, projectiles[p].bounceRange);
+                            if (next >= 0) projectiles[p].targetIndex = next;
+                            else projectiles[p].active = false;
+                        } else {
+                            projectiles[p].active = false;
+                        }
+                    }
+                    // HIT — normal (Magic Missile / Chain Frost)
+                    else {
                     if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
                         float hitDmg = projectiles[p].damage;
                         // Magic Missile: damage is a fraction of target max HP
                         if (projectiles[p].type == PROJ_MAGIC_MISSILE)
                             hitDmg *= UNIT_STATS[units[ti].typeIndex].health;
+                        // Shield absorption
+                        if (units[ti].shieldHP > 0) {
+                            if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
+                            else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
+                        }
                         units[ti].currentHealth -= hitDmg;
                         if (projectiles[p].stunDuration > 0) {
                             AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
@@ -1331,6 +1383,7 @@ int main(void)
                     } else {
                         projectiles[p].active = false;
                     }
+                    } // end else (normal projectile hit)
                 } else {
                     projectiles[p].position.x += (pdx / pdist) * pstep;
                     projectiles[p].position.y += (pdy / pdist) * pstep;
@@ -1409,8 +1462,13 @@ int main(void)
                         units[i].facingAngle += (diff > 0 ? 1.0f : -1.0f) * turnSpeed * dt;
                 }
 
+                // Tick ability cast delay
+                if (units[i].abilityCastDelay > 0)
+                    units[i].abilityCastDelay -= dt;
+
                 // Active ability casting — one per frame, clockwise rotation
                 bool castThisFrame = false;
+                if (units[i].abilityCastDelay <= 0)
                 for (int attempt = 0; attempt < MAX_ABILITIES_PER_UNIT && !castThisFrame; attempt++) {
                     int slotIdx = ACTIVATION_ORDER[units[i].nextAbilitySlot];
                     units[i].nextAbilitySlot = (units[i].nextAbilitySlot + 1) % MAX_ABILITIES_PER_UNIT;
@@ -1439,11 +1497,79 @@ int main(void)
                     case ABILITY_CRAGGY_ARMOR:  castThisFrame = CastCraggyArmor(&combatState, i, slot); break;
                     case ABILITY_STONE_GAZE:    castThisFrame = CastStoneGaze(&combatState, i, slot); break;
                     case ABILITY_FISSURE:       castThisFrame = CastFissure(&combatState, i, slot, target); break;
+                    case ABILITY_VLAD_AURA:     castThisFrame = CastVladAura(&combatState, i, slot); break;
+                    case ABILITY_MAELSTROM:     castThisFrame = CastMaelstrom(&combatState, i, slot); break;
+                    case ABILITY_SWAP:          castThisFrame = CastSwap(&combatState, i, slot); break;
+                    case ABILITY_APHOTIC_SHIELD:castThisFrame = CastAphoticShield(&combatState, i, slot); break;
+                    case ABILITY_HOOK:          castThisFrame = CastHook(&combatState, i, slot); break;
+                    case ABILITY_PRIMAL_CHARGE: castThisFrame = CastPrimalCharge(&combatState, i, slot); break;
                     default: break;
                     }
                     if (castThisFrame) {
                         SpawnFloatingText(floatingTexts, units[i].position,
                             def->name, def->color, 1.0f);
+                        units[i].abilityCastDelay = 0.75f;
+                    }
+                }
+
+                // Primal Charge movement — overrides normal movement
+                if (units[i].chargeTarget >= 0) {
+                    int ct = units[i].chargeTarget;
+                    if (ct >= unitCount || !units[ct].active) {
+                        units[i].chargeTarget = -1;
+                    } else {
+                        float chargeDist = DistXZ(units[i].position, units[ct].position);
+                        float chargeSpeed = GetModifierValue(modifiers, i, MOD_CHARGING);
+                        if (chargeSpeed <= 0) chargeSpeed = 80.0f;
+                        if (chargeDist <= ATTACK_RANGE) {
+                            // IMPACT — AoE damage + knockback
+                            int chargeLvl = 0;
+                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                if (units[i].abilities[a].abilityId == ABILITY_PRIMAL_CHARGE) {
+                                    chargeLvl = units[i].abilities[a].level; break;
+                                }
+                            }
+                            const AbilityDef *pcDef = &ABILITY_DEFS[ABILITY_PRIMAL_CHARGE];
+                            float pcDmg = pcDef->values[chargeLvl][AV_PC_DAMAGE];
+                            float pcKnock = pcDef->values[chargeLvl][AV_PC_KNOCKBACK];
+                            float pcRadius = pcDef->values[chargeLvl][AV_PC_AOE_RADIUS];
+                            for (int j = 0; j < unitCount; j++) {
+                                if (!units[j].active || units[j].team == units[i].team) continue;
+                                if (UnitHasModifier(modifiers, j, MOD_INVULNERABLE)) continue;
+                                float dd = DistXZ(units[ct].position, units[j].position);
+                                if (dd <= pcRadius) {
+                                    float dmgHit = pcDmg;
+                                    if (units[j].shieldHP > 0) {
+                                        if (dmgHit <= units[j].shieldHP) { units[j].shieldHP -= dmgHit; dmgHit = 0; }
+                                        else { dmgHit -= units[j].shieldHP; units[j].shieldHP = 0; }
+                                    }
+                                    units[j].currentHealth -= dmgHit;
+                                    if (units[j].currentHealth <= 0) units[j].active = false;
+                                    // Knockback
+                                    float kx = units[j].position.x - units[ct].position.x;
+                                    float kz = units[j].position.z - units[ct].position.z;
+                                    float klen = sqrtf(kx*kx + kz*kz);
+                                    if (klen > 0.001f) {
+                                        units[j].position.x += (kx/klen) * pcKnock;
+                                        units[j].position.z += (kz/klen) * pcKnock;
+                                    }
+                                }
+                            }
+                            TriggerShake(&shake, 8.0f, 0.4f);
+                            units[i].chargeTarget = -1;
+                            // Remove charging modifier
+                            for (int m = 0; m < MAX_MODIFIERS; m++) {
+                                if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_CHARGING)
+                                    modifiers[m].active = false;
+                            }
+                        } else {
+                            float cdx = units[ct].position.x - units[i].position.x;
+                            float cdz = units[ct].position.z - units[i].position.z;
+                            float clen = sqrtf(cdx*cdx + cdz*cdz);
+                            units[i].position.x += (cdx/clen) * chargeSpeed * dt;
+                            units[i].position.z += (cdz/clen) * chargeSpeed * dt;
+                        }
+                        continue; // skip normal movement while charging
                     }
                 }
 
@@ -1494,6 +1620,11 @@ int main(void)
                             float armor = GetModifierValue(modifiers, target, MOD_ARMOR);
                             dmg -= armor;
                             if (dmg < 0) dmg = 0;
+                            // Shield absorption
+                            if (units[target].shieldHP > 0) {
+                                if (dmg <= units[target].shieldHP) { units[target].shieldHP -= dmg; dmg = 0; }
+                                else { dmg -= units[target].shieldHP; units[target].shieldHP = 0; }
+                            }
                             units[target].currentHealth -= dmg;
                             // Lifesteal
                             float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
@@ -1505,6 +1636,27 @@ int main(void)
                             }
                             // Craggy Armor retaliation — chance to stun attacker
                             CheckCraggyArmorRetaliation(&combatState, i, target);
+                            // Maelstrom on-hit proc
+                            if (UnitHasModifier(modifiers, i, MOD_MAELSTROM)) {
+                                float procChance = GetModifierValue(modifiers, i, MOD_MAELSTROM);
+                                float roll = (float)GetRandomValue(0, 100) / 100.0f;
+                                if (roll < procChance) {
+                                    // Find maelstrom ability level
+                                    int mlLvl = 0;
+                                    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                        if (units[i].abilities[a].abilityId == ABILITY_MAELSTROM) {
+                                            mlLvl = units[i].abilities[a].level; break;
+                                        }
+                                    }
+                                    const AbilityDef *mlDef = &ABILITY_DEFS[ABILITY_MAELSTROM];
+                                    SpawnMaelstromProjectile(projectiles,
+                                        units[target].position, target, i, units[i].team, mlLvl,
+                                        mlDef->values[mlLvl][AV_ML_SPEED],
+                                        mlDef->values[mlLvl][AV_ML_DAMAGE],
+                                        (int)mlDef->values[mlLvl][AV_ML_BOUNCES],
+                                        mlDef->values[mlLvl][AV_ML_BOUNCE_RANGE]);
+                                }
+                            }
                             if (units[target].currentHealth <= 0) units[target].active = false;
                         }
                         units[i].attackCooldown = stats->attackSpeed;
@@ -1984,7 +2136,7 @@ int main(void)
 
                         Vector3 pos = {
                             cellX - rxo,
-                            wobbleY - tileCenters[vi].y * tileScale,
+                            wobbleY - tileCenters[vi].y * tileScale - 0.5f,
                             cellZ - rzo,
                         };
                         // Apply tilt via rlgl matrix if wobbling
@@ -2022,7 +2174,9 @@ int main(void)
                     }
                 }
                 float s = type->scale * units[i].scaleOverride;
-                DrawModelEx(type->model, units[i].position, (Vector3){0,1,0}, units[i].facingAngle,
+                Vector3 drawPos = units[i].position;
+                drawPos.y += type->yOffset;
+                DrawModelEx(type->model, drawPos, (Vector3){0,1,0}, units[i].facingAngle,
                     (Vector3){s, s, s}, tint);
 
                 if (units[i].selected)
@@ -2065,6 +2219,7 @@ int main(void)
                 const ModifierType ringOrder[] = {
                     MOD_STUN, MOD_SPELL_PROTECT, MOD_CRAGGY_ARMOR, MOD_STONE_GAZE,
                     MOD_INVULNERABLE, MOD_LIFESTEAL, MOD_ARMOR, MOD_DIG_HEAL, MOD_SPEED_MULT,
+                    MOD_SHIELD, MOD_MAELSTROM, MOD_VLAD_AURA, MOD_CHARGING,
                 };
                 const Color ringColors[] = {
                     {255,255,0,255},     // STUN - yellow
@@ -2076,6 +2231,10 @@ int main(void)
                     {130,130,130,255},   // ARMOR - gray
                     {139,90,43,255},     // DIG_HEAL - brown
                     {0,228,48,255},      // SPEED_MULT - green
+                    {80,160,255,255},    // SHIELD - blue
+                    {255,230,50,255},    // MAELSTROM - yellow lightning
+                    {180,30,30,255},     // VLAD_AURA - dark red
+                    {255,140,0,255},     // CHARGING - orange
                 };
                 const int ringOrderCount = sizeof(ringOrder) / sizeof(ringOrder[0]);
 
@@ -2177,24 +2336,6 @@ int main(void)
         // Restore camera position after shake
         camera.position = camSaved;
 
-        // --- Floor label: Blue team unit count (projected from 3D floor position) ---
-        if (phase != PHASE_COMBAT)
-        {
-            int blueCount = CountTeamUnits(units, unitCount, TEAM_BLUE);
-            int redCount  = CountTeamUnits(units, unitCount, TEAM_RED);
-
-            // Project a ground-level point to screen for Blue side
-            Vector2 blueFloorPos = GetWorldToScreen((Vector3){ -60.0f, 0.5f, 30.0f }, camera);
-            const char *blueSizeText = TextFormat("BLUE  %d / %d", blueCount, BLUE_TEAM_MAX_SIZE);
-            int bstw = MeasureText(blueSizeText, 28);
-            DrawText(blueSizeText, (int)blueFloorPos.x - bstw/2, (int)blueFloorPos.y, 28, (Color){80,120,220,180});
-
-            // Red side (no cap, just show count)
-            Vector2 redFloorPos = GetWorldToScreen((Vector3){ 60.0f, 0.5f, 30.0f }, camera);
-            const char *redSizeText = TextFormat("RED  %d", redCount);
-            int rstw = MeasureText(redSizeText, 28);
-            DrawText(redSizeText, (int)redFloorPos.x - rstw/2, (int)redFloorPos.y, 28, (Color){220,80,80,180});
-        }
 
         // 2D overlay: labels + health bars
         for (int i = 0; i < unitCount; i++)
@@ -2237,6 +2378,15 @@ int main(void)
             DrawRectangle(bx, by, bw, bh, DARKGRAY);
             Color hpC = (hpRatio > 0.5f) ? GREEN : (hpRatio > 0.25f) ? ORANGE : RED;
             DrawRectangle(bx, by, (int)(bw * hpRatio), bh, hpC);
+            // Shield bar (blue) extending rightward from HP
+            if (units[i].shieldHP > 0) {
+                float shieldRatio = units[i].shieldHP / maxHP;
+                if (shieldRatio > 1) shieldRatio = 1;
+                int shieldW = (int)(bw * shieldRatio);
+                int shieldX = bx + (int)(bw * hpRatio);
+                if (shieldX + shieldW > bx + bw) shieldW = bx + bw - shieldX;
+                DrawRectangle(shieldX, by, shieldW, bh, (Color){80, 160, 255, 200});
+            }
             DrawRectangleLines(bx, by, bw, bh, BLACK);
 
             const char *hpT = TextFormat("%.0f/%.0f", units[i].currentHealth, maxHP);
@@ -2260,6 +2410,10 @@ int main(void)
                     case MOD_SPELL_PROTECT: modLabel = "SPELL SHIELD"; modColor = (Color){200,240,255,255}; break;
                     case MOD_CRAGGY_ARMOR:  modLabel = "CRAGGY";       modColor = (Color){140,140,160,255}; break;
                     case MOD_STONE_GAZE:    modLabel = "STONE GAZE";   modColor = (Color){160,80,200,255};  break;
+                    case MOD_SHIELD:        modLabel = "SHIELD";       modColor = (Color){80,160,255,255};  break;
+                    case MOD_MAELSTROM:     modLabel = "MAELSTROM";    modColor = (Color){255,230,50,255};  break;
+                    case MOD_VLAD_AURA:     modLabel = "VLAD AURA";    modColor = (Color){180,30,30,255};   break;
+                    case MOD_CHARGING:      modLabel = "CHARGING";     modColor = (Color){255,140,0,255};   break;
                 }
                 if (modLabel) {
                     int totalLen = (int)strlen(modLabel);
@@ -2880,6 +3034,31 @@ int main(void)
                 statLines[numStatLines++] = (StatLine){ "Damage", AV_FI_DAMAGE, false };
                 statLines[numStatLines++] = (StatLine){ "Length", AV_FI_LENGTH, false };
                 statLines[numStatLines++] = (StatLine){ "Duration", AV_FI_DURATION, false };
+                break;
+            case ABILITY_VLAD_AURA:
+                statLines[numStatLines++] = (StatLine){ "Lifesteal", AV_VA_LIFESTEAL, true };
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_VA_DURATION, false };
+                break;
+            case ABILITY_MAELSTROM:
+                statLines[numStatLines++] = (StatLine){ "Proc %", AV_ML_PROC_CHANCE, true };
+                statLines[numStatLines++] = (StatLine){ "Damage", AV_ML_DAMAGE, false };
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_ML_DURATION, false };
+                break;
+            case ABILITY_SWAP:
+                statLines[numStatLines++] = (StatLine){ "Shield HP", AV_SW_SHIELD, false };
+                statLines[numStatLines++] = (StatLine){ "Shield Dur", AV_SW_SHIELD_DUR, false };
+                break;
+            case ABILITY_APHOTIC_SHIELD:
+                statLines[numStatLines++] = (StatLine){ "Shield HP", AV_AS_SHIELD, false };
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_AS_DURATION, false };
+                break;
+            case ABILITY_HOOK:
+                statLines[numStatLines++] = (StatLine){ "Dmg/Dist", AV_HK_DMG_PER_DIST, false };
+                statLines[numStatLines++] = (StatLine){ "Range", AV_HK_RANGE, false };
+                break;
+            case ABILITY_PRIMAL_CHARGE:
+                statLines[numStatLines++] = (StatLine){ "Damage", AV_PC_DAMAGE, false };
+                statLines[numStatLines++] = (StatLine){ "Knockback", AV_PC_KNOCKBACK, false };
                 break;
             default: break;
             }

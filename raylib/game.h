@@ -152,6 +152,7 @@ typedef struct {
     int idleAnimCount;              // number of idle animations
     int animIndex[ANIM_COUNT];      // index into respective anim array (-1 = not found)
     bool hasAnimations;
+    float yOffset;          // vertical draw offset (raise/lower model)
 } UnitType;
 
 //------------------------------------------------------------------------------------
@@ -176,6 +177,9 @@ typedef struct {
     float scaleOverride;   // model scale multiplier (1.0 = normal, 2.5 = boss)
     float hpMultiplier;    // max HP multiplier (1.0 = normal)
     float dmgMultiplier;   // attack damage multiplier (1.0 = normal)
+    float shieldHP;        // absorbs damage before HP (blue bar visual)
+    float abilityCastDelay; // 0.75s delay between successive ability casts
+    int   chargeTarget;    // Primal Charge: target unit index (-1 = not charging)
 } Unit;
 
 //------------------------------------------------------------------------------------
