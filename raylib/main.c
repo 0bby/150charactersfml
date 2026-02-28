@@ -55,11 +55,53 @@ int main(void)
     InitAudioDevice();
 
     // Win/loss sounds — pre-split into separate files
-    Sound sfxWin  = LoadSound("sfx/win.wav");
-    Sound sfxLoss = LoadSound("sfx/loss.wav");
+    Sound sfxWin  = LoadSound("sfx/match_win.ogg");
+    Sound sfxLoss = LoadSound("sfx/match_loss.ogg");
     SetSoundVolume(sfxWin,  ENDGAME_SFX_VOL);
     SetSoundVolume(sfxLoss, ENDGAME_SFX_VOL);
     bool lastOutcomeWin = false;
+
+    // Combat SFX
+    Sound sfxMeleeHit        = LoadSound("sfx/cgj_sfx_v1/melee_hit.ogg");
+    Sound sfxProjectileWhoosh= LoadSound("sfx/cgj_sfx_v1/projectile_whoosh.ogg");
+    Sound sfxProjectileHit   = LoadSound("sfx/cgj_sfx_v1/projectile_hit.ogg");
+    Sound sfxMagicHit        = LoadSound("sfx/cgj_sfx_v1/magic_hit.ogg");
+    SetSoundVolume(sfxMeleeHit, 0.6f);
+    SetSoundVolume(sfxProjectileWhoosh, 0.6f);
+    SetSoundVolume(sfxProjectileHit, 0.6f);
+    SetSoundVolume(sfxMagicHit, 0.6f);
+    // Unit voice SFX
+    Sound sfxToadShout   = LoadSound("sfx/cgj_sfx_v1/toad_shout.ogg");
+    Sound sfxToadDie     = LoadSound("sfx/cgj_sfx_v1/toad_die.ogg");
+    Sound sfxGoblinShout = LoadSound("sfx/cgj_sfx_v1/goblin_shout.ogg");
+    Sound sfxGoblinDie   = LoadSound("sfx/cgj_sfx_v1/goblin_die.ogg");
+    SetSoundVolume(sfxToadShout, 0.5f);
+    SetSoundVolume(sfxToadDie, 0.5f);
+    SetSoundVolume(sfxGoblinShout, 0.5f);
+    SetSoundVolume(sfxGoblinDie, 0.5f);
+    // Spawn SFX
+    Sound sfxCharacterFall = LoadSound("sfx/cgj_sfx_v1/character_fall.ogg");
+    Sound sfxCharacterLand = LoadSound("sfx/cgj_sfx_v1/character_land.ogg");
+    Sound sfxNewCharacter  = LoadSound("sfx/cgj_sfx_v1/new_character.ogg");
+    SetSoundVolume(sfxCharacterFall, 0.7f);
+    SetSoundVolume(sfxCharacterLand, 0.7f);
+    SetSoundVolume(sfxNewCharacter, 0.7f);
+    // UI SFX
+    Sound sfxUiClick  = LoadSound("sfx/cgj_sfx_v1/ui_click.ogg");
+    Sound sfxUiBuy    = LoadSound("sfx/cgj_sfx_v1/ui_buy.ogg");
+    Sound sfxUiDrag   = LoadSound("sfx/cgj_sfx_v1/ui_drag.ogg");
+    Sound sfxUiDrop   = LoadSound("sfx/cgj_sfx_v1/ui_drop.ogg");
+    Sound sfxUiReroll = LoadSound("sfx/cgj_sfx_v1/ui_reroll.ogg");
+    SetSoundVolume(sfxUiClick, 0.4f);
+    SetSoundVolume(sfxUiBuy, 0.4f);
+    SetSoundVolume(sfxUiDrag, 0.4f);
+    SetSoundVolume(sfxUiDrop, 0.4f);
+    SetSoundVolume(sfxUiReroll, 0.4f);
+
+    // Background music
+    Music bgm = LoadMusicStream("sfx/bgm_v1.ogg");
+    SetMusicVolume(bgm, 0.35f);
+    PlayMusicStream(bgm);
 
     // Camera presets — prep (top-down auto-chess) vs combat (diagonal MOBA) vs plaza (cinematic)
     const float prepHeight = 200.0f, prepDistance = 150.0f, prepFOV = 48.0f, prepX = 0.0f;
@@ -411,6 +453,7 @@ int main(void)
     while (!WindowShouldClose())
     {
         float dt = GetFrameTime();
+        UpdateMusicStream(bgm);
         GamePhase prevPhase = phase;
         UpdateShake(&shake, dt);
         if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
@@ -465,8 +508,12 @@ int main(void)
             if (si < 0 || si >= unitCount || !units[si].active) {
                 statueSpawn.phase = SSPAWN_INACTIVE;
             } else {
+                int phaseBefore = statueSpawn.phase;
                 UpdateStatueSpawn(&statueSpawn, particles, &shake, units[si].position, dt);
+                if (phaseBefore != SSPAWN_FALLING && statueSpawn.phase == SSPAWN_FALLING)
+                    PlaySound(sfxCharacterFall);
                 if (statueSpawn.phase == SSPAWN_DONE) {
+                    PlaySound(sfxCharacterLand);
                     // Trigger tile wobble from impact point
                     {
                         float impX = units[si].position.x;
@@ -658,6 +705,7 @@ int main(void)
                     // CREATE LOBBY button
                     Rectangle createBtn = { (float)(panelX + 50), (float)(panelY + 120), (float)(panelW - 100), 40 };
                     if (CheckCollisionPointRec(mouse, createBtn)) {
+                        PlaySound(sfxUiClick);
                         menuError[0] = '\0';
                         isMultiplayer = true;
                         playerReady = false;
@@ -673,6 +721,7 @@ int main(void)
                     // JOIN LOBBY button
                     Rectangle joinBtn = { (float)(panelX + 50), (float)(panelY + 180), (float)(panelW - 100), 40 };
                     if (joinCodeLen == LOBBY_CODE_LEN && CheckCollisionPointRec(mouse, joinBtn)) {
+                        PlaySound(sfxUiClick);
                         menuError[0] = '\0';
                         isMultiplayer = true;
                         playerReady = false;
@@ -687,9 +736,11 @@ int main(void)
                 } else {
                     // 3D object clicks
                     if (plazaHoverObject == 1) {
+                        PlaySound(sfxUiClick);
                         showLeaderboard = true;
                         leaderboardScroll = 0;
                     } else if (plazaHoverObject == 2) {
+                        PlaySound(sfxUiClick);
                         showMultiplayerPanel = true;
                     }
                 }
@@ -979,7 +1030,7 @@ int main(void)
                     if (units[i].position.z < -gridLimit) units[i].position.z = -gridLimit;
                     if (units[i].position.z >  gridLimit) units[i].position.z =  gridLimit;
                 }
-                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) units[i].dragging = false;
+                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) { PlaySound(sfxUiDrop); units[i].dragging = false; }
             }
 
             // Clicks (blocked during intro)
@@ -1057,6 +1108,7 @@ int main(void)
                 // Play / Ready button
                 if (CheckCollisionPointRec(mouse, playBtn) && unitCount > 0)
                 {
+                    PlaySound(sfxUiClick);
                     if (isMultiplayer) {
                         // Multiplayer: send READY with army
                         if (!playerReady) {
@@ -1114,6 +1166,7 @@ int main(void)
                         if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded)
                         {
                             if (SpawnUnit(units, &unitCount, i, TEAM_BLUE)) {
+                                PlaySound(sfxNewCharacter);
                                 intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                     .typeIndex = i, .unitIndex = unitCount - 1, .animFrame = 0 };
                             }
@@ -1139,6 +1192,7 @@ int main(void)
                     int shopY = hudTop + 2;
                     Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
                     if (CheckCollisionPointRec(mouse, rollBtn)) {
+                        PlaySound(sfxUiReroll);
                         if (isMultiplayer) {
                             net_client_send_roll(&netClient);
                         } else {
@@ -1158,6 +1212,7 @@ int main(void)
                         int scx = shopCardsX + s * (shopCardW + shopCardGap);
                         Rectangle r = { (float)scx, (float)(shopY + 8), (float)shopCardW, (float)shopCardH };
                         if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
+                            PlaySound(sfxUiBuy);
                             if (isMultiplayer) {
                                 net_client_send_buy(&netClient, s);
                             } else {
@@ -1181,6 +1236,7 @@ int main(void)
                         int iy = invStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
                         Rectangle r = { (float)ix, (float)iy, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
                         if (CheckCollisionPointRec(mouse, r) && inventory[inv].abilityId >= 0) {
+                            PlaySound(sfxUiDrag);
                             dragState = (DragState){ .dragging = true, .sourceType = 0,
                                 .sourceIndex = inv, .sourceUnitIndex = -1,
                                 .abilityId = inventory[inv].abilityId, .level = inventory[inv].level };
@@ -1210,6 +1266,7 @@ int main(void)
                             Rectangle r = { (float)ax, (float)ay, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
                             int ui = tmpBlue[h];
                             if (CheckCollisionPointRec(mouse, r) && units[ui].abilities[a].abilityId >= 0) {
+                                PlaySound(sfxUiDrag);
                                 dragState = (DragState){ .dragging = true, .sourceType = 1,
                                     .sourceIndex = a, .sourceUnitIndex = ui,
                                     .abilityId = units[ui].abilities[a].abilityId,
@@ -1251,6 +1308,7 @@ int main(void)
                         BoundingBox sb = GetUnitBounds(&units[i], &unitTypes[units[i].typeIndex]);
                         if (GetRayCollisionBox(GetScreenToWorldRay(mouse, camera), sb).hit)
                         {
+                            PlaySound(sfxUiDrag);
                             units[i].selected = true;
                             units[i].dragging = true;
                             hitAny = true;
@@ -1265,6 +1323,7 @@ int main(void)
             // --- Drag-and-drop release handling ---
             if (dragState.dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE)
             {
+                PlaySound(sfxUiDrop);
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
@@ -1427,7 +1486,8 @@ int main(void)
                 // Charge-up phase: stay in place and grow
                 if (projectiles[p].chargeTimer > 0) {
                     projectiles[p].chargeTimer -= dt;
-                    continue;
+                    if (projectiles[p].chargeTimer > 0) continue;
+                    PlaySound(sfxProjectileWhoosh);
                 }
                 int ti = projectiles[p].targetIndex;
                 // Target gone?
@@ -1448,6 +1508,7 @@ int main(void)
                 float pstep = projectiles[p].speed * dt;
 
                 if (pdist <= pstep) {
+                    PlaySound(sfxProjectileHit);
                     // Impact explosion particles + tile shake
                     {
                         Vector3 impactPos = projectiles[p].position;
@@ -1500,7 +1561,7 @@ int main(void)
                             units[ti].position.x = units[projectiles[p].sourceIndex].position.x;
                             units[ti].position.z = units[projectiles[p].sourceIndex].position.z;
                             TriggerShake(&shake, 6.0f, 0.3f);
-                            if (units[ti].currentHealth <= 0) units[ti].active = false;
+                            if (units[ti].currentHealth <= 0) { PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[ti].active = false; }
                         }
                         projectiles[p].active = false;
                     }
@@ -1514,7 +1575,7 @@ int main(void)
                             }
                             units[ti].currentHealth -= hitDmg;
                             units[ti].hitFlash = HIT_FLASH_DURATION;
-                            if (units[ti].currentHealth <= 0) units[ti].active = false;
+                            if (units[ti].currentHealth <= 0) { PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[ti].active = false; }
                         }
                         if (projectiles[p].bouncesRemaining > 0) {
                             projectiles[p].bouncesRemaining--;
@@ -1547,7 +1608,7 @@ int main(void)
                             AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
                             TriggerShake(&shake, 5.0f, 0.25f);
                         }
-                        if (units[ti].currentHealth <= 0) units[ti].active = false;
+                        if (units[ti].currentHealth <= 0) { PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[ti].active = false; }
                     }
                     // Chain Frost bounce
                     if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
@@ -1720,6 +1781,8 @@ int main(void)
                     default: break;
                     }
                     if (castThisFrame) {
+                        PlaySound(sfxMagicHit);
+                        PlaySound(units[i].typeIndex == 0 ? sfxToadShout : sfxGoblinShout);
                         SpawnFloatingText(floatingTexts, units[i].position,
                             def->name, def->color, 1.0f);
                         units[i].abilityCastDelay = 0.75f;
@@ -1764,7 +1827,7 @@ int main(void)
                                     }
                                     units[j].currentHealth -= dmgHit;
                                     units[j].hitFlash = HIT_FLASH_DURATION;
-                                    if (units[j].currentHealth <= 0) units[j].active = false;
+                                    if (units[j].currentHealth <= 0) { PlaySound(units[j].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[j].active = false; }
                                     // Knockback
                                     float kx = units[j].position.x - units[ct].position.x;
                                     float kz = units[j].position.z - units[ct].position.z;
@@ -1852,6 +1915,7 @@ int main(void)
                                 else { dmg -= units[target].shieldHP; units[target].shieldHP = 0; }
                             }
                             units[target].currentHealth -= dmg;
+                            PlaySound(sfxMeleeHit);
                             units[target].hitFlash = HIT_FLASH_DURATION;
                             // Lifesteal
                             float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
@@ -1884,7 +1948,7 @@ int main(void)
                                         mlDef->values[mlLvl][AV_ML_BOUNCE_RANGE]);
                                 }
                             }
-                            if (units[target].currentHealth <= 0) units[target].active = false;
+                            if (units[target].currentHealth <= 0) { PlaySound(units[target].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[target].active = false; }
                         }
                         units[i].attackCooldown = stats->attackSpeed;
                     }
@@ -2216,6 +2280,7 @@ int main(void)
                 int resetBtnY = cardY + cardH + 30;
                 Rectangle resetBtn = { (float)(sw/2 - resetBtnW/2), (float)resetBtnY, (float)resetBtnW, (float)resetBtnH };
                 if (CheckCollisionPointRec(mouse, resetBtn)) {
+                    PlaySound(sfxUiClick);
                     // Full reset — go to menu
                     unitCount = 0;
                     snapshotCount = 0;
@@ -2315,7 +2380,7 @@ int main(void)
         //==============================================================================
         // WIN/LOSS SFX
         //==============================================================================
-        if (phase != prevPhase && (phase == PHASE_GAME_OVER || phase == PHASE_ROUND_OVER)) {
+        if (phase != prevPhase && phase == PHASE_GAME_OVER) {
             StopSound(sfxWin);
             StopSound(sfxLoss);
             PlaySound(lastOutcomeWin ? sfxWin : sfxLoss);
@@ -4117,8 +4182,25 @@ int main(void)
     UnloadTexture(tileDiffuse);
     UnloadModel(doorModel);
     UnloadModel(trophyModel);
+    UnloadMusicStream(bgm);
     UnloadSound(sfxWin);
     UnloadSound(sfxLoss);
+    UnloadSound(sfxMeleeHit);
+    UnloadSound(sfxProjectileWhoosh);
+    UnloadSound(sfxProjectileHit);
+    UnloadSound(sfxMagicHit);
+    UnloadSound(sfxToadShout);
+    UnloadSound(sfxToadDie);
+    UnloadSound(sfxGoblinShout);
+    UnloadSound(sfxGoblinDie);
+    UnloadSound(sfxCharacterFall);
+    UnloadSound(sfxCharacterLand);
+    UnloadSound(sfxNewCharacter);
+    UnloadSound(sfxUiClick);
+    UnloadSound(sfxUiBuy);
+    UnloadSound(sfxUiDrag);
+    UnloadSound(sfxUiDrop);
+    UnloadSound(sfxUiReroll);
     CloseAudioDevice();
     CloseWindow();
     return 0;
