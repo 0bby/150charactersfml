@@ -121,6 +121,7 @@ int main(void)
                     printf("%s\n", buf + PREFIX_LEN);
                     fflush(stdout);
                 }
+                fprintf(stderr, "[Arduino] %s\n", buf);
                 pos = 0;
             }
         } else if (pos < BUF_SIZE - 1) {

@@ -68,6 +68,7 @@ void setup(void) {
   Serial.println("Hello!");
 
   nfc.begin();
+  Wire.setClock(400000); // I2C Fast Mode (400kHz vs default 100kHz)
 
   uint32_t versiondata = nfc.getFirmwareVersion();
   if (! versiondata) {
@@ -121,7 +122,7 @@ void loop(void) {
 
       // Read user pages 4-48 into buffer (180 bytes, enough for ~150 char payloads)
       uint8_t data[180];
-      uint8_t pageBuf[16]; // ReadPage returns up to 16 bytes
+      uint8_t pageBuf[16];
       bool readOk = true;
 
       for (uint8_t page = 4; page < 49; page++) {
