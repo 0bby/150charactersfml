@@ -23,6 +23,8 @@ typedef enum {
     MSG_BUY_ABILITY      = 0x05,  // payload: shop slot index
     MSG_ROLL_SHOP        = 0x06,  // payload: none
     MSG_ASSIGN_ABILITY   = 0x07,  // payload: inventory slot, unit index, ability slot
+    MSG_LEADERBOARD_SUBMIT  = 0x10, // payload: serialized leaderboard entry (55 bytes)
+    MSG_LEADERBOARD_REQUEST = 0x11, // payload: none
 } ClientMsgType;
 
 //------------------------------------------------------------------------------------
@@ -39,6 +41,7 @@ typedef enum {
     MSG_OPPONENT_READY   = 0x87,  // payload: none
     MSG_ERROR            = 0x88,  // payload: error string
     MSG_GOLD_UPDATE      = 0x89,  // payload: current gold amount
+    MSG_LEADERBOARD_DATA = 0x90,  // payload: entry count + serialized entries
 } ServerMsgType;
 
 //------------------------------------------------------------------------------------

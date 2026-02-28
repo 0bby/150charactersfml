@@ -268,3 +268,104 @@ void net_client_disconnect(NetClient *nc)
     }
     nc->state = NET_DISCONNECTED;
 }
+
+//------------------------------------------------------------------------------------
+// Standalone leaderboard operations (short-lived blocking TCP)
+//------------------------------------------------------------------------------------
+static int lb_connect(const char *host, int port)
+{
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) return -1;
+
+    struct hostent *he = gethostbyname(host);
+    if (!he) { close(sockfd); return -1; }
+
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(port),
+    };
+    memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
+
+    // 3-second send/recv timeout
+    struct timeval tv = { .tv_sec = 3, .tv_usec = 0 };
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(sockfd);
+        return -1;
+    }
+
+    int one = 1;
+    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    return sockfd;
+}
+
+int net_leaderboard_submit(const char *host, int port, const LeaderboardEntry *entry)
+{
+    int sockfd = lb_connect(host, port);
+    if (sockfd < 0) {
+        printf("[Leaderboard] Failed to connect for submit\n");
+        return -1;
+    }
+
+    uint8_t payload[LEADERBOARD_ENTRY_NET_SIZE];
+    serialize_leaderboard_entry(entry, payload, sizeof(payload));
+
+    if (net_send_msg(sockfd, MSG_LEADERBOARD_SUBMIT, payload, LEADERBOARD_ENTRY_NET_SIZE) < 0) {
+        printf("[Leaderboard] Failed to send submit\n");
+        close(sockfd);
+        return -1;
+    }
+
+    // Optionally read back the full leaderboard response (best-effort)
+    close(sockfd);
+    printf("[Leaderboard] Submitted entry for '%s' round %d\n", entry->playerName, entry->highestRound);
+    return 0;
+}
+
+int net_leaderboard_fetch(const char *host, int port, Leaderboard *lb)
+{
+    int sockfd = lb_connect(host, port);
+    if (sockfd < 0) {
+        printf("[Leaderboard] Failed to connect for fetch\n");
+        return -1;
+    }
+
+    if (net_send_msg(sockfd, MSG_LEADERBOARD_REQUEST, NULL, 0) < 0) {
+        printf("[Leaderboard] Failed to send request\n");
+        close(sockfd);
+        return -1;
+    }
+
+    NetMessage msg;
+    if (net_recv_msg(sockfd, &msg) < 0 || msg.type != MSG_LEADERBOARD_DATA) {
+        printf("[Leaderboard] Failed to receive leaderboard data\n");
+        close(sockfd);
+        return -1;
+    }
+
+    close(sockfd);
+
+    // Deserialize: [entryCount:1][entries...]
+    if (msg.size < 1) return -1;
+    int count = msg.payload[0];
+    if (count > MAX_LEADERBOARD_ENTRIES) count = MAX_LEADERBOARD_ENTRIES;
+    if (msg.size < 1 + count * LEADERBOARD_ENTRY_NET_SIZE) {
+        printf("[Leaderboard] Truncated data: expected %d entries\n", count);
+        return -1;
+    }
+
+    lb->entryCount = 0;
+    for (int i = 0; i < count; i++) {
+        if (deserialize_leaderboard_entry(
+                msg.payload + 1 + i * LEADERBOARD_ENTRY_NET_SIZE,
+                LEADERBOARD_ENTRY_NET_SIZE,
+                &lb->entries[lb->entryCount]) == LEADERBOARD_ENTRY_NET_SIZE) {
+            lb->entryCount++;
+        }
+    }
+
+    printf("[Leaderboard] Fetched %d entries from server\n", lb->entryCount);
+    return 0;
+}

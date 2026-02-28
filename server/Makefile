@@ -7,9 +7,11 @@ RAYLIB_DIR = ../raylib
 # Shared game logic (no raylib dependency)
 SHARED_SRCS = $(RAYLIB_DIR)/combat_sim.c \
               $(RAYLIB_DIR)/helpers.c \
-              $(RAYLIB_DIR)/net_common.c
+              $(RAYLIB_DIR)/net_common.c \
+              $(RAYLIB_DIR)/leaderboard.c \
+              $(RAYLIB_DIR)/abilities_cast.c
 
-SERVER_SRCS = server_main.c game_session.c
+SERVER_SRCS = server_main.c game_session.c server_stubs.c
 
 ALL_SRCS = $(SERVER_SRCS) $(SHARED_SRCS)
 

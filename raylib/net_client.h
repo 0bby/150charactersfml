@@ -84,3 +84,8 @@ void net_client_send_remove_unit(NetClient *nc, int unitIndex);
 
 // Disconnect and cleanup
 void net_client_disconnect(NetClient *nc);
+
+// Standalone leaderboard operations (short-lived blocking TCP connections)
+#include "leaderboard.h"
+int net_leaderboard_submit(const char *host, int port, const LeaderboardEntry *entry);
+int net_leaderboard_fetch(const char *host, int port, Leaderboard *lb);

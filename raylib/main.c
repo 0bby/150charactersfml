@@ -422,7 +422,7 @@ int main(void)
 
     // Leaderboard & prestige state
     Leaderboard leaderboard = {0};
-    LoadLeaderboard(&leaderboard);
+    LoadLeaderboard(&leaderboard, LEADERBOARD_FILE);
     bool showLeaderboard = false;
     int leaderboardScroll = 0;
     int lastMilestoneRound = 0;
@@ -821,6 +821,11 @@ int main(void)
                     // 3D object clicks
                     if (plazaHoverObject == 1) {
                         PlaySound(sfxUiClick);
+                        // Try fetching global leaderboard, fall back to local
+                        Leaderboard serverLb = {0};
+                        if (net_leaderboard_fetch(serverHost, NET_PORT, &serverLb) == 0) {
+                            leaderboard = serverLb;
+                        }
                         showLeaderboard = true;
                         leaderboardScroll = 0;
                     } else if (plazaHoverObject == 2) {
@@ -2300,7 +2305,10 @@ int main(void)
                         }
                     }
                     InsertLeaderboardEntry(&leaderboard, &entry);
-                    SaveLeaderboard(&leaderboard);
+                    SaveLeaderboard(&leaderboard, LEADERBOARD_FILE);
+
+                    // Submit to global leaderboard server (best-effort, non-fatal)
+                    net_leaderboard_submit(serverHost, NET_PORT, &entry);
 
                     lastMilestoneRound = currentRound;
                     deathPenalty = false;
