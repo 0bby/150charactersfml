@@ -26,6 +26,7 @@ typedef enum { TEAM_BLUE = 0, TEAM_RED = 1 } Team;
 //------------------------------------------------------------------------------------
 typedef enum {
     PHASE_MENU,       // main menu + leaderboard view
+    PHASE_LOBBY,      // waiting in multiplayer lobby
     PHASE_PREP,       // place / arrange units
     PHASE_COMBAT,     // units fight automatically
     PHASE_ROUND_OVER, // brief pause showing round result
@@ -303,3 +304,21 @@ typedef struct {
     WaveEntry entries[MAX_WAVE_ENEMIES];
     int count;
 } WaveDef;
+
+//------------------------------------------------------------------------------------
+// Combat Event (for deterministic combat simulation feedback)
+//------------------------------------------------------------------------------------
+#define MAX_COMBAT_EVENTS 64
+typedef enum {
+    COMBAT_EVT_ABILITY_CAST,   // unit cast an ability
+    COMBAT_EVT_SHAKE,          // screen shake trigger
+} CombatEventType;
+
+typedef struct {
+    CombatEventType type;
+    int unitIndex;
+    int abilityId;             // for ABILITY_CAST
+    Vector3 position;
+    float value1;              // intensity for SHAKE
+    float value2;              // duration for SHAKE
+} CombatEvent;

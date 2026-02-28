@@ -25,6 +25,8 @@
 #include "game.h"
 #include "helpers.h"
 #include "leaderboard.h"
+#include "net_client.h"
+#include "pve_waves.h"
 
 //------------------------------------------------------------------------------------
 // Main
@@ -217,6 +219,19 @@ int main(void)
     char nfcInputError[64] = "";
     float nfcInputErrorTimer = 0.0f;
 
+    // --- Multiplayer state ---
+    NetClient netClient;
+    net_client_init(&netClient);
+    bool isMultiplayer = false;
+    bool playerReady = false;
+    bool mpNameFieldFocused = true;
+    char joinCodeInput[LOBBY_CODE_LEN + 1] = {0};
+    int joinCodeLen = 0;
+    const char *serverHost = "autochess.kenzhiyilin.com";
+    bool waitingForOpponent = false;
+    char menuError[128] = {0};
+    bool currentRoundIsPve = false;
+
     // UI button sizes (positions computed each frame for resize support)
     const int btnWidth = 150;
     const int btnHeight = 30;
@@ -306,6 +321,11 @@ int main(void)
             float tgtD = combat ? combatDistance : prepDistance;
             float tgtF = combat ? combatFOV : prepFOV;
             float tgtX = combat ? combatX : prepX;
+            // Mirror camera for player 2 during PVP combat
+            if (combat && isMultiplayer && netClient.playerSlot == 1 && !currentRoundIsPve) {
+                tgtX = -tgtX;
+                tgtD = -tgtD;
+            }
             float t = camLerpSpeed * dt;
             if (t > 1.0f) t = 1.0f;
             camHeight  += (tgtH - camHeight)  * t;
@@ -422,6 +442,59 @@ int main(void)
                         showLeaderboard = true;
                         leaderboardScroll = 0;
                     }
+
+                    // --- Multiplayer buttons ---
+                    // CREATE LOBBY button
+                    Rectangle createBtn = { (float)(sw/2 - 80), (float)(sh/2 + 130), 160, 40 };
+                    if (CheckCollisionPointRec(mouse, createBtn)) {
+                        menuError[0] = '\0';
+                        isMultiplayer = true;
+                        playerReady = false;
+                        if (net_client_connect(&netClient, serverHost, NET_PORT, NULL, playerName) == 0) {
+                            phase = PHASE_LOBBY;
+                        } else {
+                            strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                            isMultiplayer = false;
+                        }
+                    }
+
+                    // JOIN LOBBY button (only if 4-char code entered)
+                    Rectangle joinBtn = { (float)(sw/2 - 80), (float)(sh/2 + 180), 160, 40 };
+                    if (joinCodeLen == LOBBY_CODE_LEN &&
+                        CheckCollisionPointRec(mouse, joinBtn)) {
+                        menuError[0] = '\0';
+                        isMultiplayer = true;
+                        playerReady = false;
+                        if (net_client_connect(&netClient, serverHost, NET_PORT, joinCodeInput, playerName) == 0) {
+                            phase = PHASE_LOBBY;
+                        } else {
+                            strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                            isMultiplayer = false;
+                        }
+                    }
+
+                    // Join code input field focus
+                    Rectangle codeBox = { (float)(sw/2 - 60), (float)(sh/2 + 225), 120, 30 };
+                    if (CheckCollisionPointRec(mouse, codeBox))
+                        mpNameFieldFocused = false;
+                }
+            }
+
+            // Multiplayer join code text input
+            if (!showLeaderboard && !nameInputActive) {
+                int key = GetCharPressed();
+                while (key > 0) {
+                    if (joinCodeLen < LOBBY_CODE_LEN && ((key >= 'A' && key <= 'Z') ||
+                        (key >= 'a' && key <= 'z') || (key >= '0' && key <= '9'))) {
+                        joinCodeInput[joinCodeLen] = (key >= 'a' && key <= 'z') ? (key - 32) : (char)key;
+                        joinCodeLen++;
+                        joinCodeInput[joinCodeLen] = '\0';
+                    }
+                    key = GetCharPressed();
+                }
+                if (IsKeyPressed(KEY_BACKSPACE) && joinCodeLen > 0 && !nameInputActive) {
+                    joinCodeLen--;
+                    joinCodeInput[joinCodeLen] = '\0';
                 }
             }
 
@@ -440,10 +513,107 @@ int main(void)
             }
         }
         //------------------------------------------------------------------------------
+        // PHASE: LOBBY — waiting for opponent / game start
+        //------------------------------------------------------------------------------
+        else if (phase == PHASE_LOBBY)
+        {
+            net_client_poll(&netClient);
+
+            if (netClient.state == NET_ERROR) {
+                strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                net_client_disconnect(&netClient);
+                isMultiplayer = false;
+                phase = PHASE_MENU;
+            }
+
+            if (netClient.gameStarted) {
+                netClient.gameStarted = false;
+                playerGold = netClient.currentGold;
+            }
+
+            if (netClient.prepStarted) {
+                netClient.prepStarted = false;
+                playerGold = netClient.currentGold;
+                currentRound = netClient.currentRound;
+                currentRoundIsPve = netClient.isPveRound;
+                for (int i = 0; i < MAX_SHOP_SLOTS; i++)
+                    shopSlots[i] = netClient.serverShop[i];
+                // Reset multiplayer game state
+                unitCount = 0;
+                snapshotCount = 0;
+                blueWins = 0;
+                redWins = 0;
+                roundResultText = "";
+                ClearAllModifiers(modifiers);
+                ClearAllProjectiles(projectiles);
+                ClearAllParticles(particles);
+                ClearAllFloatingTexts(floatingTexts);
+                ClearAllFissures(fissures);
+                for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
+                dragState.dragging = false;
+                playerReady = false;
+                waitingForOpponent = false;
+                phase = PHASE_PREP;
+            }
+
+            if (IsKeyPressed(KEY_ESCAPE)) {
+                net_client_disconnect(&netClient);
+                isMultiplayer = false;
+                phase = PHASE_MENU;
+            }
+        }
+        //------------------------------------------------------------------------------
         // PHASE: PREP — place units, click Play to start
         //------------------------------------------------------------------------------
         else if (phase == PHASE_PREP)
         {
+            // --- Multiplayer: poll network and handle server messages ---
+            if (isMultiplayer) {
+                net_client_poll(&netClient);
+                if (netClient.state == NET_ERROR) {
+                    net_client_disconnect(&netClient);
+                    isMultiplayer = false;
+                    phase = PHASE_MENU;
+                }
+                if (netClient.shopUpdated) {
+                    netClient.shopUpdated = false;
+                    for (int i = 0; i < MAX_SHOP_SLOTS; i++)
+                        shopSlots[i] = netClient.serverShop[i];
+                }
+                if (netClient.goldUpdated) {
+                    netClient.goldUpdated = false;
+                    playerGold = netClient.currentGold;
+                }
+                if (netClient.opponentReady) {
+                    netClient.opponentReady = false;
+                    waitingForOpponent = false;
+                }
+                // Combat started — server sends serialized units
+                if (netClient.combatStarted) {
+                    netClient.combatStarted = false;
+                    unitCount = deserialize_units(netClient.combatNetUnits,
+                        netClient.combatNetUnitCount, units, MAX_UNITS);
+                    SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
+                    phase = PHASE_COMBAT;
+                    ClearAllModifiers(modifiers);
+                    ClearAllProjectiles(projectiles);
+                    ClearAllParticles(particles);
+                    ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
+                    dragState.dragging = false;
+                    removeConfirmUnit = -1;
+                    for (int j = 0; j < unitCount; j++) {
+                        units[j].selected = false;
+                        units[j].dragging = false;
+                        units[j].nextAbilitySlot = 0;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            units[j].abilities[a].cooldownRemaining = 0;
+                            units[j].abilities[a].triggered = false;
+                        }
+                    }
+                }
+            }
+
             // NFC input error timer countdown
             if (nfcInputErrorTimer > 0.0f) {
                 nfcInputErrorTimer -= dt;
@@ -602,41 +772,54 @@ int main(void)
                     }
                 }
 
-                // Play button
+                // Play / Ready button
                 if (CheckCollisionPointRec(mouse, playBtn) && unitCount > 0)
                 {
-                    // Check both teams have units
-                    int ba, ra;
-                    CountTeams(units, unitCount, &ba, &ra);
-                    if (ba > 0 && ra > 0)
-                    {
-                        SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
-                        phase = PHASE_COMBAT;
-                        ClearAllModifiers(modifiers);
-                        ClearAllProjectiles(projectiles);
-                        ClearAllParticles(particles);
-                        ClearAllFloatingTexts(floatingTexts);
-                        ClearAllFissures(fissures);
-                        // Snap any mid-fall statue to ground before combat
-                        if (statueSpawn.phase != SSPAWN_INACTIVE) {
-                            int si2 = statueSpawn.unitIndex;
-                            if (si2 >= 0 && si2 < unitCount && units[si2].active)
-                                units[si2].position.y = 0.0f;
-                        }
-                        statueSpawn.phase = SSPAWN_INACTIVE;
-                        dragState.dragging = false;
-                        removeConfirmUnit = -1;
-                        // Reset ability state for combat start
-                        for (int j = 0; j < unitCount; j++) {
-                            units[j].selected = false;
-                            units[j].dragging = false;
-                            units[j].nextAbilitySlot = 0;
-                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                                units[j].abilities[a].cooldownRemaining = 0;
-                                units[j].abilities[a].triggered = false;
+                    if (isMultiplayer) {
+                        // Multiplayer: send READY with army
+                        if (!playerReady) {
+                            int ba = CountTeamUnits(units, unitCount, TEAM_BLUE);
+                            if (ba > 0) {
+                                net_client_send_ready(&netClient, units, unitCount);
+                                playerReady = true;
+                                waitingForOpponent = true;
+                                clickedButton = true;
                             }
                         }
-                        clickedButton = true;
+                    } else {
+                        // Solo: check both teams have units, start combat
+                        int ba, ra;
+                        CountTeams(units, unitCount, &ba, &ra);
+                        if (ba > 0 && ra > 0)
+                        {
+                            SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
+                            phase = PHASE_COMBAT;
+                            ClearAllModifiers(modifiers);
+                            ClearAllProjectiles(projectiles);
+                            ClearAllParticles(particles);
+                            ClearAllFloatingTexts(floatingTexts);
+                            ClearAllFissures(fissures);
+                            // Snap any mid-fall statue to ground before combat
+                            if (statueSpawn.phase != SSPAWN_INACTIVE) {
+                                int si2 = statueSpawn.unitIndex;
+                                if (si2 >= 0 && si2 < unitCount && units[si2].active)
+                                    units[si2].position.y = 0.0f;
+                            }
+                            statueSpawn.phase = SSPAWN_INACTIVE;
+                            dragState.dragging = false;
+                            removeConfirmUnit = -1;
+                            // Reset ability state for combat start
+                            for (int j = 0; j < unitCount; j++) {
+                                units[j].selected = false;
+                                units[j].dragging = false;
+                                units[j].nextAbilitySlot = 0;
+                                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                    units[j].abilities[a].cooldownRemaining = 0;
+                                    units[j].abilities[a].triggered = false;
+                                }
+                            }
+                            clickedButton = true;
+                        }
                     }
                 }
 
@@ -670,27 +853,34 @@ int main(void)
                     }
                 }
                 // --- Shop: ROLL button click ---
-                if (!clickedButton) {
+                if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
                     Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
                     if (CheckCollisionPointRec(mouse, rollBtn)) {
-                        RollShop(shopSlots, &playerGold, rollCost);
+                        if (isMultiplayer) {
+                            net_client_send_roll(&netClient);
+                        } else {
+                            RollShop(shopSlots, &playerGold, rollCost);
+                        }
                         TriggerShake(&shake, 2.0f, 0.15f);
                         clickedButton = true;
                     }
                 }
                 // --- Shop: Buy ability card click ---
-                if (!clickedButton) {
+                if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
                     int shopCardW = 100, shopCardH = 34, shopCardGap = 10;
                     int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
                     int shopCardsX = (sw - totalShopW) / 2;
-                    // Collect blue units for auto-combine
                     for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
                         int scx = shopCardsX + s * (shopCardW + shopCardGap);
                         Rectangle r = { (float)scx, (float)(shopY + 8), (float)shopCardW, (float)shopCardH };
                         if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
-                            BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
+                            if (isMultiplayer) {
+                                net_client_send_buy(&netClient, s);
+                            } else {
+                                BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
+                            }
                             clickedButton = true;
                             break;
                         }
@@ -1239,19 +1429,45 @@ int main(void)
             }
 
             // Check round end
-            int ba, ra;
-            CountTeams(units, unitCount, &ba, &ra);
-            if (ba == 0 || ra == 0) {
-                if (ba > 0) { blueWins++; roundResultText = "BLUE WINS THE ROUND!"; blueLostLastRound = false; }
-                else if (ra > 0) { redWins++; roundResultText = "RED WINS THE ROUND!"; blueLostLastRound = true; }
-                else { roundResultText = "DRAW — NO SURVIVORS!"; blueLostLastRound = true; }
-                currentRound++;
-                phase = PHASE_ROUND_OVER;
-                roundOverTimer = 2.5f;
-                ClearAllParticles(particles);
-                ClearAllFloatingTexts(floatingTexts);
-                ClearAllFissures(fissures);
-                statueSpawn.phase = SSPAWN_INACTIVE;
+            if (isMultiplayer) {
+                // In multiplayer, poll for server result
+                net_client_poll(&netClient);
+                if (netClient.roundResultReady) {
+                    netClient.roundResultReady = false;
+                    if (netClient.roundWinner == 0) { blueWins++; roundResultText = "YOU WIN THE ROUND!"; }
+                    else if (netClient.roundWinner == 1) { redWins++; roundResultText = "OPPONENT WINS!"; }
+                    else roundResultText = "DRAW — NO SURVIVORS!";
+                    currentRound = netClient.currentRound;
+                    phase = PHASE_ROUND_OVER;
+                    roundOverTimer = 2.5f;
+                    ClearAllParticles(particles);
+                    ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
+                }
+                if (netClient.gameOver) {
+                    netClient.gameOver = false;
+                    if (netClient.gameWinner == 0) roundResultText = "YOU WIN THE MATCH!";
+                    else roundResultText = "OPPONENT WINS THE MATCH!";
+                    phase = PHASE_GAME_OVER;
+                    ClearAllParticles(particles);
+                    ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
+                }
+            } else {
+                int ba, ra;
+                CountTeams(units, unitCount, &ba, &ra);
+                if (ba == 0 || ra == 0) {
+                    if (ba > 0) { blueWins++; roundResultText = "BLUE WINS THE ROUND!"; blueLostLastRound = false; }
+                    else if (ra > 0) { redWins++; roundResultText = "RED WINS THE ROUND!"; blueLostLastRound = true; }
+                    else { roundResultText = "DRAW — NO SURVIVORS!"; blueLostLastRound = true; }
+                    currentRound++;
+                    phase = PHASE_ROUND_OVER;
+                    roundOverTimer = 2.5f;
+                    ClearAllParticles(particles);
+                    ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
+                    statueSpawn.phase = SSPAWN_INACTIVE;
+                }
             }
         }
         //------------------------------------------------------------------------------
@@ -1259,6 +1475,37 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_ROUND_OVER)
         {
+            // Multiplayer: poll for next prep from server
+            if (isMultiplayer) {
+                net_client_poll(&netClient);
+                roundOverTimer -= dt;
+                if (netClient.prepStarted) {
+                    netClient.prepStarted = false;
+                    playerGold = netClient.currentGold;
+                    currentRound = netClient.currentRound;
+                    currentRoundIsPve = netClient.isPveRound;
+                    for (int i = 0; i < MAX_SHOP_SLOTS; i++)
+                        shopSlots[i] = netClient.serverShop[i];
+                    RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
+                    for (int i = 0; i < unitCount; i++)
+                        if (units[i].team == TEAM_RED) units[i].active = false;
+                    ClearAllModifiers(modifiers);
+                    ClearAllProjectiles(projectiles);
+                    ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
+                    playerReady = false;
+                    waitingForOpponent = false;
+                    phase = PHASE_PREP;
+                }
+                if (netClient.gameOver) {
+                    netClient.gameOver = false;
+                    if (netClient.gameWinner == 0) roundResultText = "YOU WIN THE MATCH!";
+                    else roundResultText = "OPPONENT WINS THE MATCH!";
+                    phase = PHASE_GAME_OVER;
+                }
+            }
+            // Solo: original logic
+            else {
             roundOverTimer -= dt;
             if (roundOverTimer <= 0.0f)
             {
@@ -1304,6 +1551,7 @@ int main(void)
                     phase = PHASE_PREP;
                 }
             }
+            } // end solo else
         }
         //------------------------------------------------------------------------------
         // PHASE: MILESTONE — "Set in Stone" selection screen
@@ -1375,7 +1623,31 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_GAME_OVER)
         {
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !deathPenalty) {
+            // Multiplayer: press R to return to menu
+            if (isMultiplayer && IsKeyPressed(KEY_R)) {
+                net_client_disconnect(&netClient);
+                isMultiplayer = false;
+                unitCount = 0;
+                snapshotCount = 0;
+                currentRound = 0;
+                blueWins = 0;
+                redWins = 0;
+                roundResultText = "";
+                ClearAllModifiers(modifiers);
+                ClearAllProjectiles(projectiles);
+                ClearAllParticles(particles);
+                ClearAllFloatingTexts(floatingTexts);
+                ClearAllFissures(fissures);
+                playerGold = 100;
+                for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
+                dragState.dragging = false;
+                joinCodeLen = 0;
+                joinCodeInput[0] = '\0';
+                phase = PHASE_MENU;
+            }
+
+            // Solo: existing game over logic
+            if (!isMultiplayer && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !deathPenalty) {
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
@@ -2543,6 +2815,52 @@ int main(void)
                 DrawText(lbText, (int)(lbBtn.x + 80 - lbw/2), (int)(lbBtn.y + 12), 16, WHITE);
             }
 
+            // --- Multiplayer buttons ---
+            // CREATE LOBBY button
+            {
+                Rectangle createBtn = { (float)(msw/2 - 80), (float)(msh/2 + 130), 160, 40 };
+                Color cBg = (Color){40,130,60,255};
+                if (CheckCollisionPointRec(GetMousePosition(), createBtn))
+                    cBg = (Color){50,170,70,255};
+                DrawRectangleRec(createBtn, cBg);
+                DrawRectangleLinesEx(createBtn, 2, (Color){30,100,40,255});
+                const char *cText = "CREATE LOBBY";
+                int cw = MeasureText(cText, 14);
+                DrawText(cText, (int)(createBtn.x + 80 - cw/2), (int)(createBtn.y + 13), 14, WHITE);
+            }
+
+            // JOIN LOBBY button
+            {
+                bool codeReady = (joinCodeLen == LOBBY_CODE_LEN);
+                Rectangle joinBtn = { (float)(msw/2 - 80), (float)(msh/2 + 180), 160, 40 };
+                Color jBg = codeReady ? (Color){160,100,30,255} : (Color){80,80,80,255};
+                if (codeReady && CheckCollisionPointRec(GetMousePosition(), joinBtn))
+                    jBg = (Color){200,130,40,255};
+                DrawRectangleRec(joinBtn, jBg);
+                DrawRectangleLinesEx(joinBtn, 2, (Color){100,70,20,255});
+                const char *jText = "JOIN LOBBY";
+                int jw = MeasureText(jText, 14);
+                DrawText(jText, (int)(joinBtn.x + 80 - jw/2), (int)(joinBtn.y + 13), 14, WHITE);
+            }
+
+            // Join code input field
+            {
+                DrawText("Lobby Code:", msw/2 - MeasureText("Lobby Code:", 12)/2, msh/2 + 225, 12, (Color){150,150,170,255});
+                Rectangle codeBox = { (float)(msw/2 - 60), (float)(msh/2 + 240), 120, 30 };
+                DrawRectangleRec(codeBox, (Color){35,35,50,255});
+                DrawRectangleLinesEx(codeBox, 2, (Color){80,80,100,255});
+                char codeBuf[8];
+                snprintf(codeBuf, sizeof(codeBuf), "%s_", joinCodeInput);
+                int ccw = MeasureText(codeBuf, 18);
+                DrawText(codeBuf, msw/2 - ccw/2, msh/2 + 246, 18, WHITE);
+            }
+
+            // Menu error message
+            if (menuError[0]) {
+                int ew = MeasureText(menuError, 14);
+                DrawText(menuError, msw/2 - ew/2, msh/2 + 280, 14, RED);
+            }
+
             // Leaderboard overlay
             if (showLeaderboard)
             {
@@ -2644,6 +2962,39 @@ int main(void)
                     DrawText(emptyText, panelX + panelW/2 - etw/2, panelY + panelH/2, 16, (Color){100,100,120,255});
                 }
             }
+        }
+
+        //==============================================================================
+        // PHASE_LOBBY DRAWING
+        //==============================================================================
+        if (phase == PHASE_LOBBY)
+        {
+            int lsw = GetScreenWidth();
+            int lsh = GetScreenHeight();
+            DrawRectangle(0, 0, lsw, lsh, (Color){ 20, 20, 30, 255 });
+
+            const char *waitText = "WAITING FOR OPPONENT";
+            int wtw = MeasureText(waitText, 30);
+            DrawText(waitText, lsw/2 - wtw/2, lsh/2 - 60, 30, (Color){200, 180, 255, 255});
+
+            // Show lobby code
+            if (netClient.lobbyCode[0]) {
+                const char *codeLabel = "Share this code:";
+                int clw = MeasureText(codeLabel, 16);
+                DrawText(codeLabel, lsw/2 - clw/2, lsh/2, 16, (Color){150,150,170,255});
+                int ccw = MeasureText(netClient.lobbyCode, 40);
+                DrawText(netClient.lobbyCode, lsw/2 - ccw/2, lsh/2 + 25, 40, WHITE);
+            }
+
+            // Animated dots
+            int dots = (int)(GetTime() * 2) % 4;
+            char dotBuf[8] = "";
+            for (int d = 0; d < dots; d++) strcat(dotBuf, ".");
+            DrawText(dotBuf, lsw/2 + wtw/2 + 5, lsh/2 - 60, 30, WHITE);
+
+            const char *escText = "Press ESC to cancel";
+            int ew = MeasureText(escText, 14);
+            DrawText(escText, lsw/2 - ew/2, lsh/2 + 90, 14, (Color){100,100,120,255});
         }
 
         //==============================================================================
@@ -2765,9 +3116,31 @@ int main(void)
         }
 
         //==============================================================================
-        // PHASE_GAME_OVER DRAWING — non-death: withdraw units + reset
+        // PHASE_GAME_OVER DRAWING — multiplayer
         //==============================================================================
-        if (phase == PHASE_GAME_OVER && !deathPenalty)
+        if (phase == PHASE_GAME_OVER && isMultiplayer)
+        {
+            int gosw = GetScreenWidth();
+            int gosh = GetScreenHeight();
+            DrawRectangle(0, 0, gosw, gosh, (Color){20,20,30,240});
+
+            const char *goTitle = roundResultText;
+            int gotw = MeasureText(goTitle, 36);
+            DrawText(goTitle, gosw/2 - gotw/2, gosh/2 - 60, 36, GOLD);
+
+            const char *goScore = TextFormat("Score: %d - %d", blueWins, redWins);
+            int gsw = MeasureText(goScore, 20);
+            DrawText(goScore, gosw/2 - gsw/2, gosh/2, 20, WHITE);
+
+            const char *goRestart = "Press R to return to menu";
+            int grw = MeasureText(goRestart, 16);
+            DrawText(goRestart, gosw/2 - grw/2, gosh/2 + 40, 16, (Color){150,150,170,255});
+        }
+
+        //==============================================================================
+        // PHASE_GAME_OVER DRAWING — non-death: withdraw units + reset (solo only)
+        //==============================================================================
+        if (phase == PHASE_GAME_OVER && !isMultiplayer && !deathPenalty)
         {
             int gosw = GetScreenWidth();
             int gosh = GetScreenHeight();
@@ -3091,6 +3464,7 @@ int main(void)
     }
 
     // Cleanup
+    if (isMultiplayer) net_client_disconnect(&netClient);
     if (nfcPipe) {
         pclose(nfcPipe);
         printf("[NFC] Bridge closed\n");

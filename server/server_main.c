@@ -1,0 +1,220 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <signal.h>
+#include <time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <poll.h>
+
+#include "../raylib/net_protocol.h"
+#include "../raylib/net_common.h"
+#include "game_session.h"
+
+//------------------------------------------------------------------------------------
+// Server Configuration
+//------------------------------------------------------------------------------------
+#define MAX_SESSIONS 16
+#define SERVER_TICK_RATE 60  // ticks per second
+#define TICK_INTERVAL_US (1000000 / SERVER_TICK_RATE)
+
+static volatile int running = 1;
+static void sigint_handler(int sig) { (void)sig; running = 0; }
+
+//------------------------------------------------------------------------------------
+// Session management
+//------------------------------------------------------------------------------------
+static GameSession sessions[MAX_SESSIONS];
+static int sessionCount = 0;
+
+static GameSession *find_session_by_code(const char *code)
+{
+    for (int i = 0; i < sessionCount; i++) {
+        if (sessions[i].state == SESSION_WAITING &&
+            strncmp(sessions[i].lobbyCode, code, LOBBY_CODE_LEN) == 0)
+            return &sessions[i];
+    }
+    return NULL;
+}
+
+static GameSession *create_session(int sockfd)
+{
+    // Reuse dead slots
+    for (int i = 0; i < sessionCount; i++) {
+        if (sessions[i].state == SESSION_DEAD) {
+            session_init(&sessions[i], sockfd);
+            return &sessions[i];
+        }
+    }
+    if (sessionCount >= MAX_SESSIONS) return NULL;
+    session_init(&sessions[sessionCount], sockfd);
+    return &sessions[sessionCount++];
+}
+
+//------------------------------------------------------------------------------------
+// Handle new client connection
+//------------------------------------------------------------------------------------
+static void handle_new_client(int clientfd, struct sockaddr_in *addr)
+{
+    printf("[Server] New connection from %s:%d (fd=%d)\n",
+           inet_ntoa(addr->sin_addr), ntohs(addr->sin_port), clientfd);
+
+    // Set TCP_NODELAY for low latency
+    int one = 1;
+    setsockopt(clientfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    net_set_nonblocking(clientfd);
+
+    // Wait for JOIN message (with short timeout via blocking peek)
+    // Temporarily set blocking for the join handshake
+    int flags = fcntl(clientfd, F_GETFL, 0);
+    fcntl(clientfd, F_SETFL, flags & ~O_NONBLOCK);
+
+    // Set a 5-second timeout for the join message
+    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+    setsockopt(clientfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    NetMessage msg;
+    if (net_recv_msg(clientfd, &msg) < 0 || msg.type != MSG_JOIN) {
+        printf("[Server] Client fd=%d didn't send valid JOIN, closing\n", clientfd);
+        close(clientfd);
+        return;
+    }
+
+    // Reset timeout and set non-blocking
+    tv.tv_sec = 0; tv.tv_usec = 0;
+    setsockopt(clientfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    net_set_nonblocking(clientfd);
+
+    // Extract player name from JOIN payload: [lobbyCode:4][nameLen:1][name:N]
+    char playerName[32] = {0};
+    if (msg.size >= LOBBY_CODE_LEN + 1) {
+        int nameLen = msg.payload[LOBBY_CODE_LEN];
+        if (nameLen > 15) nameLen = 15;
+        if (msg.size >= LOBBY_CODE_LEN + 1 + nameLen) {
+            memcpy(playerName, msg.payload + LOBBY_CODE_LEN + 1, nameLen);
+            playerName[nameLen] = '\0';
+        }
+    }
+    if (!playerName[0]) strncpy(playerName, "Player", sizeof(playerName) - 1);
+
+    // Check if joining existing lobby or creating new one
+    char code[LOBBY_CODE_LEN + 1] = {0};
+    if (msg.size >= LOBBY_CODE_LEN) {
+        memcpy(code, msg.payload, LOBBY_CODE_LEN);
+        code[LOBBY_CODE_LEN] = '\0';
+    }
+
+    bool isJoin = (code[0] != '\0' && code[0] != '0');
+
+    if (isJoin) {
+        GameSession *s = find_session_by_code(code);
+        if (s) {
+            strncpy(s->players[1].name, playerName, sizeof(s->players[1].name) - 1);
+            session_add_player(s, clientfd);
+            printf("[Server] Player '%s' joined lobby %s\n", playerName, code);
+        } else {
+            const char *err = "Lobby not found";
+            net_send_msg(clientfd, MSG_ERROR, err, strlen(err));
+            close(clientfd);
+            printf("[Server] Lobby %s not found\n", code);
+        }
+    } else {
+        GameSession *s = create_session(clientfd);
+        if (s) {
+            strncpy(s->players[0].name, playerName, sizeof(s->players[0].name) - 1);
+            printf("[Server] Player '%s' created lobby %s\n", playerName, s->lobbyCode);
+        } else {
+            const char *err = "Server full";
+            net_send_msg(clientfd, MSG_ERROR, err, strlen(err));
+            close(clientfd);
+            printf("[Server] Cannot create session — server full\n");
+        }
+    }
+}
+
+//------------------------------------------------------------------------------------
+// Main server loop
+//------------------------------------------------------------------------------------
+int main(int argc, char *argv[])
+{
+    int port = NET_PORT;
+    if (argc > 1) port = atoi(argv[1]);
+
+    signal(SIGINT, sigint_handler);
+    signal(SIGPIPE, SIG_IGN);
+    srand((unsigned)time(NULL));
+
+    // Create listening socket
+    int listenfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listenfd < 0) { perror("socket"); return 1; }
+
+    int opt = 1;
+    setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in servaddr = {
+        .sin_family = AF_INET,
+        .sin_addr.s_addr = INADDR_ANY,
+        .sin_port = htons(port),
+    };
+
+    if (bind(listenfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+        perror("bind"); close(listenfd); return 1;
+    }
+    if (listen(listenfd, 16) < 0) {
+        perror("listen"); close(listenfd); return 1;
+    }
+
+    net_set_nonblocking(listenfd);
+
+    printf("=== Autochess Multiplayer Server ===\n");
+    printf("Listening on port %d\n", port);
+    printf("Press Ctrl+C to stop\n\n");
+
+    struct timespec lastTick;
+    clock_gettime(CLOCK_MONOTONIC, &lastTick);
+
+    while (running) {
+        // Accept new connections (non-blocking)
+        struct sockaddr_in clientaddr;
+        socklen_t addrlen = sizeof(clientaddr);
+        int clientfd = accept(listenfd, (struct sockaddr *)&clientaddr, &addrlen);
+        if (clientfd >= 0) {
+            handle_new_client(clientfd, &clientaddr);
+        }
+
+        // Calculate dt
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        float dt = (now.tv_sec - lastTick.tv_sec) +
+                   (now.tv_nsec - lastTick.tv_nsec) / 1e9f;
+        lastTick = now;
+
+        // Tick all sessions
+        for (int i = 0; i < sessionCount; i++) {
+            if (sessions[i].state == SESSION_DEAD) continue;
+            session_tick(&sessions[i], dt);
+        }
+
+        // Sleep to maintain tick rate
+        usleep(TICK_INTERVAL_US);
+    }
+
+    printf("\n[Server] Shutting down...\n");
+
+    // Close all sessions
+    for (int i = 0; i < sessionCount; i++) {
+        for (int p = 0; p < 2; p++) {
+            if (sessions[i].players[p].connected) {
+                close(sessions[i].players[p].sockfd);
+            }
+        }
+    }
+    close(listenfd);
+
+    return 0;
+}
