@@ -121,7 +121,7 @@ int main(void)
     camera.projection = CAMERA_PERSPECTIVE;
 
     // Unit types
-    int unitTypeCount = 2;
+    int unitTypeCount = 3;
     UnitType unitTypes[MAX_UNIT_TYPES] = { 0 };
     unitTypes[0].name = "Mushroom";
     unitTypes[0].modelPath = "MUSHROOMmixamotest.obj";
@@ -130,6 +130,10 @@ int main(void)
     unitTypes[1].name = "Goblin";
     unitTypes[1].modelPath = "assets/goblin/animations/PluginGoblinWalk.glb";
     unitTypes[1].scale = 9.0f;
+    unitTypes[2].name = "Reptile";
+    unitTypes[2].modelPath = "assets/classes/reptile/reptile.obj";
+    unitTypes[2].scale = 0.07f;
+    unitTypes[2].yOffset = 1.5f;
 
     for (int i = 0; i < unitTypeCount; i++)
     {
@@ -406,6 +410,71 @@ int main(void)
             MatrixTranslate(-tCenterX, -tBaseY, -tCenterZ),
             MatrixScale(tScale, tScale, tScale));
     }
+    // --- Environment models: platform, stairs, circle ---
+    Model platformModel = LoadModel("assets/goblin/environment/platform/platform.obj");
+    for (int m = 0; m < platformModel.materialCount; m++) {
+        platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        platformModel.materials[m].shader = lightShader;
+    }
+    if (platformModel.meshCount > 0) {
+        BoundingBox pbb = GetMeshBoundingBox(platformModel.meshes[0]);
+        float pCenterX = (pbb.min.x + pbb.max.x) * 0.5f;
+        float pTopY    = pbb.max.y;  // anchor top surface at Y=0
+        float pCenterZ = (pbb.min.z + pbb.max.z) * 0.5f;
+        float pWidth   = pbb.max.x - pbb.min.x;
+        float pScale   = 750.0f / pWidth;
+        platformModel.transform = MatrixMultiply(
+            MatrixTranslate(-pCenterX, -pTopY, -pCenterZ),
+            MatrixScale(pScale, pScale, pScale));
+    }
+
+    Texture2D stairsDiffuse = LoadTexture("assets/goblin/environment/stairs/T_Stairs_BC.png");
+    Model stairsModel = LoadModel("assets/goblin/environment/stairs/Stairs_LP.obj");
+    for (int m = 0; m < stairsModel.materialCount; m++) {
+        stairsModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = stairsDiffuse;
+        stairsModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        stairsModel.materials[m].shader = lightShader;
+    }
+    if (stairsModel.meshCount > 0) {
+        BoundingBox sbb = GetMeshBoundingBox(stairsModel.meshes[0]);
+        float sCenterX = (sbb.min.x + sbb.max.x) * 0.5f;
+        float sBaseY   = sbb.min.y;
+        float sCenterZ = (sbb.min.z + sbb.max.z) * 0.5f;
+        float sHeight  = sbb.max.y - sbb.min.y;
+        float sScale   = 10.0f / sHeight;
+        stairsModel.transform = MatrixMultiply(
+            MatrixTranslate(-sCenterX, -sBaseY, -sCenterZ),
+            MatrixScale(sScale, sScale, sScale));
+    }
+
+    Texture2D circleDiffuse = LoadTexture("assets/goblin/environment/circle/T_Circle_BC.png");
+    Model circleModel = LoadModel("assets/goblin/environment/circle/circle.obj");
+    for (int m = 0; m < circleModel.materialCount; m++) {
+        circleModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = circleDiffuse;
+        circleModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        circleModel.materials[m].shader = lightShader;
+    }
+    if (circleModel.meshCount > 0) {
+        BoundingBox cbb = GetMeshBoundingBox(circleModel.meshes[0]);
+        float cCenterX = (cbb.min.x + cbb.max.x) * 0.5f;
+        float cCenterY = (cbb.min.y + cbb.max.y) * 0.5f;
+        float cCenterZ = (cbb.min.z + cbb.max.z) * 0.5f;
+        float cWidth   = cbb.max.x - cbb.min.x;
+        float cScale   = 80.0f / cWidth;
+        // Center, scale, then tilt upright (-90° around X so far face points toward arena)
+        circleModel.transform = MatrixMultiply(
+            MatrixMultiply(
+                MatrixTranslate(-cCenterX, -cCenterY, -cCenterZ),
+                MatrixScale(cScale, cScale, cScale)),
+            MatrixRotateX(-90.0f * DEG2RAD));
+    }
+
+    Vector3 platformPos  = { 0.0f, -10.0f, 0.0f };
+    Vector3 stairsFarPos = { 0.0f, -1.0f, -120.0f };
+    Vector3 stairsLPos   = { -120.0f, -1.0f, 0.0f };
+    Vector3 stairsRPos   = { 120.0f, -1.0f, 0.0f };
+    Vector3 circlePos    = { 0.0f, 0.0f, -140.0f };
+
     Vector3 doorPos = { 120.0f, 0.0f, 80.0f };
     Vector3 trophyPos = { -120.0f, 0.0f, 80.0f };
     int plazaHoverObject = 0;  // 0=none, 1=trophy, 2=door
@@ -2548,6 +2617,9 @@ int main(void)
         camera.position.y += shake.offset.y;
 
         BeginMode3D(camera);
+            // Draw environment: platform (underneath tiles)
+            DrawModel(platformModel, platformPos, 1.0f, WHITE);
+
             // Draw tiled floor
             {
                 float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
@@ -2603,6 +2675,12 @@ int main(void)
                     }
                 }
             }
+
+            // Draw environment: stairs (3 sides) and circle
+            DrawModelEx(stairsModel, stairsFarPos, (Vector3){0,1,0},   0.0f, (Vector3){1,1,1}, WHITE);
+            DrawModelEx(stairsModel, stairsLPos,   (Vector3){0,1,0},  90.0f, (Vector3){1,1,1}, WHITE);
+            DrawModelEx(stairsModel, stairsRPos,   (Vector3){0,1,0}, -90.0f, (Vector3){1,1,1}, WHITE);
+            DrawModel(circleModel, circlePos, 1.0f, WHITE);
 
             // Draw units
             for (int i = 0; i < unitCount; i++)
@@ -4304,6 +4382,11 @@ int main(void)
     UnloadTexture(tileDiffuse);
     UnloadModel(doorModel);
     UnloadModel(trophyModel);
+    UnloadModel(platformModel);
+    UnloadModel(stairsModel);
+    UnloadTexture(stairsDiffuse);
+    UnloadModel(circleModel);
+    UnloadTexture(circleDiffuse);
     UnloadMusicStream(bgm);
     UnloadSound(sfxWin);
     UnloadSound(sfxLoss);
