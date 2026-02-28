@@ -12,8 +12,12 @@
       4. Type a new name/code to switch, or "quit" to stop
 
     Unit codes:
-      0 = Mushroom
+      0 = Mushroom (Toad)
       1 = Goblin
+      2 = Cat
+      3 = Devil
+      4 = Fish
+      5 = Lizard
 */
 /**************************************************************************/
 #include <Wire.h>
@@ -50,8 +54,8 @@ void setup(void) {
   Serial.print("Found chip PN5"); Serial.println((versiondata >> 24) & 0xFF, HEX);
 
   Serial.println();
-  Serial.println("Enter unit type: mushroom, shroom, goblin");
-  Serial.println("  Or a raw code like: 0, 1, 0FB1XXXX");
+  Serial.println("Enter unit type: mushroom, goblin, cat, devil, fish, lizard");
+  Serial.println("  Or a raw code like: 0, 1, 2, 3, 4, 5");
   Serial.println("  Type 'quit' to exit.");
   Serial.print("> ");
 }
@@ -134,17 +138,25 @@ void processInput(const char *input) {
   }
 
   // Map friendly names to unit codes
-  if (strcasecmp(trimmed, "mushroom") == 0 || strcasecmp(trimmed, "shroom") == 0) {
+  if (strcasecmp(trimmed, "mushroom") == 0 || strcasecmp(trimmed, "shroom") == 0 || strcasecmp(trimmed, "toad") == 0) {
     strcpy(unitCode, "0");
   } else if (strcasecmp(trimmed, "goblin") == 0) {
     strcpy(unitCode, "1");
+  } else if (strcasecmp(trimmed, "cat") == 0) {
+    strcpy(unitCode, "2");
+  } else if (strcasecmp(trimmed, "devil") == 0 || strcasecmp(trimmed, "demon") == 0) {
+    strcpy(unitCode, "3");
+  } else if (strcasecmp(trimmed, "fish") == 0) {
+    strcpy(unitCode, "4");
+  } else if (strcasecmp(trimmed, "lizard") == 0) {
+    strcpy(unitCode, "5");
   } else {
     // Assume raw unit code — validate first char is a digit 0-5
     if (trimmed[0] >= '0' && trimmed[0] <= '5') {
       strcpy(unitCode, trimmed);
     } else {
       Serial.print("Unknown unit: '"); Serial.print(trimmed); Serial.println("'");
-      Serial.println("Try: mushroom, shroom, goblin, or a raw code (0, 1, etc.)");
+      Serial.println("Try: mushroom, goblin, cat, devil, fish, lizard, or a raw code (0-5)");
       Serial.print("> ");
       return;
     }
