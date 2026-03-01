@@ -1048,6 +1048,11 @@ int main(void)
     }
 
     // NFC UID is now stored directly in Unit.nfcUid / Unit.nfcUidLen
+    // Naming state for first-time scans
+    int namingUnitIndex = -1;  // >= 0 = unit awaiting name input
+    char namingBuf[32] = {0};
+    int namingPos = 0;
+    char nfcNameBuf[32] = {0};  // temp buffer for lookup response
 
     // Prefetch known NFC UIDs from server (local authority for existence checks)
     NfcUidCache nfcCache = {0};
@@ -1332,8 +1337,9 @@ int main(void)
                                         easterEggTimer = 4.0f;
                                     } else if (!nfc_cache_contains(&nfcCache, nfcHex)) {
                                         printf("[NFC] Reader %d: UID %s -> unknown (not in local cache)\n", nfcReader, nfcHex);
-                                    } else if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
-                                                       &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities) == 0) {
+                                    } else if (namingUnitIndex < 0 && net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
+                                                       &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities,
+                                                       nfcNameBuf, sizeof(nfcNameBuf)) == 0) {
                                         if (nfcStatus == NFC_STATUS_OK && nfcTypeIdx < unitTypeCount) {
                                             if (SpawnUnit(units, &unitCount, nfcTypeIdx, TEAM_BLUE)) {
                                                 PlaySound(sfxNewCharacter);
@@ -1342,9 +1348,16 @@ int main(void)
                                                 memcpy(units[unitCount - 1].nfcUid, nfcUid, nfcUidLen);
                                                 units[unitCount - 1].nfcUidLen = nfcUidLen;
                                                 units[unitCount - 1].rarity = nfcRarity;
+                                                strncpy(units[unitCount - 1].nfcName, nfcNameBuf, sizeof(units[unitCount - 1].nfcName) - 1);
                                                 ApplyUnitRarity(&units[unitCount - 1]);
-                                                printf("[NFC] Reader %d: UID %s -> Spawning %s (rarity=%d)\n",
-                                                    nfcReader, nfcHex, unitTypes[nfcTypeIdx].name, nfcRarity);
+                                                printf("[NFC] Reader %d: UID %s -> Spawning %s name=\"%s\" (rarity=%d)\n",
+                                                    nfcReader, nfcHex, unitTypes[nfcTypeIdx].name, nfcNameBuf, nfcRarity);
+                                                // If unnamed, prompt for name
+                                                if (nfcNameBuf[0] == '\0') {
+                                                    namingUnitIndex = unitCount - 1;
+                                                    namingBuf[0] = '\0';
+                                                    namingPos = 0;
+                                                }
                                                 intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                                     .typeIndex = nfcTypeIdx, .unitIndex = unitCount - 1, .animFrame = 0 };
                                             } else {
@@ -4338,7 +4351,8 @@ int main(void)
                 GameDrawText(stars, (int)sp.x - starsW/2, (int)sp.y - S(26), S(14), starColor);
             }
 
-            const char *label = type->name;
+            const char *label = (units[i].nfcUidLen > 0 && units[i].nfcName[0])
+                ? units[i].nfcName : type->name;
             int nameFontSize = S(16);
             int tw = GameMeasureText(label, nameFontSize);
             // Drop shadow for readability
@@ -6310,6 +6324,56 @@ int main(void)
             DrawTexturePro(shadowRT.texture, srcRec, dstRec, (Vector2){0,0}, 0.0f, WHITE);
             DrawRectangleLines((int)dstRec.x, (int)dstRec.y, (int)previewSize, (int)previewSize, YELLOW);
             GameDrawText("Shadow Color RT", (int)dstRec.x, (int)dstRec.y + (int)previewSize + 4, 16, YELLOW);
+        }
+
+        // Naming prompt overlay
+        if (namingUnitIndex >= 0) {
+            // Handle text input
+            int key = GetCharPressed();
+            while (key > 0) {
+                if (key >= 32 && key <= 126 && namingPos < 30) {
+                    namingBuf[namingPos++] = (char)key;
+                    namingBuf[namingPos] = '\0';
+                }
+                key = GetCharPressed();
+            }
+            if (IsKeyPressed(KEY_BACKSPACE) && namingPos > 0) {
+                namingBuf[--namingPos] = '\0';
+            }
+            if (IsKeyPressed(KEY_ENTER) && namingPos > 0) {
+                // Save name to server and unit
+                strncpy(units[namingUnitIndex].nfcName, namingBuf, sizeof(units[namingUnitIndex].nfcName) - 1);
+                if (units[namingUnitIndex].nfcUidLen > 0) {
+                    net_nfc_set_name(serverHost, NET_PORT,
+                        units[namingUnitIndex].nfcUid, units[namingUnitIndex].nfcUidLen, namingBuf);
+                }
+                printf("[NFC] Named unit %d: \"%s\"\n", namingUnitIndex, namingBuf);
+                namingUnitIndex = -1;
+            }
+            // Draw overlay
+            int sw = GetScreenWidth(), sh = GetScreenHeight();
+            DrawRectangle(0, 0, sw, sh, (Color){0, 0, 0, 120});
+            int boxW = S(400), boxH = S(80);
+            int boxX = (sw - boxW) / 2, boxY = (sh - boxH) / 2;
+            DrawRectangle(boxX, boxY, boxW, boxH, (Color){30, 30, 45, 240});
+            DrawRectangleLinesEx((Rectangle){(float)boxX, (float)boxY, (float)boxW, (float)boxH}, 2, (Color){100, 200, 100, 255});
+            const char *prompt = "Name your creature:";
+            int promptW = GameMeasureText(prompt, S(18));
+            GameDrawText(prompt, (sw - promptW) / 2, boxY + S(8), S(18), WHITE);
+            // Input field
+            int fieldW = boxW - S(40), fieldH = S(28);
+            int fieldX = boxX + S(20), fieldY = boxY + S(38);
+            DrawRectangle(fieldX, fieldY, fieldW, fieldH, (Color){50, 50, 70, 255});
+            DrawRectangleLines(fieldX, fieldY, fieldW, fieldH, (Color){100, 200, 100, 255});
+            if (namingPos > 0) {
+                GameDrawText(namingBuf, fieldX + S(6), fieldY + S(4), S(18), WHITE);
+            }
+            // Blinking cursor
+            if ((int)(GetTime() * 2.0) % 2 == 0) {
+                int cursorX = fieldX + S(6) + GameMeasureText(namingBuf, S(18));
+                GameDrawText("|", cursorX, fieldY + S(4), S(18), (Color){200, 255, 200, 255});
+            }
+            GameDrawText("[Enter] Confirm", boxX + S(20), boxY + boxH + S(4), S(12), (Color){160, 160, 180, 200});
         }
 
         // Easter egg overlay

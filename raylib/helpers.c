@@ -136,6 +136,7 @@ void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[], int *snapCo
         memcpy(snaps[i].nfcUid, units[i].nfcUid, sizeof(units[i].nfcUid));
         snaps[i].nfcUidLen = units[i].nfcUidLen;
         snaps[i].rarity = units[i].rarity;
+        memcpy(snaps[i].nfcName, units[i].nfcName, sizeof(units[i].nfcName));
         snaps[i].hpMultiplier = units[i].hpMultiplier;
         snaps[i].dmgMultiplier = units[i].dmgMultiplier;
         snaps[i].speedMultiplier = units[i].speedMultiplier;
@@ -175,6 +176,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
         memcpy(units[i].nfcUid, snaps[i].nfcUid, sizeof(units[i].nfcUid));
         units[i].nfcUidLen = snaps[i].nfcUidLen;
         units[i].rarity = snaps[i].rarity;
+        memcpy(units[i].nfcName, snaps[i].nfcName, sizeof(units[i].nfcName));
     }
 }
 

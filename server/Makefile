@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -DSERVER_BUILD -Wall -Wextra -O2 -I../raylib
+CFLAGS = -DSERVER_BUILD -Wall -Wextra -O2 -I../raylib $(shell pkg-config --cflags raylib 2>/dev/null)
 LDFLAGS = -lm
 
 RAYLIB_DIR = ../raylib
