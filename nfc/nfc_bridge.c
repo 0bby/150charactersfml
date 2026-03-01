@@ -79,9 +79,7 @@ int main(void)
         return 1;
     }
 
-    /* Read lines from the device and forward PAYLOAD: lines to stdout.
-       Works with both Arduino (which prints startup messages first) and
-       Pico/CircuitPython (which may already be running when we connect). */
+    fprintf(stderr, "Listening for NFC data...\n");
     char buf[BUF_SIZE];
     int pos = 0;
 

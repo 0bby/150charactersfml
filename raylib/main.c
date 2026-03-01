@@ -858,7 +858,19 @@ int main(void)
 
                                     uint8_t nfcStatus, nfcTypeIdx, nfcRarity;
                                     AbilitySlot nfcAbilities[MAX_ABILITIES_PER_UNIT];
-                                    if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
+                                    // Dedup: skip if this UID is already on the blue team
+                                    bool uidAlreadySpawned = false;
+                                    for (int u = 0; u < unitCount; u++) {
+                                        if (units[u].active && units[u].team == TEAM_BLUE &&
+                                            units[u].nfcUidLen == nfcUidLen &&
+                                            memcmp(units[u].nfcUid, nfcUid, nfcUidLen) == 0) {
+                                            uidAlreadySpawned = true;
+                                            break;
+                                        }
+                                    }
+                                    if (uidAlreadySpawned) {
+                                        // Tag still on scanner — ignore
+                                    } else if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
                                                        &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities) == 0) {
                                         if (nfcStatus == NFC_STATUS_OK && nfcTypeIdx < unitTypeCount) {
                                             if (SpawnUnit(units, &unitCount, nfcTypeIdx, TEAM_BLUE)) {

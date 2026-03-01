@@ -7,9 +7,6 @@ server/server
 # Object files
 *.o
 
-# Placeholder materials (generated locally)
-raylib/*.mtl
-
 # OS junk
 .DS_Store
 
