@@ -2144,11 +2144,12 @@ int main(void)
 
                 // Confirm removal popup (takes priority over everything)
                 if (removeConfirmUnit >= 0) {
-                    int popW = 220, popH = 80;
+                    int popW = 280, popH = 110;
                     int popX = sw / 2 - popW / 2;
                     int popY = sh / 2 - popH / 2;
-                    Rectangle yesBtn = { (float)(popX + 20), (float)(popY + popH - 32), 80, 24 };
-                    Rectangle noBtn  = { (float)(popX + popW - 100), (float)(popY + popH - 32), 80, 24 };
+                    int rmBtnW = 100, rmBtnH = 30;
+                    Rectangle yesBtn = { (float)(popX + 24), (float)(popY + popH - rmBtnH - 12), (float)rmBtnW, (float)rmBtnH };
+                    Rectangle noBtn  = { (float)(popX + popW - rmBtnW - 24), (float)(popY + popH - rmBtnH - 12), (float)rmBtnW, (float)rmBtnH };
                     if (CheckCollisionPointRec(mouse, yesBtn)) {
                         // Remove the unit: sync NFC abilities to server, deactivate
                         // Abilities stay on the figurine (server-side), NOT returned to inventory
@@ -5608,20 +5609,23 @@ int main(void)
         if (removeConfirmUnit >= 0 && phase == PHASE_PREP) {
             int sw2 = GetScreenWidth(), sh2 = GetScreenHeight();
             DrawRectangle(0, 0, sw2, sh2, (Color){ 0, 0, 0, 120 }); // dim overlay
-            int popW = 220, popH = 80;
+            int popW = 280, popH = 110;
             int popX = sw2 / 2 - popW / 2;
             int popY = sh2 / 2 - popH / 2;
             DrawRectangle(popX, popY, popW, popH, (Color){ 40, 40, 55, 240 });
             DrawRectangleLinesEx((Rectangle){ (float)popX, (float)popY, (float)popW, (float)popH },
                                 2, (Color){ 180, 60, 60, 255 });
             const char *confirmText = "Remove this unit?";
-            int ctw = GameMeasureText(confirmText, 16);
-            GameDrawText(confirmText, popX + (popW - ctw) / 2, popY + 12, 16, WHITE);
+            int ctw = GameMeasureText(confirmText, 20);
+            GameDrawText(confirmText, popX + (popW - ctw) / 2, popY + 14, 20, WHITE);
             // Abilities returned note
-            GameDrawText("(abilities stay on figurine)", popX + 14, popY + 32, 9, (Color){160,160,180,255});
+            const char *noteText = "(abilities stay on figurine)";
+            int ntw = GameMeasureText(noteText, 12);
+            GameDrawText(noteText, popX + (popW - ntw) / 2, popY + 40, 12, (Color){160,160,180,255});
             // Yes / No buttons
-            Rectangle yesBtn = { (float)(popX + 20), (float)(popY + popH - 32), 80, 24 };
-            Rectangle noBtn  = { (float)(popX + popW - 100), (float)(popY + popH - 32), 80, 24 };
+            int rmBtnW = 100, rmBtnH = 30;
+            Rectangle yesBtn = { (float)(popX + 24), (float)(popY + popH - rmBtnH - 12), (float)rmBtnW, (float)rmBtnH };
+            Rectangle noBtn  = { (float)(popX + popW - rmBtnW - 24), (float)(popY + popH - rmBtnH - 12), (float)rmBtnW, (float)rmBtnH };
             Color yesBg = (Color){ 180, 50, 50, 255 };
             Color noBg  = (Color){ 60, 60, 80, 255 };
             if (CheckCollisionPointRec(GetMousePosition(), yesBtn)) yesBg = (Color){ 230, 70, 70, 255 };
@@ -5630,9 +5634,9 @@ int main(void)
             DrawRectangleRec(noBtn, noBg);
             DrawRectangleLinesEx(yesBtn, 1, (Color){120,40,40,255});
             DrawRectangleLinesEx(noBtn, 1, (Color){80,80,100,255});
-            int yw = GameMeasureText("YES", 14), nw = GameMeasureText("NO", 14);
-            GameDrawText("YES", (int)(yesBtn.x + (80 - yw) / 2), (int)(yesBtn.y + 5), 14, WHITE);
-            GameDrawText("NO",  (int)(noBtn.x + (80 - nw) / 2), (int)(noBtn.y + 5), 14, WHITE);
+            int yw = GameMeasureText("YES", 16), nw = GameMeasureText("NO", 16);
+            GameDrawText("YES", (int)(yesBtn.x + (rmBtnW - yw) / 2), (int)(yesBtn.y + 7), 16, WHITE);
+            GameDrawText("NO",  (int)(noBtn.x + (rmBtnW - nw) / 2), (int)(noBtn.y + 7), 16, WHITE);
         }
 
         // --- Hover tooltip timer + drawing ---
