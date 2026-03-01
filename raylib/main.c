@@ -826,6 +826,7 @@ int main(void)
         em->texture = (Texture2D){0};
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = tileDiffuse;
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
             em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = tileORM;
             em->model.materials[m].shader = lightShader;
         }
