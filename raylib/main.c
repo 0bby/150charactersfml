@@ -14,8 +14,10 @@
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
-#include <fcntl.h>
-#include <unistd.h>
+#ifndef _WIN32
+  #include <fcntl.h>
+  #include <unistd.h>
+#endif
 
 #define RLIGHTS_IMPLEMENTATION
 #include "rlights.h"
@@ -106,6 +108,7 @@ static float uiScale = 1.0f;
 //------------------------------------------------------------------------------------
 int main(void)
 {
+    net_platform_init();
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 720, "Relic Rivals");
     SetWindowMinSize(640, 360);
@@ -1075,7 +1078,15 @@ int main(void)
 
     SetTargetFPS(60);
 
-    // --- NFC Bridge Subprocess ---
+    // --- NFC Bridge Subprocess (POSIX only) ---
+#ifdef _WIN32
+    FILE *nfcPipe = NULL;
+    int nfcFd = -1;
+    char nfcLineBuf[128];
+    int nfcLinePos = 0;
+    float easterEggTimer = 0.0f;
+    printf("[NFC] Bridge not available on Windows\n");
+#else
     FILE *nfcPipe = popen("../nfc/build/bridge", "r");
     int nfcFd = -1;
     char nfcLineBuf[128];
@@ -1089,6 +1100,7 @@ int main(void)
     } else {
         printf("[NFC] Failed to launch bridge\n");
     }
+#endif
 
     // NFC UID is now stored directly in Unit.nfcUid / Unit.nfcUidLen
     // Naming state for first-time scans
@@ -1290,6 +1302,9 @@ int main(void)
                     units[si].currentAnim = ANIM_IDLE;
                     units[si].animFrame = 0;
                     statueSpawn.phase = SSPAWN_INACTIVE;
+                    printf("[STATUE LAND] idx=%d type=%d rarity=%d hp=%.1f hpMult=%.2f\n",
+                        si, units[si].typeIndex, units[si].rarity,
+                        units[si].currentHealth, units[si].hpMultiplier);
                     // Trigger plaza scared on impact
                     if (phase == PHASE_PLAZA && plazaState == PLAZA_ROAMING) {
                         PlazaTriggerScared(units, unitCount, plazaData, &plazaState, &plazaTimer);
@@ -1351,6 +1366,7 @@ int main(void)
         SetShaderValue(lightShader, lightShader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
 
         // Poll NFC bridge for tag scans (raw read to avoid stdio buffering issues)
+#ifndef _WIN32
         if (nfcFd >= 0) {
             // Drain bytes from pipe into line buffer
             char rdBuf[64];
@@ -1445,6 +1461,7 @@ int main(void)
                 }
             }
         }
+#endif // !_WIN32
 
         // NFC debug input handling (shared for plaza + prep)
         if (debugMode && (phase == PHASE_PLAZA || phase == PHASE_PREP)) {
@@ -1716,7 +1733,14 @@ int main(void)
                     clickIdx++;
                     if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded) {
                         if (SpawnUnit(units, &unitCount, i, TEAM_BLUE)) {
+                            if (debugSpawnRarity > 0) {
+                                units[unitCount-1].rarity = debugSpawnRarity;
+                                ApplyUnitRarity(&units[unitCount-1]);
+                            }
                             PlaySound(sfxNewCharacter);
+                            printf("[PLAZA SPAWN] type=%d (%s) idx=%d rarity=%d hp=%.1f hpMult=%.2f\n",
+                                i, unitTypes[i].name, unitCount-1, units[unitCount-1].rarity,
+                                units[unitCount-1].currentHealth, units[unitCount-1].hpMultiplier);
                             // Place on blue side
                             units[unitCount-1].position.x = (float)GetRandomValue(-50, 50);
                             units[unitCount-1].position.z = (float)GetRandomValue(10, 80);
@@ -1736,6 +1760,8 @@ int main(void)
                             PlaySound(sfxNewCharacter);
                             units[unitCount-1].rarity = RARITY_RARE;
                             ApplyUnitRarity(&units[unitCount-1]);
+                            printf("[PLAZA SPAWN] Rare Mushroom idx=%d rarity=%d hp=%.1f\n",
+                                unitCount-1, units[unitCount-1].rarity, units[unitCount-1].currentHealth);
                             units[unitCount-1].position.x = (float)GetRandomValue(-50, 50);
                             units[unitCount-1].position.z = (float)GetRandomValue(10, 80);
                             intro = (UnitIntro){ .active = true, .timer = 0.0f,
@@ -1749,6 +1775,8 @@ int main(void)
                             PlaySound(sfxNewCharacter);
                             units[unitCount-1].rarity = RARITY_LEGENDARY;
                             ApplyUnitRarity(&units[unitCount-1]);
+                            printf("[PLAZA SPAWN] Legendary Mushroom idx=%d rarity=%d hp=%.1f\n",
+                                unitCount-1, units[unitCount-1].rarity, units[unitCount-1].currentHealth);
                             units[unitCount-1].position.x = (float)GetRandomValue(-50, 50);
                             units[unitCount-1].position.z = (float)GetRandomValue(10, 80);
                             intro = (UnitIntro){ .active = true, .timer = 0.0f,
@@ -2283,6 +2311,10 @@ int main(void)
                                     units[unitCount-1].rarity = debugSpawnRarity;
                                     ApplyUnitRarity(&units[unitCount-1]);
                                 }
+                                printf("[DEBUG SPAWN] type=%d (%s) idx=%d rarity=%d hp=%.1f hpMult=%.2f\n",
+                                    i, unitTypes[i].name ? unitTypes[i].name : "?",
+                                    unitCount-1, units[unitCount-1].rarity,
+                                    units[unitCount-1].currentHealth, units[unitCount-1].hpMultiplier);
                                 PlaySound(sfxNewCharacter);
                                 intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                     .typeIndex = i, .unitIndex = unitCount - 1, .animFrame = 0 };
@@ -6940,10 +6972,12 @@ int main(void)
 
     // Cleanup
     if (isMultiplayer) net_client_disconnect(&netClient);
+#ifndef _WIN32
     if (nfcPipe) {
         pclose(nfcPipe);
         printf("[NFC] Bridge closed\n");
     }
+#endif
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     UnloadRenderTexture(introModelRT);
     UnloadRenderTexture(fxaaRT);

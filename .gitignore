@@ -1,8 +1,15 @@
 # Build outputs
 nfc/build/
 raylib/game
+raylib/game.exe
 server/server
 *.dSYM/
+
+# Export folder
+export/
+
+# Windows cross-compile deps
+deps/
 
 # Object files
 *.o

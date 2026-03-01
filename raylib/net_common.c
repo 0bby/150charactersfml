@@ -1,13 +1,25 @@
+#ifdef _WIN32
+  #define WIN32_LEAN_AND_MEAN
+  #define NOGDI
+  #define NOUSER
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #define MSG_NOSIGNAL 0
+  static inline int close_socket(int fd) { return closesocket(fd); }
+#else
+  #include <unistd.h>
+  #include <fcntl.h>
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <netinet/tcp.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>
+  static inline int close_socket(int fd) { return close(fd); }
+#endif
+
 #include "net_common.h"
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <netdb.h>
 
 //------------------------------------------------------------------------------------
 // Low-level send/recv helpers (handle partial reads/writes)
@@ -29,7 +41,7 @@ static int recv_all(int sockfd, void *buf, int len)
     char *p = (char *)buf;
     int got = 0;
     while (got < len) {
-        int n = recv(sockfd, p + got, len - got, 0);
+        int n = recv(sockfd, (char *)p + got, len - got, 0);
         if (n <= 0) return -1;
         got += n;
     }
@@ -73,10 +85,18 @@ int net_recv_msg_nonblock(int sockfd, NetMessage *msg)
 {
     // Peek at header first
     uint8_t header[NET_HEADER_SIZE];
+#ifdef _WIN32
+    int n = recv(sockfd, (char *)header, NET_HEADER_SIZE, MSG_PEEK);
+#else
     int n = recv(sockfd, header, NET_HEADER_SIZE, MSG_PEEK | MSG_DONTWAIT);
+#endif
     if (n == 0) return -1; // disconnected
     if (n < 0) {
+#ifdef _WIN32
+        if (WSAGetLastError() == WSAEWOULDBLOCK) return 0;
+#else
         if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+#endif
         return -1;
     }
     if (n < NET_HEADER_SIZE) return 0; // partial header, wait
@@ -90,7 +110,11 @@ int net_recv_msg_nonblock(int sockfd, NetMessage *msg)
     int totalSize = NET_HEADER_SIZE + size;
     if (size > 0) {
         uint8_t checkBuf[NET_HEADER_SIZE + NET_MAX_PAYLOAD];
+#ifdef _WIN32
+        n = recv(sockfd, (char *)checkBuf, totalSize, MSG_PEEK);
+#else
         n = recv(sockfd, checkBuf, totalSize, MSG_PEEK | MSG_DONTWAIT);
+#endif
         if (n < totalSize) return 0; // not enough data yet
     }
 
@@ -200,10 +224,23 @@ int deserialize_shop(const uint8_t *buf, int bufSize, ShopSlot slots[], int maxS
 //------------------------------------------------------------------------------------
 // Socket utilities
 //------------------------------------------------------------------------------------
+void net_platform_init(void)
+{
+#ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2,2), &wsa);
+#endif
+}
+
 void net_set_nonblocking(int sockfd)
 {
+#ifdef _WIN32
+    u_long mode = 1;
+    ioctlsocket(sockfd, FIONBIO, &mode);
+#else
     int flags = fcntl(sockfd, F_GETFL, 0);
     fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+#endif
 }
 
 //------------------------------------------------------------------------------------
@@ -215,25 +252,31 @@ int net_shortlived_connect(const char *host, int port)
     if (sockfd < 0) return -1;
 
     struct hostent *he = gethostbyname(host);
-    if (!he) { close(sockfd); return -1; }
+    if (!he) { close_socket(sockfd); return -1; }
 
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(port),
-    };
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
     memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
 
     // 3-second send/recv timeout
+#ifdef _WIN32
+    DWORD tv = 3000;
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof(tv));
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+#else
     struct timeval tv = { .tv_sec = 3, .tv_usec = 0 };
     setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
 
     if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
 
     int one = 1;
-    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one));
     return sockfd;
 }

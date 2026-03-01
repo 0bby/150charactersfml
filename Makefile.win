@@ -20,7 +20,7 @@ GAME_HDRS = $(wildcard $(GAME_DIR)/*.h)
 GAME_TARGET = $(GAME_DIR)/game.exe
 
 GAME_CFLAGS = $(CFLAGS) -I$(GAME_DIR) -I$(RAYLIB_WIN)/include
-GAME_LDFLAGS = -L$(RAYLIB_WIN)/lib -lraylib -lopengl32 -lgdi32 -lwinmm -lm -lpthread -static
+GAME_LDFLAGS = -L$(RAYLIB_WIN)/lib -lraylib -lopengl32 -lgdi32 -lwinmm -lws2_32 -lm -lpthread -static
 
 .PHONY: all clean
 

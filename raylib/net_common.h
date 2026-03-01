@@ -24,6 +24,9 @@ int serialize_shop(const ShopSlot slots[], int count, uint8_t *buf, int bufSize)
 // Deserialize shop slots from buffer. Returns bytes consumed.
 int deserialize_shop(const uint8_t *buf, int bufSize, ShopSlot slots[], int maxSlots);
 
+// Platform init (WSAStartup on Windows, no-op on POSIX). Call once at startup.
+void net_platform_init(void);
+
 // Set socket to non-blocking mode.
 void net_set_nonblocking(int sockfd);
 

@@ -1,13 +1,25 @@
+#ifdef _WIN32
+  #define WIN32_LEAN_AND_MEAN
+  #define NOGDI
+  #define NOUSER
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #define close_socket closesocket
+  #define strcasecmp _stricmp
+#else
+  #include <unistd.h>
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <netinet/tcp.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>
+  #define close_socket close
+#endif
+
 #include "net_client.h"
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <netdb.h>
 
 void net_client_init(NetClient *nc)
 {
@@ -31,28 +43,28 @@ int net_client_connect(NetClient *nc, const char *host, int port, const char *lo
     struct hostent *he = gethostbyname(host);
     if (!he) {
         snprintf(nc->errorMsg, sizeof(nc->errorMsg), "Cannot resolve host: %s", host);
-        close(nc->sockfd); nc->sockfd = -1;
+        close_socket(nc->sockfd); nc->sockfd = -1;
         nc->state = NET_ERROR;
         return -1;
     }
 
-    struct sockaddr_in servaddr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(port),
-    };
+    struct sockaddr_in servaddr;
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(port);
     memcpy(&servaddr.sin_addr, he->h_addr_list[0], he->h_length);
 
     // Connect (blocking for simplicity)
     if (connect(nc->sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
         snprintf(nc->errorMsg, sizeof(nc->errorMsg), "Connection failed: %s", strerror(errno));
-        close(nc->sockfd); nc->sockfd = -1;
+        close_socket(nc->sockfd); nc->sockfd = -1;
         nc->state = NET_ERROR;
         return -1;
     }
 
     // TCP_NODELAY
     int one = 1;
-    setsockopt(nc->sockfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    setsockopt(nc->sockfd, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one));
 
     // Send JOIN message: [lobbyCode:4][nameLen:1][name:N]
     uint8_t joinPayload[LOBBY_CODE_LEN + 1 + 32] = {0};
@@ -68,7 +80,7 @@ int net_client_connect(NetClient *nc, const char *host, int port, const char *lo
     }
     if (net_send_msg(nc->sockfd, MSG_JOIN, joinPayload, LOBBY_CODE_LEN + 1 + nameLen) < 0) {
         snprintf(nc->errorMsg, sizeof(nc->errorMsg), "Failed to send JOIN");
-        close(nc->sockfd); nc->sockfd = -1;
+        close_socket(nc->sockfd); nc->sockfd = -1;
         nc->state = NET_ERROR;
         return -1;
     }
@@ -214,7 +226,7 @@ void net_client_poll(NetClient *nc)
     if (result < 0) {
         snprintf(nc->errorMsg, sizeof(nc->errorMsg), "Disconnected from server");
         nc->state = NET_ERROR;
-        close(nc->sockfd);
+        close_socket(nc->sockfd);
         nc->sockfd = -1;
     }
 }
@@ -263,7 +275,7 @@ void net_client_send_remove_unit(NetClient *nc, int unitIndex)
 void net_client_disconnect(NetClient *nc)
 {
     if (nc->sockfd >= 0) {
-        close(nc->sockfd);
+        close_socket(nc->sockfd);
         nc->sockfd = -1;
     }
     nc->state = NET_DISCONNECTED;
@@ -285,12 +297,12 @@ int net_leaderboard_submit(const char *host, int port, const LeaderboardEntry *e
 
     if (net_send_msg(sockfd, MSG_LEADERBOARD_SUBMIT, payload, LEADERBOARD_ENTRY_NET_SIZE) < 0) {
         printf("[Leaderboard] Failed to send submit\n");
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
 
     // Optionally read back the full leaderboard response (best-effort)
-    close(sockfd);
+    close_socket(sockfd);
     printf("[Leaderboard] Submitted entry for '%s' round %d\n", entry->playerName, entry->highestRound);
     return 0;
 }
@@ -305,18 +317,18 @@ int net_leaderboard_fetch(const char *host, int port, Leaderboard *lb)
 
     if (net_send_msg(sockfd, MSG_LEADERBOARD_REQUEST, NULL, 0) < 0) {
         printf("[Leaderboard] Failed to send request\n");
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
 
     NetMessage msg;
     if (net_recv_msg(sockfd, &msg) < 0 || msg.type != MSG_LEADERBOARD_DATA) {
         printf("[Leaderboard] Failed to receive leaderboard data\n");
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
 
-    close(sockfd);
+    close_socket(sockfd);
 
     // Deserialize: [entryCount:1][entries...]
     if (msg.size < 1) return -1;
@@ -356,17 +368,17 @@ int net_nfc_prefetch(const char *host, int port, NfcUidCache *cache)
 
     if (net_send_msg(sockfd, MSG_NFC_PREFETCH, NULL, 0) < 0) {
         printf("[NFC] Failed to send prefetch\n");
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
 
     NetMessage msg;
     if (net_recv_msg(sockfd, &msg) < 0 || msg.type != MSG_NFC_PREFETCH_DATA) {
         printf("[NFC] Failed to receive prefetch data\n");
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
-    close(sockfd);
+    close_socket(sockfd);
 
     // Parse: [count:2 LE][uids × (hexLen:1, hexChars:N)]
     if (msg.size < 2) return -1;
@@ -418,17 +430,17 @@ int net_nfc_lookup(const char *host, int port, const uint8_t *uid, int uidLen,
 
     if (net_send_msg(sockfd, MSG_NFC_LOOKUP, payload, 1 + uidLen) < 0) {
         printf("[NFC] Failed to send lookup\n");
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
 
     NetMessage msg;
     if (net_recv_msg(sockfd, &msg) < 0 || msg.type != MSG_NFC_DATA) {
         printf("[NFC] Failed to receive NFC data\n");
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
-    close(sockfd);
+    close_socket(sockfd);
 
     // Parse response: [uidLen:1][uid:N][status:1][typeIndex:1][rarity:1][abilities × 4 × (id:1, level:1)][nameLen:1][name:nameLen]
     if (msg.size < 1 + uidLen + 3) return -1;
@@ -483,7 +495,7 @@ int net_nfc_set_name(const char *host, int port, const uint8_t *uid, int uidLen,
     memcpy(payload + 2 + uidLen, name, nameLen);
 
     int result = net_send_msg(sockfd, MSG_NFC_SET_NAME, payload, 2 + uidLen + nameLen);
-    close(sockfd);
+    close_socket(sockfd);
     return result;
 }
 
@@ -515,11 +527,11 @@ int net_nfc_update_abilities(const char *host, int port, const uint8_t *uid, int
 
     if (net_send_msg(sockfd, MSG_NFC_ABILITY_UPDATE, payload, off) < 0) {
         printf("[NFC] Failed to send ability update\n");
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
 
-    close(sockfd);
+    close_socket(sockfd);
     return 0;
 }
 
@@ -542,10 +554,10 @@ int net_nfc_reset_abilities(const char *host, int port, const uint8_t *uid, int 
 
     if (net_send_msg(sockfd, MSG_NFC_ABILITY_RESET, payload, 1 + uidLen) < 0) {
         printf("[NFC] Failed to send ability reset\n");
-        close(sockfd);
+        close_socket(sockfd);
         return -1;
     }
 
-    close(sockfd);
+    close_socket(sockfd);
     return 0;
 }
