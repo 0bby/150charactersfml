@@ -738,6 +738,7 @@ int main(void)
                                                        &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities) == 0) {
                                         if (nfcStatus == NFC_STATUS_OK && nfcTypeIdx < unitTypeCount) {
                                             if (SpawnUnit(units, &unitCount, nfcTypeIdx, TEAM_BLUE)) {
+                                                PlaySound(sfxNewCharacter);
                                                 for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
                                                     units[unitCount - 1].abilities[a] = nfcAbilities[a];
                                                 memcpy(units[unitCount - 1].nfcUid, nfcUid, nfcUidLen);
@@ -807,6 +808,7 @@ int main(void)
                             snprintf(nfcInputError, sizeof(nfcInputError), "Team full (%d/%d)", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
                             nfcInputErrorTimer = 2.0f;
                         } else {
+                            PlaySound(sfxNewCharacter);
                             for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
                                 units[unitCount - 1].abilities[a] = emAbilities[a];
                             intro = (UnitIntro){ .active = true, .timer = 0.0f,
@@ -1029,6 +1031,7 @@ int main(void)
                     Rectangle r = { (float)btnXBlue, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
                     if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded) {
                         if (SpawnUnit(units, &unitCount, i, TEAM_BLUE)) {
+                            PlaySound(sfxNewCharacter);
                             // Place on blue side
                             units[unitCount-1].position.x = (float)GetRandomValue(-50, 50);
                             units[unitCount-1].position.z = (float)GetRandomValue(10, 80);
