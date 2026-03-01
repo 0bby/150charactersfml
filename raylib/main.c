@@ -566,8 +566,8 @@ int main(void)
     Modifier modifiers[MAX_MODIFIERS] = { 0 };
     Projectile projectiles[MAX_PROJECTILES] = { 0 };
     Particle particles[MAX_PARTICLES] = { 0 };
-    int playerGold = 20; // DEBUG: was 10
-    int goldPerRound = 5;
+    int playerGold = 25;
+    int goldPerRound = 10;
     int rollCost = 1;
     const int rollCostBase = 1;
     const int rollCostIncrement = 1;
@@ -1372,7 +1372,7 @@ int main(void)
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
                     statueSpawn.phase = SSPAWN_INACTIVE;
-                    playerGold = 20;
+                    playerGold = 25;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     RollShop(shopSlots, &playerGold, 0);
                     rollCost = rollCostBase;
@@ -3424,7 +3424,7 @@ int main(void)
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
-                playerGold = 20;
+                playerGold = 25;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
                 joinCodeLen = 0;
@@ -3496,7 +3496,7 @@ int main(void)
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
                     statueSpawn.phase = SSPAWN_INACTIVE;
-                    playerGold = 20;
+                    playerGold = 25;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     dragState.dragging = false;
                     unitCount = 0;
@@ -3548,7 +3548,7 @@ int main(void)
                 ClearAllFissures(fissures);
                 intro.active = false;
                 statueSpawn.phase = SSPAWN_INACTIVE;
-                playerGold = 20;
+                playerGold = 25;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
                 memset(plazaData, 0, sizeof(plazaData));
