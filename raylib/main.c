@@ -23,6 +23,7 @@
 #define GLSL_VERSION 330
 
 #include "game.h"
+#include "synergies.h"
 #include "helpers.h"
 #include "leaderboard.h"
 #include "net_client.h"
@@ -148,7 +149,7 @@ int main(void)
     camera.projection = CAMERA_PERSPECTIVE;
 
     // Unit types
-    int unitTypeCount = 3;
+    int unitTypeCount = 6;
     UnitType unitTypes[MAX_UNIT_TYPES] = { 0 };
     unitTypes[0].name = "Mushroom";
     unitTypes[0].modelPath = "MUSHROOMmixamotest.obj";
@@ -157,13 +158,14 @@ int main(void)
     unitTypes[1].name = "Goblin";
     unitTypes[1].modelPath = "assets/goblin/animations/PluginGoblinWalk.glb";
     unitTypes[1].scale = 9.0f;
-    unitTypes[2].name = "Reptile";
-    unitTypes[2].modelPath = "assets/classes/reptile/reptile.obj";
-    unitTypes[2].scale = 0.07f;
-    unitTypes[2].yOffset = 1.5f;
+    unitTypes[5].name = "Reptile";
+    unitTypes[5].modelPath = "assets/classes/reptile/reptile.obj";
+    unitTypes[5].scale = 0.07f;
+    unitTypes[5].yOffset = 1.5f;
 
     for (int i = 0; i < unitTypeCount; i++)
     {
+        if (!unitTypes[i].modelPath) { unitTypes[i].loaded = false; continue; }
         unitTypes[i].model = LoadModel(unitTypes[i].modelPath);
         if (unitTypes[i].model.meshCount > 0)
         {
@@ -463,6 +465,11 @@ int main(void)
     int hoverAbilityLevel = 0;
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
+
+    // Synergy hover tooltip state
+    int hoverSynergyIdx = -1;
+    float hoverSynergyTimer = 0.0f;
+    const float synergyTooltipDelay = 0.3f;
 
     // --- Visual juice state ---
     float fightBannerTimer = -1.0f;  // <0 = inactive
@@ -797,6 +804,8 @@ int main(void)
         int prevHoverAbilityId = hoverAbilityId;
         hoverAbilityId = -1;
         hoverAbilityLevel = 0;
+        int prevHoverSynergyIdx = hoverSynergyIdx;
+        hoverSynergyIdx = -1;
 
         // Lerp camera toward phase preset
         {
@@ -1151,7 +1160,9 @@ int main(void)
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
                 int dHudTop = sh - HUD_TOTAL_HEIGHT;
-                int btnYStart = dHudTop - (unitTypeCount * (btnHeight + btnMargin)) - btnMargin;
+                int plazaValidCount = 0;
+                for (int i = 0; i < unitTypeCount; i++) if (unitTypes[i].name) plazaValidCount++;
+                int btnYStart = dHudTop - (plazaValidCount * (btnHeight + btnMargin)) - btnMargin;
 
                 // NFC input box click check
                 {
@@ -1167,8 +1178,11 @@ int main(void)
                 }
 
                 int btnXBlue = btnMargin;
+                int clickIdx = 0;
                 for (int i = 0; i < unitTypeCount; i++) {
-                    Rectangle r = { (float)btnXBlue, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                    if (!unitTypes[i].name) continue;
+                    Rectangle r = { (float)btnXBlue, (float)(btnYStart + clickIdx*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                    clickIdx++;
                     if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded) {
                         if (SpawnUnit(units, &unitCount, i, TEAM_BLUE)) {
                             PlaySound(sfxNewCharacter);
@@ -1424,7 +1438,9 @@ int main(void)
                 int hudTop = sh - HUD_TOTAL_HEIGHT;
                 int btnXBlue = btnMargin;
                 int btnXRed  = sw - btnWidth - btnMargin;
-                int btnYStart = hudTop - (unitTypeCount * (btnHeight + btnMargin)) - btnMargin;
+                int prepValidCount = 0;
+                for (int i = 0; i < unitTypeCount; i++) if (unitTypes[i].name) prepValidCount++;
+                int btnYStart = hudTop - (prepValidCount * (btnHeight + btnMargin)) - btnMargin;
                 Rectangle playBtn = { (float)(sw/2 - playBtnW/2), (float)(hudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 bool clickedButton = false;
 
@@ -1563,9 +1579,12 @@ int main(void)
                 // Blue spawn buttons (debug only)
                 if (!clickedButton && debugMode)
                 {
+                    int ci = 0;
                     for (int i = 0; i < unitTypeCount; i++)
                     {
-                        Rectangle r = { (float)btnXBlue, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                        if (!unitTypes[i].name) continue;
+                        Rectangle r = { (float)btnXBlue, (float)(btnYStart + ci*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                        ci++;
                         if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded)
                         {
                             if (SpawnUnit(units, &unitCount, i, TEAM_BLUE)) {
@@ -1580,9 +1599,12 @@ int main(void)
                 // Red spawn buttons (debug only)
                 if (!clickedButton && debugMode)
                 {
+                    int ci = 0;
                     for (int i = 0; i < unitTypeCount; i++)
                     {
-                        Rectangle r = { (float)btnXRed, (float)(btnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                        if (!unitTypes[i].name) continue;
+                        Rectangle r = { (float)btnXRed, (float)(btnYStart + ci*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                        ci++;
                         if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded) {
                             if (SpawnUnit(units, &unitCount, i, TEAM_RED))
                                 AssignRandomAbilities(&units[unitCount-1], GetRandomValue(1, 2));
@@ -3667,13 +3689,17 @@ int main(void)
             int dHudTop = sh - HUD_TOTAL_HEIGHT;
             int dBtnXBlue = btnMargin;
             int dBtnXRed  = sw - btnWidth - btnMargin;
-            int dBtnYStart = dHudTop - (unitTypeCount * (btnHeight + btnMargin)) - btnMargin;
+            int validTypeCount = 0;
+            for (int i = 0; i < unitTypeCount; i++) if (unitTypes[i].name) validTypeCount++;
+            int dBtnYStart = dHudTop - (validTypeCount * (btnHeight + btnMargin)) - btnMargin;
 
             // Spawn buttons (debug mode only — F1 to toggle)
             if (debugMode) {
+                int drawIdx = 0;
                 for (int i = 0; i < unitTypeCount; i++)
                 {
-                    Rectangle r = { (float)dBtnXBlue, (float)(dBtnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                    if (!unitTypes[i].name) continue;
+                    Rectangle r = { (float)dBtnXBlue, (float)(dBtnYStart + drawIdx*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
                     Color c = unitTypes[i].loaded ? (Color){100,140,230,255} : LIGHTGRAY;
                     if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = BLUE;
                     DrawRectangleRec(r, c);
@@ -3681,11 +3707,14 @@ int main(void)
                     const char *l = TextFormat("BLUE %s", unitTypes[i].name);
                     int lw = MeasureText(l, 14);
                     DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
+                    drawIdx++;
                 }
 
+                drawIdx = 0;
                 for (int i = 0; i < unitTypeCount; i++)
                 {
-                    Rectangle r = { (float)dBtnXRed, (float)(dBtnYStart + i*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
+                    if (!unitTypes[i].name) continue;
+                    Rectangle r = { (float)dBtnXRed, (float)(dBtnYStart + drawIdx*(btnHeight+btnMargin)), (float)btnWidth, (float)btnHeight };
                     Color c = unitTypes[i].loaded ? (Color){230,100,100,255} : LIGHTGRAY;
                     if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = RED;
                     DrawRectangleRec(r, c);
@@ -3693,6 +3722,7 @@ int main(void)
                     const char *l = TextFormat("RED %s", unitTypes[i].name);
                     int lw = MeasureText(l, 14);
                     DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
+                    drawIdx++;
                 }
 
                 DrawText("[F1] DEBUG MODE", dBtnXBlue, dBtnYStart - 20, 12, YELLOW);
@@ -4187,6 +4217,124 @@ int main(void)
                 }
             }
 
+            // --- Synergy Panel (right of unit cards) ---
+            {
+                // Compute synergy tiers for blue team (display only)
+                int synTier[SYNERGY_COUNT];
+                int synMatchCount[SYNERGY_COUNT];
+                bool unitSyn[BLUE_TEAM_MAX_SIZE][SYNERGY_COUNT];
+                for (int s = 0; s < (int)SYNERGY_COUNT; s++) synTier[s] = -1;
+                for (int s = 0; s < (int)SYNERGY_COUNT; s++) synMatchCount[s] = 0;
+                for (int sl = 0; sl < BLUE_TEAM_MAX_SIZE; sl++)
+                    for (int s = 0; s < (int)SYNERGY_COUNT; s++)
+                        unitSyn[sl][s] = false;
+
+                for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
+                    const SynergyDef *syn = &SYNERGY_DEFS[s];
+                    int matchCount = 0;
+                    if (syn->requireAllTypes) {
+                        bool typePresent[4] = {0};
+                        for (int sl = 0; sl < blueHudCount; sl++) {
+                            int ui = blueHudUnits[sl];
+                            for (int r = 0; r < syn->requiredTypeCount; r++)
+                                if (units[ui].typeIndex == syn->requiredTypes[r])
+                                    typePresent[r] = true;
+                        }
+                        for (int r = 0; r < syn->requiredTypeCount; r++)
+                            if (typePresent[r]) matchCount++;
+                    } else {
+                        for (int sl = 0; sl < blueHudCount; sl++) {
+                            int ui = blueHudUnits[sl];
+                            for (int r = 0; r < syn->requiredTypeCount; r++) {
+                                if (units[ui].typeIndex == syn->requiredTypes[r]) {
+                                    matchCount++;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    synMatchCount[s] = matchCount;
+                    for (int tier = 0; tier < syn->tierCount; tier++)
+                        if (matchCount >= syn->tiers[tier].minUnits)
+                            synTier[s] = tier;
+
+                    // Mark which card slots benefit from this synergy
+                    if (synTier[s] >= 0) {
+                        for (int sl = 0; sl < blueHudCount; sl++) {
+                            int ui = blueHudUnits[sl];
+                            bool isTarget = false;
+                            if (syn->targetType < 0) {
+                                for (int r = 0; r < syn->requiredTypeCount; r++)
+                                    if (units[ui].typeIndex == syn->requiredTypes[r])
+                                        { isTarget = true; break; }
+                            } else {
+                                isTarget = (units[ui].typeIndex == syn->targetType);
+                            }
+                            unitSyn[sl][s] = isTarget;
+                        }
+                    }
+                }
+
+                // Draw synergy panel rows (right of the cards)
+                int synPanelX = cardsStartX + totalCardsW + 12;
+                int synPanelY = cardsY + 2;
+                int synRowH = 20;
+                int activeSynCount = 0;
+                for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
+                    if (synTier[s] < 0) continue;
+                    const SynergyDef *syn = &SYNERGY_DEFS[s];
+                    int rowY = synPanelY + activeSynCount * synRowH;
+
+                    // Hover detection for tooltip
+                    Rectangle synRow = { (float)synPanelX, (float)rowY, 140.0f, (float)synRowH };
+                    bool synHovered = CheckCollisionPointRec(GetMousePosition(), synRow);
+                    if (synHovered) hoverSynergyIdx = s;
+
+                    // Colored dot
+                    DrawCircle(synPanelX + 5, rowY + synRowH / 2, 4, syn->color);
+                    // Synergy name
+                    DrawText(syn->name, synPanelX + 14, rowY + 2, 10, WHITE);
+                    // Tier pips
+                    int pipX = synPanelX + 14 + MeasureText(syn->name, 10) + 6;
+                    for (int t = 0; t < syn->tierCount; t++) {
+                        Color pipColor = (t <= synTier[s])
+                            ? syn->color
+                            : (Color){ 60, 60, 80, 255 };
+                        DrawCircle(pipX + t * 10, rowY + synRowH / 2, 3, pipColor);
+                    }
+                    // Buff text
+                    if (syn->buffDesc[synTier[s]]) {
+                        int buffX = pipX + syn->tierCount * 10 + 6;
+                        DrawText(syn->buffDesc[synTier[s]], buffX, rowY + 4, 10,
+                                 (Color){ 160, 160, 180, 200 });
+                    }
+                    activeSynCount++;
+                }
+
+                // Per-card synergy badges (below each unit card)
+                for (int sl = 0; sl < blueHudCount; sl++) {
+                    int cardX = cardsStartX + sl * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
+                    int badgeY = cardsY + HUD_CARD_HEIGHT + 2;
+                    int badgeX = cardX + 2;
+                    for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
+                        if (!unitSyn[sl][s]) continue;
+                        const SynergyDef *syn = &SYNERGY_DEFS[s];
+                        int abbrW = MeasureText(syn->abbrev, 9) + 6;
+                        // Pill background
+                        DrawRectangle(badgeX, badgeY, abbrW, 14,
+                                      (Color){ syn->color.r, syn->color.g, syn->color.b, 180 });
+                        DrawRectangleLines(badgeX, badgeY, abbrW, 14,
+                                           (Color){ syn->color.r, syn->color.g, syn->color.b, 255 });
+                        DrawText(syn->abbrev, badgeX + 3, badgeY + 2, 9, WHITE);
+                        // Badge hover detection
+                        Rectangle badgeRect = { (float)badgeX, (float)badgeY, (float)abbrW, 14.0f };
+                        if (CheckCollisionPointRec(GetMousePosition(), badgeRect))
+                            hoverSynergyIdx = s;
+                        badgeX += abbrW + 3;
+                    }
+                }
+            }
+
             // --- Drag ghost ---
             if (dragState.dragging && dragState.abilityId >= 0 && dragState.abilityId < ABILITY_COUNT) {
                 Vector2 dmouse = GetMousePosition();
@@ -4442,6 +4590,86 @@ int main(void)
                     }
                 }
                 lineY += 14;
+            }
+        }
+
+        // --- Synergy hover tooltip timer + drawing ---
+        if (hoverSynergyIdx >= 0 && hoverSynergyIdx == prevHoverSynergyIdx)
+            hoverSynergyTimer += dt;
+        else if (hoverSynergyIdx >= 0)
+            hoverSynergyTimer = dt;
+        else
+            hoverSynergyTimer = 0.0f;
+
+        if (hoverSynergyIdx >= 0 && hoverSynergyIdx < (int)SYNERGY_COUNT
+            && hoverSynergyTimer >= synergyTooltipDelay) {
+            const SynergyDef *syn = &SYNERGY_DEFS[hoverSynergyIdx];
+            Vector2 mpos = GetMousePosition();
+
+            // Count matching blue units for the tooltip
+            int synMatch = 0;
+            if (syn->requireAllTypes) {
+                bool tp[4] = {0};
+                for (int i = 0; i < unitCount; i++) {
+                    if (!units[i].active || units[i].team != TEAM_BLUE) continue;
+                    for (int r = 0; r < syn->requiredTypeCount; r++)
+                        if (units[i].typeIndex == syn->requiredTypes[r])
+                            tp[r] = true;
+                }
+                for (int r = 0; r < syn->requiredTypeCount; r++)
+                    if (tp[r]) synMatch++;
+            } else {
+                for (int i = 0; i < unitCount; i++) {
+                    if (!units[i].active || units[i].team != TEAM_BLUE) continue;
+                    for (int r = 0; r < syn->requiredTypeCount; r++) {
+                        if (units[i].typeIndex == syn->requiredTypes[r]) {
+                            synMatch++;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Find current tier
+            int curTier = -1;
+            for (int t = 0; t < syn->tierCount; t++)
+                if (synMatch >= syn->tiers[t].minUnits) curTier = t;
+
+            // Next tier threshold
+            int nextThresh = 0;
+            if (curTier + 1 < syn->tierCount)
+                nextThresh = syn->tiers[curTier + 1].minUnits;
+
+            // Build tooltip content
+            const char *tierLabel = (curTier >= 0) ? TextFormat("%s %s", syn->name,
+                (curTier == 0) ? "I" : (curTier == 1) ? "II" : "III") : syn->name;
+            const char *bonusText = (curTier >= 0 && syn->buffDesc[curTier])
+                ? syn->buffDesc[curTier] : "Inactive";
+            const char *countText;
+            if (syn->requireAllTypes)
+                countText = TextFormat("%d/%d types", synMatch, syn->requiredTypeCount);
+            else {
+                int maxNeeded = syn->tiers[syn->tierCount - 1].minUnits;
+                countText = TextFormat("%d/%d %s", synMatch, maxNeeded,
+                    (syn->requiredTypeCount == 1) ? GetUnitTypeName(syn->requiredTypes[0]) : "units");
+            }
+
+            int tipW = 180;
+            int tipH = 52;
+            if (nextThresh > 0) tipH += 14;
+            int tipX = (int)mpos.x + 14;
+            int tipY = (int)mpos.y - tipH - 4;
+            if (tipX + tipW > GetScreenWidth()) tipX = (int)mpos.x - tipW - 4;
+            if (tipY < 0) tipY = (int)mpos.y + 20;
+            DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
+            DrawRectangleLines(tipX, tipY, tipW, tipH, syn->color);
+            DrawText(tierLabel, tipX + 6, tipY + 4, 12, WHITE);
+            DrawText(bonusText, tipX + 6, tipY + 20, 10, (Color){200, 200, 220, 220});
+            DrawText(countText, tipX + 6, tipY + 36, 10, (Color){160, 160, 180, 200});
+            if (nextThresh > 0) {
+                const char *nextText = TextFormat("Next: %d for tier %s",
+                    nextThresh, (curTier + 1 == 1) ? "II" : "III");
+                DrawText(nextText, tipX + 6, tipY + 50, 9, (Color){120, 120, 140, 180});
             }
         }
 
@@ -5139,7 +5367,7 @@ int main(void)
             UnloadModelAnimations(unitTypes[i].idleAnims, unitTypes[i].idleAnimCount);
         if (unitTypes[i].scaredAnims)
             UnloadModelAnimations(unitTypes[i].scaredAnims, unitTypes[i].scaredAnimCount);
-        UnloadModel(unitTypes[i].model);
+        if (unitTypes[i].loaded) UnloadModel(unitTypes[i].model);
     }
     for (int i = 0; i < TILE_VARIANTS; i++) UnloadModel(tileModels[i]);
     UnloadTexture(tileDiffuse);

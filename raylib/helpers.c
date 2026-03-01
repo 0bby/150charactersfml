@@ -740,12 +740,13 @@ static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
 // Spawn a wave of enemies for the given round (0-indexed)
 void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
 {
+    (void)unitTypeCount; // use VALID_UNIT_TYPES instead
     if (round < TOTAL_ROUNDS) {
         // Scripted wave (rounds 0-4)
         const WaveDef *wave = &WAVE_DEFS[round];
         for (int e = 0; e < wave->count; e++) {
             int type = wave->entries[e].unitType;
-            if (type < 0) type = GetRandomValue(0, unitTypeCount - 1);
+            if (type < 0) type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
             if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
                 Unit *u = &units[*unitCount - 1];
                 u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
@@ -766,7 +767,7 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
         float hpScale = powf(1.25f, (float)(extraRounds + 1));
         float dmgScale = powf(1.15f, (float)(extraRounds + 1));
         for (int e = 0; e < enemyCount; e++) {
-            int type = GetRandomValue(0, unitTypeCount - 1);
+            int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
             if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
                 Unit *u = &units[*unitCount - 1];
                 u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
@@ -795,12 +796,26 @@ void ApplySynergies(Unit units[], int unitCount)
 
             // Count units matching any of the required types on this team
             int matchCount = 0;
-            for (int i = 0; i < unitCount; i++) {
-                if (!units[i].active || units[i].team != t) continue;
-                for (int r = 0; r < syn->requiredTypeCount; r++) {
-                    if (units[i].typeIndex == syn->requiredTypes[r]) {
-                        matchCount++;
-                        break;
+            if (syn->requireAllTypes) {
+                // Count distinct required types present (for multi-type synergies)
+                bool typePresent[4] = {0};
+                for (int i = 0; i < unitCount; i++) {
+                    if (!units[i].active || units[i].team != t) continue;
+                    for (int r = 0; r < syn->requiredTypeCount; r++) {
+                        if (units[i].typeIndex == syn->requiredTypes[r])
+                            typePresent[r] = true;
+                    }
+                }
+                for (int r = 0; r < syn->requiredTypeCount; r++)
+                    if (typePresent[r]) matchCount++;
+            } else {
+                for (int i = 0; i < unitCount; i++) {
+                    if (!units[i].active || units[i].team != t) continue;
+                    for (int r = 0; r < syn->requiredTypeCount; r++) {
+                        if (units[i].typeIndex == syn->requiredTypes[r]) {
+                            matchCount++;
+                            break;
+                        }
                     }
                 }
             }
@@ -1042,7 +1057,7 @@ static void BattleLogAdd(BattleLog *log, BattleLogType type, float time, const c
 void BattleLogAddCast(BattleLog *log, float time, Team casterTeam, int casterType, int abilityId)
 {
     const char *teamName = (casterTeam == TEAM_BLUE) ? "Blue" : "Red";
-    const char *unitName = UNIT_TYPE_NAMES[casterType];
+    const char *unitName = GetUnitTypeName(casterType);
     const char *abilName = ABILITY_DEFS[abilityId].name;
     char buf[80];
     snprintf(buf, sizeof(buf), "%s %s cast %s", teamName, unitName, abilName);
@@ -1053,14 +1068,14 @@ void BattleLogAddCast(BattleLog *log, float time, Team casterTeam, int casterTyp
 void BattleLogAddKill(BattleLog *log, float time, Team killerTeam, int killerType, Team victimTeam, int victimType, int abilityId)
 {
     const char *vTeamName = (victimTeam == TEAM_BLUE) ? "Blue" : "Red";
-    const char *vUnitName = UNIT_TYPE_NAMES[victimType];
+    const char *vUnitName = GetUnitTypeName(victimType);
     char buf[80];
     if (abilityId >= 0 && abilityId < ABILITY_COUNT) {
         const char *abilName = ABILITY_DEFS[abilityId].name;
         snprintf(buf, sizeof(buf), "%s killed %s %s", abilName, vTeamName, vUnitName);
     } else {
         const char *kTeamName = (killerTeam == TEAM_BLUE) ? "Blue" : "Red";
-        const char *kUnitName = UNIT_TYPE_NAMES[killerType];
+        const char *kUnitName = GetUnitTypeName(killerType);
         snprintf(buf, sizeof(buf), "%s %s killed %s %s", kTeamName, kUnitName, vTeamName, vUnitName);
     }
     Color c = (killerTeam == TEAM_BLUE) ? (Color){100, 200, 255, 255} : (Color){255, 100, 100, 255};

@@ -22,8 +22,9 @@ static const float zoneCentersZ[5] = { -40.0f, -40.0f, 0.0f,  40.0f, 40.0f };
 
 void PlazaSpawnEnemies(Unit units[], int *unitCount, int unitTypeCount, PlazaUnitData plazaData[])
 {
+    (void)unitTypeCount; // use VALID_UNIT_TYPES instead
     for (int i = 0; i < PLAZA_ENEMY_COUNT; i++) {
-        int type = GetRandomValue(0, unitTypeCount - 1);
+        int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
         if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
             int idx = *unitCount - 1;
             Unit *u = &units[idx];

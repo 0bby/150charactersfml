@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include "raylib.h"
 
 //------------------------------------------------------------------------------------
@@ -13,11 +14,30 @@ typedef struct {
 } UnitStats;
 
 #ifndef SERVER_BUILD
-static const char *UNIT_TYPE_NAMES[] = { "Mushroom", "Goblin", "Reptile" };
+static const char *UNIT_TYPE_NAMES[] = {
+    /* 0 */ "Mushroom",
+    /* 1 */ "Goblin",
+    /* 2 */ NULL,
+    /* 3 */ NULL,
+    /* 4 */ NULL,
+    /* 5 */ "Reptile",
+};
+#define UNIT_TYPE_NAME_COUNT (int)(sizeof(UNIT_TYPE_NAMES) / sizeof(UNIT_TYPE_NAMES[0]))
+static inline const char *GetUnitTypeName(int idx) {
+    if (idx < 0 || idx >= UNIT_TYPE_NAME_COUNT || !UNIT_TYPE_NAMES[idx]) return "Unknown";
+    return UNIT_TYPE_NAMES[idx];
+}
 #endif
+
+// Valid (non-empty) unit type indices for random selection
+static const int VALID_UNIT_TYPES[] = { 0, 1, 5 };
+#define VALID_UNIT_TYPE_COUNT (int)(sizeof(VALID_UNIT_TYPES) / sizeof(VALID_UNIT_TYPES[0]))
 
 static const UnitStats UNIT_STATS[] = {
     /* 0  Mushroom */ { .health = 40.0f, .movementSpeed = 12.0f, .attackDamage = 3.0f, .attackSpeed = 1.2f },
     /* 1  Goblin   */ { .health = 20.0f, .movementSpeed = 20.0f, .attackDamage = 2.0f, .attackSpeed = 0.5f },
-    /* 2  Reptile  */ { .health = 30.0f, .movementSpeed = 15.0f, .attackDamage = 5.0f, .attackSpeed = 0.9f },
+    /* 2  (unused) */ { .health = 0, .movementSpeed = 0, .attackDamage = 0, .attackSpeed = 0 },
+    /* 3  (unused) */ { .health = 0, .movementSpeed = 0, .attackDamage = 0, .attackSpeed = 0 },
+    /* 4  (unused) */ { .health = 0, .movementSpeed = 0, .attackDamage = 0, .attackSpeed = 0 },
+    /* 5  Reptile  */ { .health = 30.0f, .movementSpeed = 15.0f, .attackDamage = 5.0f, .attackSpeed = 0.9f },
 };
