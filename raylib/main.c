@@ -2793,7 +2793,7 @@ int main(void)
                             }
                         }
                     }
-                    // HIT — Hook: pull target to caster, damage by distance
+                    // HIT — Hook: damage by distance, then pull target to caster
                     if (projectiles[p].type == PROJ_HOOK) {
                         if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
                             float hookDist = DistXZ(units[ti].position, units[projectiles[p].sourceIndex].position);
@@ -2806,10 +2806,6 @@ int main(void)
                             units[ti].hitFlash = HIT_FLASH_DURATION;
                             SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
 
-                            // Teleport target to caster
-                            units[ti].position.x = units[projectiles[p].sourceIndex].position.x;
-                            units[ti].position.z = units[projectiles[p].sourceIndex].position.z;
-                            TriggerShake(&shake, 6.0f, 0.3f);
                             if (units[ti].currentHealth <= 0) {
                                 PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
                                 SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
@@ -2829,6 +2825,11 @@ int main(void)
                                 if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
                                 BattleLogAddKill(&battleLog, combatElapsedTime, units[projectiles[p].sourceIndex].team, units[projectiles[p].sourceIndex].typeIndex, units[ti].team, units[ti].typeIndex, ABILITY_HOOK);
                                 units[ti].active = false;
+                            } else {
+                                // Start pulling target to caster
+                                units[ti].hookPullDest = units[projectiles[p].sourceIndex].position;
+                                units[ti].hookPullSpeed = projectiles[p].speed;
+                                AddModifier(modifiers, ti, MOD_STUN, 10.0f, 0); // stun during pull (cleared on arrival)
                             }
                         }
                         projectiles[p].active = false;
@@ -3034,6 +3035,30 @@ int main(void)
                             CheckPassiveSunder(&combatState, i);
                         }
                     }
+                }
+
+                // Hook pull movement — drag unit toward hook destination
+                if (units[i].hookPullSpeed > 0) {
+                    float hdx = units[i].hookPullDest.x - units[i].position.x;
+                    float hdz = units[i].hookPullDest.z - units[i].position.z;
+                    float hlen = sqrtf(hdx*hdx + hdz*hdz);
+                    float hstep = units[i].hookPullSpeed * dt;
+                    if (hlen <= hstep) {
+                        // Arrived at destination
+                        units[i].position.x = units[i].hookPullDest.x;
+                        units[i].position.z = units[i].hookPullDest.z;
+                        units[i].hookPullSpeed = 0;
+                        TriggerShake(&shake, 6.0f, 0.3f);
+                        // Remove the pull stun
+                        for (int m = 0; m < MAX_MODIFIERS; m++) {
+                            if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_STUN)
+                                modifiers[m].active = false;
+                        }
+                    } else {
+                        units[i].position.x += (hdx/hlen) * hstep;
+                        units[i].position.z += (hdz/hlen) * hstep;
+                    }
+                    continue; // skip normal movement while being pulled
                 }
 
                 bool digging = UnitHasModifier(modifiers, i, MOD_DIG_HEAL);
