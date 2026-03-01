@@ -272,38 +272,9 @@ void net_client_disconnect(NetClient *nc)
 //------------------------------------------------------------------------------------
 // Standalone leaderboard operations (short-lived blocking TCP)
 //------------------------------------------------------------------------------------
-static int lb_connect(const char *host, int port)
-{
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) return -1;
-
-    struct hostent *he = gethostbyname(host);
-    if (!he) { close(sockfd); return -1; }
-
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(port),
-    };
-    memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
-
-    // 3-second send/recv timeout
-    struct timeval tv = { .tv_sec = 3, .tv_usec = 0 };
-    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-    if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(sockfd);
-        return -1;
-    }
-
-    int one = 1;
-    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-    return sockfd;
-}
-
 int net_leaderboard_submit(const char *host, int port, const LeaderboardEntry *entry)
 {
-    int sockfd = lb_connect(host, port);
+    int sockfd = net_shortlived_connect(host, port);
     if (sockfd < 0) {
         printf("[Leaderboard] Failed to connect for submit\n");
         return -1;
@@ -326,7 +297,7 @@ int net_leaderboard_submit(const char *host, int port, const LeaderboardEntry *e
 
 int net_leaderboard_fetch(const char *host, int port, Leaderboard *lb)
 {
-    int sockfd = lb_connect(host, port);
+    int sockfd = net_shortlived_connect(host, port);
     if (sockfd < 0) {
         printf("[Leaderboard] Failed to connect for fetch\n");
         return -1;
@@ -367,5 +338,123 @@ int net_leaderboard_fetch(const char *host, int port, Leaderboard *lb)
     }
 
     printf("[Leaderboard] Fetched %d entries from server\n", lb->entryCount);
+    return 0;
+}
+
+//------------------------------------------------------------------------------------
+// NFC tag lookup (short-lived blocking TCP)
+//------------------------------------------------------------------------------------
+int net_nfc_lookup(const char *host, int port, const uint8_t *uid, int uidLen,
+                   uint8_t *outStatus, uint8_t *outTypeIndex, uint8_t *outRarity,
+                   AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT])
+{
+    if (uidLen < 4 || uidLen > NFC_UID_MAX_LEN) return -1;
+
+    int sockfd = net_shortlived_connect(host, port);
+    if (sockfd < 0) {
+        printf("[NFC] Failed to connect for lookup\n");
+        return -1;
+    }
+
+    uint8_t payload[1 + NFC_UID_MAX_LEN];
+    payload[0] = (uint8_t)uidLen;
+    memcpy(payload + 1, uid, uidLen);
+
+    if (net_send_msg(sockfd, MSG_NFC_LOOKUP, payload, 1 + uidLen) < 0) {
+        printf("[NFC] Failed to send lookup\n");
+        close(sockfd);
+        return -1;
+    }
+
+    NetMessage msg;
+    if (net_recv_msg(sockfd, &msg) < 0 || msg.type != MSG_NFC_DATA) {
+        printf("[NFC] Failed to receive NFC data\n");
+        close(sockfd);
+        return -1;
+    }
+    close(sockfd);
+
+    // Parse response: [uidLen:1][uid:N][status:1][typeIndex:1][rarity:1][abilities × 4 × (id:1, level:1)]
+    if (msg.size < 1 + uidLen + 3) return -1;
+    *outStatus = msg.payload[1 + uidLen];
+    *outTypeIndex = msg.payload[2 + uidLen];
+    *outRarity = msg.payload[3 + uidLen];
+
+    // Parse abilities if present
+    int abOff = 1 + uidLen + 3;
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+        if (abOff + 1 < msg.size) {
+            outAbilities[a].abilityId = (int8_t)msg.payload[abOff++];
+            outAbilities[a].level = msg.payload[abOff++];
+        } else {
+            outAbilities[a].abilityId = -1;
+            outAbilities[a].level = 0;
+        }
+        outAbilities[a].cooldownRemaining = 0;
+        outAbilities[a].triggered = false;
+    }
+    return 0;
+}
+
+//------------------------------------------------------------------------------------
+// NFC ability update (short-lived blocking TCP)
+//------------------------------------------------------------------------------------
+int net_nfc_update_abilities(const char *host, int port, const uint8_t *uid, int uidLen,
+                             const AbilitySlot abilities[], int abilityCount)
+{
+    if (uidLen < 4 || uidLen > NFC_UID_MAX_LEN) return -1;
+
+    int sockfd = net_shortlived_connect(host, port);
+    if (sockfd < 0) {
+        printf("[NFC] Failed to connect for ability update\n");
+        return -1;
+    }
+
+    // Payload: [uidLen:1][uid:N][abilityCount:1][abilities × (id:1, level:1)]
+    uint8_t payload[1 + NFC_UID_MAX_LEN + 1 + MAX_ABILITIES_PER_UNIT * 2];
+    int off = 0;
+    payload[off++] = (uint8_t)uidLen;
+    memcpy(payload + off, uid, uidLen);
+    off += uidLen;
+    payload[off++] = (uint8_t)abilityCount;
+    for (int i = 0; i < abilityCount; i++) {
+        payload[off++] = (uint8_t)(int8_t)abilities[i].abilityId;
+        payload[off++] = (uint8_t)abilities[i].level;
+    }
+
+    if (net_send_msg(sockfd, MSG_NFC_ABILITY_UPDATE, payload, off) < 0) {
+        printf("[NFC] Failed to send ability update\n");
+        close(sockfd);
+        return -1;
+    }
+
+    close(sockfd);
+    return 0;
+}
+
+//------------------------------------------------------------------------------------
+// NFC ability reset (short-lived blocking TCP)
+//------------------------------------------------------------------------------------
+int net_nfc_reset_abilities(const char *host, int port, const uint8_t *uid, int uidLen)
+{
+    if (uidLen < 4 || uidLen > NFC_UID_MAX_LEN) return -1;
+
+    int sockfd = net_shortlived_connect(host, port);
+    if (sockfd < 0) {
+        printf("[NFC] Failed to connect for ability reset\n");
+        return -1;
+    }
+
+    uint8_t payload[1 + NFC_UID_MAX_LEN];
+    payload[0] = (uint8_t)uidLen;
+    memcpy(payload + 1, uid, uidLen);
+
+    if (net_send_msg(sockfd, MSG_NFC_ABILITY_RESET, payload, 1 + uidLen) < 0) {
+        printf("[NFC] Failed to send ability reset\n");
+        close(sockfd);
+        return -1;
+    }
+
+    close(sockfd);
     return 0;
 }

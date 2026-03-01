@@ -535,14 +535,19 @@ int main(void)
 
     // --- NFC Bridge Subprocess ---
     FILE *nfcPipe = popen("../nfc/build/bridge", "r");
+    int nfcFd = -1;
+    char nfcLineBuf[128];
+    int nfcLinePos = 0;
     if (nfcPipe) {
-        int nfcFd = fileno(nfcPipe);
+        nfcFd = fileno(nfcPipe);
         int flags = fcntl(nfcFd, F_GETFL, 0);
         fcntl(nfcFd, F_SETFL, flags | O_NONBLOCK);
         printf("[NFC] Bridge launched\n");
     } else {
         printf("[NFC] Failed to launch bridge\n");
     }
+
+    // NFC UID is now stored directly in Unit.nfcUid / Unit.nfcUidLen
 
     //==================================================================================
     // MAIN LOOP
@@ -693,33 +698,69 @@ int main(void)
         float cameraPos[3] = { camera.position.x, camera.position.y, camera.position.z };
         SetShaderValue(lightShader, lightShader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
 
-        // Poll NFC bridge for tag scans (spawn during prep or plaza, blocked during intro)
-        if (nfcPipe && (phase == PHASE_PLAZA || phase == PHASE_PREP) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
-            char nfcBuf[64];
-            if (fgets(nfcBuf, sizeof(nfcBuf), nfcPipe)) {
-                nfcBuf[strcspn(nfcBuf, "\r\n")] = '\0';
-                // Parse optional reader prefix "N:" (e.g. "1:0MM1..." or "2:1DG2...")
-                int nfcReader = 0;
-                const char *nfcCode = nfcBuf;
-                if (nfcBuf[0] >= '1' && nfcBuf[0] <= '9' && nfcBuf[1] == ':') {
-                    nfcReader = nfcBuf[0] - '0';
-                    nfcCode = nfcBuf + 2;
-                }
-                int nfcTypeIndex;
-                AbilitySlot nfcAbilities[MAX_ABILITIES_PER_UNIT];
-                if (ParseUnitCode(nfcCode, &nfcTypeIndex, nfcAbilities)) {
-                    if (nfcTypeIndex < unitTypeCount && SpawnUnit(units, &unitCount, nfcTypeIndex, TEAM_BLUE)) {
-                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
-                            units[unitCount - 1].abilities[a] = nfcAbilities[a];
-                        printf("[NFC] Reader %d: '%s' -> Spawning %s (Blue)\n",
-                            nfcReader, nfcCode, unitTypes[nfcTypeIndex].name);
-                        intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                            .typeIndex = nfcTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
-                    } else {
-                        printf("[NFC] Reader %d: '%s' -> Blue team full or unknown type\n", nfcReader, nfcCode);
+        // Poll NFC bridge for tag scans (raw read to avoid stdio buffering issues)
+        if (nfcFd >= 0) {
+            // Drain bytes from pipe into line buffer
+            char rdBuf[64];
+            int n = read(nfcFd, rdBuf, sizeof(rdBuf));
+            if (n > 0) {
+                for (int bi = 0; bi < n; bi++) {
+                    char c = rdBuf[bi];
+                    if (c == '\n' || c == '\r') {
+                        if (nfcLinePos > 0) {
+                            nfcLineBuf[nfcLinePos] = '\0';
+                            // Process complete line (only when in valid phase)
+                            if ((phase == PHASE_PLAZA || phase == PHASE_PREP) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
+                                // Parse reader prefix and hex UID: "N:<hex_uid>"
+                                int nfcReader = 0;
+                                const char *nfcHex = nfcLineBuf;
+                                if (nfcLineBuf[0] >= '1' && nfcLineBuf[0] <= '9' && nfcLineBuf[1] == ':') {
+                                    nfcReader = nfcLineBuf[0] - '0';
+                                    nfcHex = nfcLineBuf + 2;
+                                }
+
+                                int hexLen = (int)strlen(nfcHex);
+                                int nfcUidLen = hexLen / 2;
+                                uint8_t nfcUid[NFC_UID_MAX_LEN] = {0};
+                                if (nfcUidLen >= 4 && nfcUidLen <= NFC_UID_MAX_LEN) {
+                                    for (int i = 0; i < nfcUidLen; i++) {
+                                        unsigned int byte;
+                                        sscanf(nfcHex + i * 2, "%2x", &byte);
+                                        nfcUid[i] = (uint8_t)byte;
+                                    }
+
+                                    uint8_t nfcStatus, nfcTypeIdx, nfcRarity;
+                                    AbilitySlot nfcAbilities[MAX_ABILITIES_PER_UNIT];
+                                    if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
+                                                       &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities) == 0) {
+                                        if (nfcStatus == NFC_STATUS_OK && nfcTypeIdx < unitTypeCount) {
+                                            if (SpawnUnit(units, &unitCount, nfcTypeIdx, TEAM_BLUE)) {
+                                                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+                                                    units[unitCount - 1].abilities[a] = nfcAbilities[a];
+                                                memcpy(units[unitCount - 1].nfcUid, nfcUid, nfcUidLen);
+                                                units[unitCount - 1].nfcUidLen = nfcUidLen;
+                                                printf("[NFC] Reader %d: UID %s -> Spawning %s (rarity=%d)\n",
+                                                    nfcReader, nfcHex, unitTypes[nfcTypeIdx].name, nfcRarity);
+                                                intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                                    .typeIndex = nfcTypeIdx, .unitIndex = unitCount - 1, .animFrame = 0 };
+                                            } else {
+                                                printf("[NFC] Reader %d: UID %s -> Blue team full\n", nfcReader, nfcHex);
+                                            }
+                                        } else if (nfcStatus == NFC_STATUS_NOT_FOUND) {
+                                            printf("[NFC] Reader %d: UID %s -> not registered on server\n", nfcReader, nfcHex);
+                                        }
+                                    } else {
+                                        printf("[NFC] Reader %d: UID %s -> server connection failed\n", nfcReader, nfcHex);
+                                    }
+                                } else {
+                                    printf("[NFC] Invalid hex UID: '%s'\n", nfcLineBuf);
+                                }
+                            }
+                            nfcLinePos = 0;
+                        }
+                    } else if (nfcLinePos < (int)sizeof(nfcLineBuf) - 1) {
+                        nfcLineBuf[nfcLinePos++] = c;
                     }
-                } else {
-                    printf("[NFC] Invalid unit code: '%s'\n", nfcBuf);
                 }
             }
         }
@@ -1090,6 +1131,14 @@ int main(void)
                     unitCount = deserialize_units(netClient.combatNetUnits,
                         netClient.combatNetUnitCount, units, MAX_UNITS);
                     SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
+                    // Sync NFC-tagged units' abilities to server before combat
+                    for (int u2 = 0; u2 < unitCount; u2++) {
+                        if (units[u2].active && units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
+                            net_nfc_update_abilities(serverHost, NET_PORT,
+                                units[u2].nfcUid, units[u2].nfcUidLen,
+                                units[u2].abilities, MAX_ABILITIES_PER_UNIT);
+                        }
+                    }
                     phase = PHASE_COMBAT;
                     ClearAllModifiers(modifiers);
                     ClearAllProjectiles(projectiles);
@@ -1249,8 +1298,15 @@ int main(void)
                     Rectangle yesBtn = { (float)(popX + 20), (float)(popY + popH - 32), 80, 24 };
                     Rectangle noBtn  = { (float)(popX + popW - 100), (float)(popY + popH - 32), 80, 24 };
                     if (CheckCollisionPointRec(mouse, yesBtn)) {
-                        // Remove the unit: return abilities to inventory, deactivate
+                        // Remove the unit: sync NFC abilities, return to inventory, deactivate
                         int ri = removeConfirmUnit;
+                        // Sync abilities to server BEFORE stripping them
+                        if (units[ri].nfcUidLen > 0) {
+                            net_nfc_update_abilities(serverHost, NET_PORT,
+                                units[ri].nfcUid, units[ri].nfcUidLen,
+                                units[ri].abilities, MAX_ABILITIES_PER_UNIT);
+                            units[ri].nfcUidLen = 0;
+                        }
                         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
                             if (units[ri].abilities[a].abilityId < 0) continue;
                             // Find empty inventory slot
@@ -1308,6 +1364,14 @@ int main(void)
                         if (ba > 0 && ra > 0)
                         {
                             SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
+                            // Sync NFC-tagged units' abilities to server before combat
+                            for (int u2 = 0; u2 < unitCount; u2++) {
+                                if (units[u2].active && units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
+                                    net_nfc_update_abilities(serverHost, NET_PORT,
+                                        units[u2].nfcUid, units[u2].nfcUidLen,
+                                        units[u2].abilities, MAX_ABILITIES_PER_UNIT);
+                                }
+                            }
                             phase = PHASE_COMBAT;
                             ClearAllModifiers(modifiers);
                             ClearAllProjectiles(projectiles);
@@ -2407,6 +2471,7 @@ int main(void)
             if (isMultiplayer && IsKeyPressed(KEY_R)) {
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
+                for (int u2 = 0; u2 < MAX_UNITS; u2++) units[u2].nfcUidLen = 0;
                 unitCount = 0;
                 snapshotCount = 0;
                 currentRound = 0;
@@ -2451,10 +2516,17 @@ int main(void)
                     int cx = startX + h * (cardW + cardGap);
                     Rectangle wdBtn = { (float)(cx + 10), (float)(cardY + cardH - 34), (float)(cardW - 20), 28 };
                     if (CheckCollisionPointRec(mouse, wdBtn)) {
-                        // Withdraw placeholder — mark unit for NFC export
-                        printf("[WITHDRAW] Unit %d (%s) withdrawn for NFC export\n",
-                               goBlue[h], unitTypes[units[goBlue[h]].typeIndex].name);
-                        units[goBlue[h]].active = false;
+                        // Withdraw — sync NFC abilities before removing
+                        int wi = goBlue[h];
+                        if (units[wi].nfcUidLen > 0) {
+                            net_nfc_update_abilities(serverHost, NET_PORT,
+                                units[wi].nfcUid, units[wi].nfcUidLen,
+                                units[wi].abilities, MAX_ABILITIES_PER_UNIT);
+                            units[wi].nfcUidLen = 0;
+                        }
+                        printf("[WITHDRAW] Unit %d (%s) withdrawn\n",
+                               wi, unitTypes[units[wi].typeIndex].name);
+                        units[wi].active = false;
                         CompactBlueUnits(units, &unitCount);
                         break; // re-layout next frame
                     }
@@ -2467,6 +2539,7 @@ int main(void)
                 if (CheckCollisionPointRec(mouse, resetBtn)) {
                     PlaySound(sfxUiClick);
                     // Full reset — go to menu
+                    for (int u2 = 0; u2 < MAX_UNITS; u2++) units[u2].nfcUidLen = 0;
                     unitCount = 0;
                     snapshotCount = 0;
                     currentRound = 0;
@@ -2496,6 +2569,13 @@ int main(void)
 
             // Death penalty: just press R (no withdraw possible)
             if (deathPenalty && IsKeyPressed(KEY_R)) {
+                // Reset NFC-tagged units' abilities on server
+                for (int u2 = 0; u2 < unitCount; u2++) {
+                    if (units[u2].active && units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
+                        net_nfc_reset_abilities(serverHost, NET_PORT, units[u2].nfcUid, units[u2].nfcUidLen);
+                    }
+                }
+                for (int u2 = 0; u2 < MAX_UNITS; u2++) units[u2].nfcUidLen = 0;
                 unitCount = 0;
                 snapshotCount = 0;
                 currentRound = 0;

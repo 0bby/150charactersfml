@@ -6,6 +6,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 //------------------------------------------------------------------------------------
 // Low-level send/recv helpers (handle partial reads/writes)
@@ -199,4 +201,36 @@ void net_set_nonblocking(int sockfd)
 {
     int flags = fcntl(sockfd, F_GETFL, 0);
     fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+}
+
+//------------------------------------------------------------------------------------
+// Short-lived blocking TCP connect (leaderboard, NFC, etc.)
+//------------------------------------------------------------------------------------
+int net_shortlived_connect(const char *host, int port)
+{
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) return -1;
+
+    struct hostent *he = gethostbyname(host);
+    if (!he) { close(sockfd); return -1; }
+
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(port),
+    };
+    memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
+
+    // 3-second send/recv timeout
+    struct timeval tv = { .tv_sec = 3, .tv_usec = 0 };
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(sockfd);
+        return -1;
+    }
+
+    int one = 1;
+    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    return sockfd;
 }

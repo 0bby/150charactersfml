@@ -7,6 +7,12 @@
 #define NET_PORT 7777
 #define NET_MAGIC 0x4A4D  // "JM" — Jam Multiplayer
 #define NET_MAX_PAYLOAD 4096
+#define NFC_UID_MAX_LEN 7
+
+// NFC lookup status codes
+#define NFC_STATUS_OK        0
+#define NFC_STATUS_NOT_FOUND 1
+#define NFC_STATUS_ERROR     2
 #define LOBBY_CODE_LEN 4
 
 // Message header: [magic:2][type:1][size:2] = 5 bytes
@@ -25,6 +31,10 @@ typedef enum {
     MSG_ASSIGN_ABILITY   = 0x07,  // payload: inventory slot, unit index, ability slot
     MSG_LEADERBOARD_SUBMIT  = 0x10, // payload: serialized leaderboard entry (55 bytes)
     MSG_LEADERBOARD_REQUEST = 0x11, // payload: none
+    MSG_NFC_REGISTER        = 0x12, // payload: [uidLen:1][uid:4-7][typeIndex:1][rarity:1]
+    MSG_NFC_LOOKUP          = 0x13, // payload: [uidLen:1][uid:4-7]
+    MSG_NFC_ABILITY_UPDATE  = 0x14, // payload: [uidLen:1][uid:4-7][count:1][abilities × (id:1, level:1)]
+    MSG_NFC_ABILITY_RESET   = 0x15, // payload: [uidLen:1][uid:4-7]
 } ClientMsgType;
 
 //------------------------------------------------------------------------------------
@@ -42,6 +52,7 @@ typedef enum {
     MSG_ERROR            = 0x88,  // payload: error string
     MSG_GOLD_UPDATE      = 0x89,  // payload: current gold amount
     MSG_LEADERBOARD_DATA = 0x90,  // payload: entry count + serialized entries
+    MSG_NFC_DATA         = 0x91,  // payload: [uidLen:1][uid:4-7][status:1][typeIndex:1][rarity:1][abilities × 4 × (id:1, level:1)]
 } ServerMsgType;
 
 //------------------------------------------------------------------------------------

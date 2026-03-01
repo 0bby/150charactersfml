@@ -26,3 +26,7 @@ int deserialize_shop(const uint8_t *buf, int bufSize, ShopSlot slots[], int maxS
 
 // Set socket to non-blocking mode.
 void net_set_nonblocking(int sockfd);
+
+// Short-lived blocking TCP connect with 3-second timeout (for leaderboard, NFC, etc.)
+// Returns socket fd on success, -1 on error.
+int net_shortlived_connect(const char *host, int port);

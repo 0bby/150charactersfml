@@ -118,6 +118,8 @@ void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[], int *snapCo
         snaps[i].team     = units[i].team;
         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
             snaps[i].abilities[a] = units[i].abilities[a];
+        memcpy(snaps[i].nfcUid, units[i].nfcUid, sizeof(units[i].nfcUid));
+        snaps[i].nfcUidLen = units[i].nfcUidLen;
     }
 }
 
@@ -150,6 +152,8 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
         };
         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
             units[i].abilities[a] = snaps[i].abilities[a];
+        memcpy(units[i].nfcUid, snaps[i].nfcUid, sizeof(units[i].nfcUid));
+        units[i].nfcUidLen = snaps[i].nfcUidLen;
     }
 }
 

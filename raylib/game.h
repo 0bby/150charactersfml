@@ -186,6 +186,9 @@ typedef struct {
     int   chargeTarget;    // Primal Charge: target unit index (-1 = not charging)
     float hitFlash;        // >0 = flash white on damage (decays to 0)
     float castPause;       // >0 = frozen after casting projectile ability
+    // NFC tag UID (travels with unit during array compaction)
+    unsigned char nfcUid[7];
+    int nfcUidLen;         // 0 = not from NFC
 } Unit;
 
 //------------------------------------------------------------------------------------
@@ -196,6 +199,8 @@ typedef struct {
     Vector3 position;
     Team team;
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
+    unsigned char nfcUid[7];
+    int nfcUidLen;
 } UnitSnapshot;
 
 //------------------------------------------------------------------------------------

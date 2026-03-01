@@ -5,6 +5,11 @@
       "player": "obby",
       "round": 5,
       "units": ["0SG2FI1CA3VC3", "0CF3MM3DG2EQ1", "0SP3SU3BR1XX", "0XXSU1XXXX"]
+    },
+    {
+      "player": "Player",
+      "round": 5,
+      "units": ["0VA3SP3XXXX", "0CA1FI2XXXX", "0EQ2VC1XXXX", "0CF2PC2XXXX"]
     }
   ]
 }

@@ -11,7 +11,7 @@ SHARED_SRCS = $(RAYLIB_DIR)/combat_sim.c \
               $(RAYLIB_DIR)/leaderboard.c \
               $(RAYLIB_DIR)/abilities_cast.c
 
-SERVER_SRCS = server_main.c game_session.c server_stubs.c
+SERVER_SRCS = server_main.c game_session.c server_stubs.c nfc_store.c
 
 ALL_SRCS = $(SERVER_SRCS) $(SHARED_SRCS)
 

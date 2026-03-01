@@ -89,3 +89,17 @@ void net_client_disconnect(NetClient *nc);
 #include "leaderboard.h"
 int net_leaderboard_submit(const char *host, int port, const LeaderboardEntry *entry);
 int net_leaderboard_fetch(const char *host, int port, Leaderboard *lb);
+
+// NFC tag operations (short-lived blocking TCP connections)
+// Lookup: returns 0 on success (check outStatus for NFC_STATUS_OK/NOT_FOUND), -1 on network error
+// outAbilities receives 4 ability slots from the server
+int net_nfc_lookup(const char *host, int port, const uint8_t *uid, int uidLen,
+                   uint8_t *outStatus, uint8_t *outTypeIndex, uint8_t *outRarity,
+                   AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT]);
+
+// Update abilities on server for a given NFC tag UID. Returns 0 on success, -1 on error.
+int net_nfc_update_abilities(const char *host, int port, const uint8_t *uid, int uidLen,
+                             const AbilitySlot abilities[], int abilityCount);
+
+// Reset abilities on server for a given NFC tag UID. Returns 0 on success, -1 on error.
+int net_nfc_reset_abilities(const char *host, int port, const uint8_t *uid, int uidLen);

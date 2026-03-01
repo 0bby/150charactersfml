@@ -9,8 +9,8 @@
 
 #define BAUD_RATE B115200
 #define BUF_SIZE 256
-#define PREFIX "PAYLOAD:"
-#define PREFIX_LEN 8
+#define PREFIX "UID:"
+#define PREFIX_LEN 4
 #define MAX_ACM 10
 
 static int try_open(const char *path)
