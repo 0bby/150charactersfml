@@ -5,8 +5,9 @@ raylib/game.exe
 server/server
 *.dSYM/
 
-# Export folder
+# Export folder & release zips
 export/
+*.zip
 
 # Windows cross-compile deps
 deps/

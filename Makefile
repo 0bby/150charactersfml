@@ -34,8 +34,11 @@ GAME_ASSETS = $(GAME_DIR)/env_layout.txt \
               $(wildcard $(GAME_DIR)/*.mtl)
 GAME_ASSET_DIRS = assets fonts resources sfx music
 
+GAME_NAME = relic-rivals
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 # --- Targets ---
-.PHONY: all game bridge clean run export
+.PHONY: all game bridge clean run export release
 
 all: game bridge
 
@@ -73,7 +76,21 @@ export: game
 	@echo "  Linux:   export/linux/game"
 	@echo "  Windows: export/windows/game.exe"
 
+release: export
+	@echo "=== Zipping ==="
+	cd export && zip -qr ../$(GAME_NAME)-$(VERSION)-linux.zip linux/
+	cd export && zip -qr ../$(GAME_NAME)-$(VERSION)-windows.zip windows/
+	@echo "=== Creating GitHub release $(VERSION) ==="
+	gh release create $(VERSION) \
+		$(GAME_NAME)-$(VERSION)-linux.zip \
+		$(GAME_NAME)-$(VERSION)-windows.zip \
+		--title "$(GAME_NAME) $(VERSION)" \
+		--notes "Linux and Windows builds"
+	@rm -f $(GAME_NAME)-$(VERSION)-linux.zip $(GAME_NAME)-$(VERSION)-windows.zip
+	@echo "=== Released $(VERSION) ==="
+
 clean:
 	rm -f $(GAME_TARGET) $(NFC_TARGET)
 	$(MAKE) -f Makefile.win clean
 	rm -rf export
+	rm -f $(GAME_NAME)-*.zip
