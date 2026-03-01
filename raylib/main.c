@@ -27,6 +27,27 @@
 #include "helpers.h"
 #include "leaderboard.h"
 #include "net_client.h"
+
+// Global font — loaded in main(), used by GameDrawText/GameMeasureText
+static Font g_gameFont = { 0 };
+static inline void GameDrawText(const char *text, int x, int y, int fontSize, Color color)
+{
+    if (g_gameFont.glyphCount > 0) {
+        float spacing = (float)fontSize / 10.0f;
+        DrawTextEx(g_gameFont, text, (Vector2){ (float)x, (float)y }, (float)fontSize, spacing, color);
+    } else {
+        DrawText(text, x, y, fontSize, color);
+    }
+}
+
+static inline int GameMeasureText(const char *text, int fontSize)
+{
+    if (g_gameFont.glyphCount > 0) {
+        float spacing = (float)fontSize / 10.0f;
+        return (int)MeasureTextEx(g_gameFont, text, (float)fontSize, spacing).x;
+    }
+    return MeasureText(text, fontSize);
+}
 #include "pve_waves.h"
 #include "plaza.h"
 
@@ -53,10 +74,20 @@
 //------------------------------------------------------------------------------------
 int main(void)
 {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI);
     InitWindow(1280, 720, "Relic Rivals");
     SetWindowMinSize(640, 360);
     InitAudioDevice();
+
+    // Load font at large size — bilinear filter handles downscaling
+    g_gameFont = LoadFontEx("fonts/game_font.ttf", 128, NULL, 0);
+    if (g_gameFont.glyphCount > 0) {
+        GenTextureMipmaps(&g_gameFont.texture);
+        SetTextureFilter(g_gameFont.texture, TEXTURE_FILTER_TRILINEAR);
+        printf("[FONT] Loaded game font (%d glyphs)\n", g_gameFont.glyphCount);
+    } else {
+        printf("[FONT] Failed to load fonts/game_font.ttf, using default\n");
+    }
 
     // Win/loss sounds — pre-split into separate files
     Sound sfxWin  = LoadSound("music/match_win.ogg");
@@ -4189,8 +4220,20 @@ int main(void)
         // Restore camera position after shake
         camera.position = camSaved;
 
+        // End fxaaRT here so 3D scene gets FXAA but HUD text does not.
+        // (FXAA smears text glyphs, making them blurry/jagged)
+        EndTextureMode();
+        {
+            float fxaaRes[2] = { (float)fxaaRTWidth, (float)fxaaRTHeight };
+            SetShaderValue(fxaaShader, fxaaResLoc, fxaaRes, SHADER_UNIFORM_VEC2);
+            BeginShaderMode(fxaaShader);
+            DrawTextureRec(fxaaRT.texture,
+                (Rectangle){ 0, 0, (float)fxaaRTWidth, -(float)fxaaRTHeight },
+                (Vector2){ 0, 0 }, WHITE);
+            EndShaderMode();
+        }
 
-        // 2D overlay: labels + health bars
+        // 2D overlay: labels + health bars (drawn directly to screen, no FXAA)
         for (int i = 0; i < unitCount; i++)
         {
             if (!units[i].active) continue;
@@ -4218,16 +4261,16 @@ int main(void)
 
             if (units[i].rarity > 0) {
                 const char *stars = (units[i].rarity == RARITY_LEGENDARY) ? "* *" : "*";
-                int starsW = MeasureText(stars, 12);
+                int starsW = GameMeasureText(stars, 12);
                 Color starColor = (units[i].rarity == RARITY_LEGENDARY)
                     ? (Color){ 255, 60, 60, 255 }
                     : (Color){ 180, 100, 255, 255 };
-                DrawText(stars, (int)sp.x - starsW/2, (int)sp.y - 24, 12, starColor);
+                GameDrawText(stars, (int)sp.x - starsW/2, (int)sp.y - 24, 12, starColor);
             }
 
             const char *label = type->name;
-            int tw = MeasureText(label, 14);
-            DrawText(label, (int)sp.x - tw/2, (int)sp.y - 12, 14,
+            int tw = GameMeasureText(label, 14);
+            GameDrawText(label, (int)sp.x - tw/2, (int)sp.y - 12, 14,
                      (units[i].team == TEAM_BLUE) ? DARKBLUE : MAROON);
 
             // Health bar
@@ -4252,8 +4295,8 @@ int main(void)
             DrawRectangleLines(bx, by, bw, bh, BLACK);
 
             const char *hpT = TextFormat("%.0f/%.0f", units[i].currentHealth, maxHP);
-            int htw = MeasureText(hpT, 10);
-            DrawText(hpT, (int)sp.x - htw/2, by + bh + 2, 10, DARKGRAY);
+            int htw = GameMeasureText(hpT, 10);
+            GameDrawText(hpT, (int)sp.x - htw/2, by + bh + 2, 10, DARKGRAY);
 
             // Modifier labels (deduplicated — only one per type due to AddModifier dedup)
             // Duration-colored text: active portion in modColor, expired portion in dim gray
@@ -4279,7 +4322,7 @@ int main(void)
                 }
                 if (modLabel) {
                     int totalLen = (int)strlen(modLabel);
-                    int mlw = MeasureText(modLabel, 9);
+                    int mlw = GameMeasureText(modLabel, 9);
                     int startX = (int)sp.x - mlw / 2;
                     float frac = (modifiers[m].maxDuration > 0.0f)
                         ? modifiers[m].duration / modifiers[m].maxDuration : 0.0f;
@@ -4292,8 +4335,8 @@ int main(void)
                     for (int k = 0; k < totalLen; k++) {
                         tmp[0] = modLabel[k];
                         Color charCol = (k < activeChars) ? modColor : dimGray;
-                        DrawText(tmp, cx, modY, 9, charCol);
-                        cx += MeasureText(tmp, 9);
+                        GameDrawText(tmp, cx, modY, 9, charCol);
+                        cx += GameMeasureText(tmp, 9);
                     }
                     modY += 10;
                 }
@@ -4336,10 +4379,10 @@ int main(void)
             // Apply horizontal drift
             float elapsed = floatingTexts[i].maxLife - floatingTexts[i].life;
             float driftOffset = floatingTexts[i].driftX * elapsed;
-            int ftw = MeasureText(floatingTexts[i].text, fsize);
+            int ftw = GameMeasureText(floatingTexts[i].text, fsize);
             Color ftc = floatingTexts[i].color;
             ftc.a = (unsigned char)(255.0f * alpha);
-            DrawText(floatingTexts[i].text, (int)(fsp.x + driftOffset) - ftw/2, (int)fsp.y, fsize, ftc);
+            GameDrawText(floatingTexts[i].text, (int)(fsp.x + driftOffset) - ftw/2, (int)fsp.y, fsize, ftc);
         }
 
         // ── Spawn buttons + Play — during prep and plaza ──
@@ -4366,8 +4409,8 @@ int main(void)
                     DrawRectangleRec(r, c);
                     DrawRectangleLinesEx(r, 2, unitTypes[i].loaded ? DARKBLUE : GRAY);
                     const char *l = TextFormat("BLUE %s", unitTypes[i].name);
-                    int lw = MeasureText(l, 14);
-                    DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
+                    int lw = GameMeasureText(l, 14);
+                    GameDrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
                     drawIdx++;
                 }
 
@@ -4381,8 +4424,8 @@ int main(void)
                     DrawRectangleRec(r, c);
                     DrawRectangleLinesEx(r, 2, unitTypes[i].loaded ? MAROON : GRAY);
                     const char *l = TextFormat("RED %s", unitTypes[i].name);
-                    int lw = MeasureText(l, 14);
-                    DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
+                    int lw = GameMeasureText(l, 14);
+                    GameDrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
                     drawIdx++;
                 }
 
@@ -4395,8 +4438,8 @@ int main(void)
                     DrawRectangleRec(rr, rc);
                     DrawRectangleLinesEx(rr, 2, (Color){180,200,255,255});
                     const char *rl = "RARE Mushroom";
-                    int rlw = MeasureText(rl, 14);
-                    DrawText(rl, rr.x + (btnWidth-rlw)/2, rr.y + (btnHeight-14)/2, 14, (Color){180,200,255,255});
+                    int rlw = GameMeasureText(rl, 14);
+                    GameDrawText(rl, rr.x + (btnWidth-rlw)/2, rr.y + (btnHeight-14)/2, 14, (Color){180,200,255,255});
 
                     rY += btnHeight + btnMargin;
                     Rectangle lr = { (float)dBtnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
@@ -4405,19 +4448,19 @@ int main(void)
                     DrawRectangleRec(lr, lc);
                     DrawRectangleLinesEx(lr, 2, (Color){255,215,0,255});
                     const char *ll = "LEGEND Mushroom";
-                    int llw = MeasureText(ll, 14);
-                    DrawText(ll, lr.x + (btnWidth-llw)/2, lr.y + (btnHeight-14)/2, 14, (Color){255,215,0,255});
+                    int llw = GameMeasureText(ll, 14);
+                    GameDrawText(ll, lr.x + (btnWidth-llw)/2, lr.y + (btnHeight-14)/2, 14, (Color){255,215,0,255});
                 }
 
-                DrawText("[F1] DEBUG MODE", dBtnXBlue, dBtnYStart - 20, 12, YELLOW);
-                DrawText(TextFormat("[</>] Tiles: %s", tileLayoutNames[tileLayout]), dBtnXBlue, dBtnYStart - 36, 12, YELLOW);
+                GameDrawText("[F1] DEBUG MODE", dBtnXBlue, dBtnYStart - 20, 12, YELLOW);
+                GameDrawText(TextFormat("[</>] Tiles: %s", tileLayoutNames[tileLayout]), dBtnXBlue, dBtnYStart - 36, 12, YELLOW);
 
                 // --- ENV PIECE spawn buttons (centered column) ---
                 {
                     int envBtnW = 110, envBtnH = 24, envBtnGap = 4;
                     int envColX = sw / 2 - envBtnW / 2;
                     int envStartY = dBtnYStart;
-                    DrawText("[ENV PIECES]", envColX, envStartY - 16, 12, YELLOW);
+                    GameDrawText("[ENV PIECES]", envColX, envStartY - 16, 12, YELLOW);
                     for (int ei = 0; ei < envModelCount; ei++) {
                         if (!envModels[ei].loaded) continue;
                         Rectangle er = { (float)envColX, (float)(envStartY + ei * (envBtnH + envBtnGap)),
@@ -4427,8 +4470,8 @@ int main(void)
                         DrawRectangleRec(er, ec);
                         DrawRectangleLinesEx(er, 1, DARKGREEN);
                         const char *el = TextFormat("+ %s", envModels[ei].name);
-                        int elw = MeasureText(el, 12);
-                        DrawText(el, (int)(er.x + (envBtnW - elw) / 2), (int)(er.y + 6), 12, WHITE);
+                        int elw = GameMeasureText(el, 12);
+                        GameDrawText(el, (int)(er.x + (envBtnW - elw) / 2), (int)(er.y + 6), 12, WHITE);
                     }
                     // SAVE LAYOUT button
                     int saveY = envStartY + envModelCount * (envBtnH + envBtnGap) + 4;
@@ -4438,13 +4481,13 @@ int main(void)
                     DrawRectangleRec(saveBtn, savCol);
                     DrawRectangleLinesEx(saveBtn, 1, DARKBROWN);
                     const char *savLbl = TextFormat("SAVE (%d pcs)", envPieceCount);
-                    int savLblW = MeasureText(savLbl, 12);
-                    DrawText(savLbl, (int)(saveBtn.x + (envBtnW - savLblW) / 2), (int)(saveBtn.y + 6), 12, WHITE);
+                    int savLblW = GameMeasureText(savLbl, 12);
+                    GameDrawText(savLbl, (int)(saveBtn.x + (envBtnW - savLblW) / 2), (int)(saveBtn.y + 6), 12, WHITE);
 
                     // Flash "SAVED!" text
                     if (envSaveFlashTimer > 0.0f) {
                         float alpha = envSaveFlashTimer > 1.0f ? 1.0f : envSaveFlashTimer;
-                        DrawText("SAVED!", envColX + envBtnW + 8, saveY + 4, 14,
+                        GameDrawText("SAVED!", envColX + envBtnW + 8, saveY + 4, 14,
                                  (Color){50, 255, 50, (unsigned char)(255 * alpha)});
                     }
 
@@ -4453,12 +4496,12 @@ int main(void)
                         EnvPiece *sp = &envPieces[envSelectedPiece];
                         const char *infoName = envModels[sp->modelIndex].name;
                         int infoY = saveY + envBtnH + 12;
-                        DrawText(TextFormat("%s  [X:%.1f Y:%.1f Z:%.1f]", infoName,
+                        GameDrawText(TextFormat("%s  [X:%.1f Y:%.1f Z:%.1f]", infoName,
                                  sp->position.x, sp->position.y, sp->position.z),
                                  envColX, infoY, 12, WHITE);
-                        DrawText(TextFormat("Rot: %.0f deg  Scale: %.1fx", sp->rotationY, sp->scale),
+                        GameDrawText(TextFormat("Rot: %.0f deg  Scale: %.1fx", sp->rotationY, sp->scale),
                                  envColX, infoY + 14, 12, WHITE);
-                        DrawText("[Q/E] Rot  [R/F] Y  [[ / ]] Scale  [DEL] Remove", envColX, infoY + 28, 10, (Color){180,180,180,200});
+                        GameDrawText("[Q/E] Rot  [R/F] Y  [[ / ]] Scale  [DEL] Remove", envColX, infoY + 28, 10, (Color){180,180,180,200});
                     }
                 }
             }
@@ -4472,8 +4515,8 @@ int main(void)
                 } else {
                     waveLabel = TextFormat("Wave %d", currentRound + 1);
                 }
-                int wlw = MeasureText(waveLabel, 16);
-                DrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, 16, WHITE);
+                int wlw = GameMeasureText(waveLabel, 16);
+                GameDrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, 16, WHITE);
             }
 
             // NFC emulation input box (debug only)
@@ -4481,10 +4524,10 @@ int main(void)
                 int nfcBoxW = 200, nfcBoxH = 28;
                 int nfcBoxX = sw/2 - nfcBoxW/2;
                 int nfcBoxY = dBtnYStart - 55;
-                int labelW = MeasureText("NFC Code:", 14);
+                int labelW = GameMeasureText("NFC Code:", 14);
 
                 // Label
-                DrawText("NFC Code:", nfcBoxX - labelW - 8, nfcBoxY + 6, 14, (Color){180,180,200,255});
+                GameDrawText("NFC Code:", nfcBoxX - labelW - 8, nfcBoxY + 6, 14, (Color){180,180,200,255});
 
                 // Input field background
                 Color boxBg = nfcInputActive ? (Color){50,50,70,255} : (Color){30,30,45,255};
@@ -4494,19 +4537,19 @@ int main(void)
 
                 // Text content or placeholder
                 if (nfcInputLen > 0) {
-                    DrawText(nfcInputBuf, nfcBoxX + 6, nfcBoxY + 6, 14, WHITE);
+                    GameDrawText(nfcInputBuf, nfcBoxX + 6, nfcBoxY + 6, 14, WHITE);
                     // Blinking cursor when active
                     if (nfcInputActive && ((int)(GetTime() * 2.0) % 2 == 0)) {
-                        int tw = MeasureText(nfcInputBuf, 14);
-                        DrawText("|", nfcBoxX + 6 + tw, nfcBoxY + 5, 14, (Color){200,200,255,255});
+                        int tw = GameMeasureText(nfcInputBuf, 14);
+                        GameDrawText("|", nfcBoxX + 6 + tw, nfcBoxY + 5, 14, (Color){200,200,255,255});
                     }
                 } else {
                     if (nfcInputActive) {
                         // Blinking cursor
                         if ((int)(GetTime() * 2.0) % 2 == 0)
-                            DrawText("|", nfcBoxX + 6, nfcBoxY + 5, 14, (Color){200,200,255,255});
+                            GameDrawText("|", nfcBoxX + 6, nfcBoxY + 5, 14, (Color){200,200,255,255});
                     } else {
-                        DrawText("e.g. 1MM1DG2XXCF3", nfcBoxX + 6, nfcBoxY + 6, 12, (Color){100,100,120,255});
+                        GameDrawText("e.g. 1MM1DG2XXCF3", nfcBoxX + 6, nfcBoxY + 6, 12, (Color){100,100,120,255});
                     }
                 }
 
@@ -4514,19 +4557,19 @@ int main(void)
                 if (nfcInputErrorTimer > 0.0f) {
                     float alpha = nfcInputErrorTimer > 1.0f ? 1.0f : nfcInputErrorTimer;
                     Color errColor = { 255, 80, 80, (unsigned char)(255 * alpha) };
-                    DrawText(nfcInputError, nfcBoxX, nfcBoxY + nfcBoxH + 4, 12, errColor);
+                    GameDrawText(nfcInputError, nfcBoxX, nfcBoxY + nfcBoxH + 4, 12, errColor);
                 }
             }
 
             // Danger zone indicator (pushing past a milestone)
             if (lastMilestoneRound > 0) {
                 const char *dangerText = "DANGER ZONE - Losing means permanent death!";
-                int dtw = MeasureText(dangerText, 18);
-                DrawText(dangerText, sw/2 - dtw/2, 60, 18, RED);
+                int dtw = GameMeasureText(dangerText, 18);
+                GameDrawText(dangerText, sw/2 - dtw/2, 60, 18, RED);
                 int nextMilestone = ((currentRound / 5) + 1) * 5;
                 const char *nextText = TextFormat("Next milestone: Wave %d", nextMilestone);
-                int ntw = MeasureText(nextText, 14);
-                DrawText(nextText, sw/2 - ntw/2, 82, 14, ORANGE);
+                int ntw = GameMeasureText(nextText, 14);
+                GameDrawText(nextText, sw/2 - ntw/2, 82, 14, ORANGE);
             }
 
             // PLAY / READY button (centre-bottom, prep phase only)
@@ -4556,8 +4599,8 @@ int main(void)
                 } else {
                     pt = TextFormat("PLAY Round %d", currentRound + 1);
                 }
-                int ptw = MeasureText(pt, 18);
-                DrawText(pt, dPlayBtn.x + (playBtnW - ptw)/2, dPlayBtn.y + (playBtnH - 18)/2, 18, WHITE);
+                int ptw = GameMeasureText(pt, 18);
+                GameDrawText(pt, dPlayBtn.x + (playBtnW - ptw)/2, dPlayBtn.y + (playBtnH - 18)/2, 18, WHITE);
             }
         }
 
@@ -4566,17 +4609,17 @@ int main(void)
             int sw = GetScreenWidth();
             int sh = GetScreenHeight();
             if (phase != PHASE_PLAZA) {
-                DrawText(TextFormat("Round: %d / %d", currentRound < TOTAL_ROUNDS ? currentRound + 1 : TOTAL_ROUNDS, TOTAL_ROUNDS),
+                GameDrawText(TextFormat("Round: %d / %d", currentRound < TOTAL_ROUNDS ? currentRound + 1 : TOTAL_ROUNDS, TOTAL_ROUNDS),
                          sw/2 - 60, 10, 20, BLACK);
-                DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
+                GameDrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
             }
             if (isMultiplayer) {
                 const char *youLabel = TextFormat("YOU (%s): %d", playerName, blueWins);
                 const char *oppLabel = TextFormat("OPP (%s): %d", netClient.opponentName[0] ? netClient.opponentName : "???", redWins);
-                int youW = MeasureText(youLabel, 18);
-                int oppW = MeasureText(oppLabel, 18);
-                DrawText(youLabel, sw/2 - youW - 10, 35, 18, DARKBLUE);
-                DrawText(oppLabel, sw/2 + 10, 35, 18, MAROON);
+                int youW = GameMeasureText(youLabel, 18);
+                int oppW = GameMeasureText(oppLabel, 18);
+                GameDrawText(youLabel, sw/2 - youW - 10, 35, 18, DARKBLUE);
+                GameDrawText(oppLabel, sw/2 + 10, 35, 18, MAROON);
                 (void)oppW;
             }
 
@@ -4596,13 +4639,13 @@ int main(void)
                     if (alpha < 0) alpha = 0;
                     int drawSize = (int)(baseFontSize * scale);
                     if (drawSize < 1) drawSize = 1;
-                    int ftw = MeasureText(fightText, drawSize);
+                    int ftw = GameMeasureText(fightText, drawSize);
                     // Shake during punch-in
                     int shakeX = 0, shakeY = 0;
                     if (t < 0.5f) { shakeX = GetRandomValue(-3, 3); shakeY = GetRandomValue(-2, 2); }
                     Color fc = RED;
                     fc.a = (unsigned char)(255.0f * alpha);
-                    DrawText(fightText, sw/2 - ftw/2 + shakeX, sh/2 - 60 + shakeY, drawSize, fc);
+                    GameDrawText(fightText, sw/2 - ftw/2 + shakeX, sh/2 - 60 + shakeY, drawSize, fc);
                 }
                 // Kill feed announcement
                 if (killFeedTimer >= 0.0f && killFeedTimer < 3.0f) {
@@ -4616,9 +4659,9 @@ int main(void)
                     if (kfAlpha < 0) kfAlpha = 0;
                     int kfDrawSize = (int)(kfFontSize * kfScale);
                     if (kfDrawSize < 1) kfDrawSize = 1;
-                    int kfw = MeasureText(killFeedText, kfDrawSize);
+                    int kfw = GameMeasureText(killFeedText, kfDrawSize);
                     Color kfc = (Color){255, 200, 50, (unsigned char)(255.0f * kfAlpha)};
-                    DrawText(killFeedText, sw/2 - kfw/2, sh/2 - 20, kfDrawSize, kfc);
+                    GameDrawText(killFeedText, sw/2 - kfw/2, sh/2 - 20, kfDrawSize, kfc);
                 }
             }
             else if (phase == PHASE_ROUND_OVER)
@@ -4639,12 +4682,12 @@ int main(void)
                     rtColor.r = (unsigned char)(50 + pulse * 100);
                     rtColor.g = (unsigned char)(200 + pulse * 55);
                 }
-                int rtw = MeasureText(roundResultText, rtFontSize);
-                DrawText(roundResultText, sw/2 - rtw/2, sh/2 - 40, rtFontSize, rtColor);
+                int rtw = GameMeasureText(roundResultText, rtFontSize);
+                GameDrawText(roundResultText, sw/2 - rtw/2, sh/2 - 40, rtFontSize, rtColor);
 
                 const char *scoreText = TextFormat("Score: %d - %d", blueWins, redWins);
-                int stw = MeasureText(scoreText, 18);
-                DrawText(scoreText, sw/2 - stw/2, sh/2 - 10, 18, WHITE);
+                int stw = GameMeasureText(scoreText, 18);
+                GameDrawText(scoreText, sw/2 - stw/2, sh/2 - 10, 18, WHITE);
             }
 
             // Battle Log panel (during combat, round over, and next prep)
@@ -4659,8 +4702,8 @@ int main(void)
                 DrawRectangleLines(blogX, blogY, blogW, blogH, (Color){80, 80, 100, 120});
                 // Title
                 const char *blogTitle = "BATTLE LOG";
-                int btw = MeasureText(blogTitle, 12);
-                DrawText(blogTitle, blogX + blogW/2 - btw/2, blogY + 4, 12, (Color){200, 200, 220, 255});
+                int btw = GameMeasureText(blogTitle, 12);
+                GameDrawText(blogTitle, blogX + blogW/2 - btw/2, blogY + 4, 12, (Color){200, 200, 220, 255});
                 // Entry area
                 int entryY = blogY + 20;
                 int entryH = blogH - 24;
@@ -4690,13 +4733,13 @@ int main(void)
                     int drawY = entryY + (ei - startIdx) * lineH;
                     // Timestamp
                     const char *ts = TextFormat("%d:%02d", (int)e->timestamp / 60, (int)e->timestamp % 60);
-                    DrawText(ts, blogX + 4, drawY, 10, (Color){140, 140, 140, 200});
+                    GameDrawText(ts, blogX + 4, drawY, 10, (Color){140, 140, 140, 200});
                     // Icon
                     const char *icon = (e->type == BLOG_KILL) ? "X" : "*";
                     Color iconColor = (e->type == BLOG_KILL) ? (Color){255, 80, 80, 255} : (Color){80, 200, 255, 255};
-                    DrawText(icon, blogX + 32, drawY, 10, iconColor);
+                    GameDrawText(icon, blogX + 32, drawY, 10, iconColor);
                     // Text (truncated to fit)
-                    DrawText(e->text, blogX + 42, drawY, 10, e->color);
+                    GameDrawText(e->text, blogX + 42, drawY, 10, e->color);
                 }
                 EndScissorMode();
             }
@@ -4705,16 +4748,16 @@ int main(void)
             {
                 if (deathPenalty) {
                     const char *deathMsg = TextFormat("YOUR UNITS HAVE FALLEN - Wave %d", currentRound);
-                    int dw = MeasureText(deathMsg, 30);
-                    DrawText(deathMsg, sw/2 - dw/2, sh/2 - 50, 30, RED);
+                    int dw = GameMeasureText(deathMsg, 30);
+                    GameDrawText(deathMsg, sw/2 - dw/2, sh/2 - 50, 30, RED);
 
                     const char *deathSub = "Defeated! Your units are lost forever!";
-                    int dsw2 = MeasureText(deathSub, 18);
-                    DrawText(deathSub, sw/2 - dsw2/2, sh/2 - 10, 18, (Color){255,100,100,255});
+                    int dsw2 = GameMeasureText(deathSub, 18);
+                    GameDrawText(deathSub, sw/2 - dsw2/2, sh/2 - 10, 18, (Color){255,100,100,255});
 
                     const char *restartMsg = "Press R to return to menu";
-                    int rw2 = MeasureText(restartMsg, 20);
-                    DrawText(restartMsg, sw/2 - rw2/2, sh/2 + 30, 20, GRAY);
+                    int rw2 = GameMeasureText(restartMsg, 20);
+                    GameDrawText(restartMsg, sw/2 - rw2/2, sh/2 + 30, 20, GRAY);
                 }
                 // Non-death game over is drawn as a full overlay below
             }
@@ -4724,9 +4767,9 @@ int main(void)
         // F1 debug hint (always visible, top-right)
         {
             const char *dbgHint = "[F1] Debug";
-            int dbgW = MeasureText(dbgHint, 14);
+            int dbgW = GameMeasureText(dbgHint, 14);
             Color dbgCol = debugMode ? YELLOW : (Color){180,180,180,120};
-            DrawText(dbgHint, GetScreenWidth() - dbgW - 10, 10, 14, dbgCol);
+            GameDrawText(dbgHint, GetScreenWidth() - dbgW - 10, 10, 14, dbgCol);
         }
 
         // Camera debug sliders (debug mode only)
@@ -4735,7 +4778,7 @@ int main(void)
             float hPerc = camHeight / 150.0f; if (hPerc > 1) hPerc = 1; if (hPerc < 0) hPerc = 0;
             DrawRectangleRec(hBar, LIGHTGRAY);
             DrawRectangle(10, 60, (int)(150*hPerc), 20, SKYBLUE);
-            DrawText(TextFormat("Height: %.1f", camHeight), 170, 60, 10, BLACK);
+            GameDrawText(TextFormat("Height: %.1f", camHeight), 170, 60, 10, BLACK);
             if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), hBar))
             { camHeight = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camHeight < 1) camHeight = 1; }
 
@@ -4743,7 +4786,7 @@ int main(void)
             float dPerc = camDistance / 150.0f; if (dPerc > 1) dPerc = 1; if (dPerc < 0) dPerc = 0;
             DrawRectangleRec(dBar, LIGHTGRAY);
             DrawRectangle(10, 90, (int)(150*dPerc), 20, SKYBLUE);
-            DrawText(TextFormat("Distance: %.1f", camDistance), 170, 90, 10, BLACK);
+            GameDrawText(TextFormat("Distance: %.1f", camDistance), 170, 90, 10, BLACK);
             if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), dBar))
             { camDistance = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camDistance < 1) camDistance = 1; }
 
@@ -4751,7 +4794,7 @@ int main(void)
             float fPerc = camFOV / 120.0f; if (fPerc > 1) fPerc = 1; if (fPerc < 0) fPerc = 0;
             DrawRectangleRec(fBar, LIGHTGRAY);
             DrawRectangle(10, 120, (int)(150*fPerc), 20, SKYBLUE);
-            DrawText(TextFormat("FOV: %.1f", camFOV), 170, 120, 10, BLACK);
+            GameDrawText(TextFormat("FOV: %.1f", camFOV), 170, 120, 10, BLACK);
             if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), fBar))
             { camFOV = (GetMousePosition().x - 10) / 150.0f * 120.0f; if (camFOV < 1) camFOV = 1; }
         }
@@ -4822,8 +4865,8 @@ int main(void)
                             xBg = (Color){ 230, 70, 70, 255 };
                         DrawRectangle(xBtnX, xBtnY, xBtnSize, xBtnSize, xBg);
                         DrawRectangleLines(xBtnX, xBtnY, xBtnSize, xBtnSize, (Color){100,30,30,255});
-                        int xw = MeasureText("X", 12);
-                        DrawText("X", xBtnX + (xBtnSize - xw) / 2, xBtnY + 2, 12, WHITE);
+                        int xw = GameMeasureText("X", 12);
+                        GameDrawText("X", xBtnX + (xBtnSize - xw) / 2, xBtnY + 2, 12, WHITE);
                     }
 
                     // Portrait (left side of card) — Y-flipped for RenderTexture
@@ -4838,19 +4881,19 @@ int main(void)
 
                     // Unit name below portrait
                     const char *unitName = type->name;
-                    int nameW = MeasureText(unitName, 12);
-                    DrawText(unitName,
+                    int nameW = GameMeasureText(unitName, 12);
+                    GameDrawText(unitName,
                             cardX + 4 + (HUD_PORTRAIT_SIZE - nameW) / 2,
                             cardsY + HUD_PORTRAIT_SIZE + 8,
                             12, (Color){ 200, 200, 220, 255 });
 
                     if (units[ui].rarity > 0) {
                         const char *stars = (units[ui].rarity == RARITY_LEGENDARY) ? "* *" : "*";
-                        int starsW = MeasureText(stars, 10);
+                        int starsW = GameMeasureText(stars, 10);
                         Color starColor = (units[ui].rarity == RARITY_LEGENDARY)
                             ? (Color){ 255, 60, 60, 255 }
                             : (Color){ 180, 100, 255, 255 };
-                        DrawText(stars, cardX + 4 + (HUD_PORTRAIT_SIZE - starsW)/2,
+                        GameDrawText(stars, cardX + 4 + (HUD_PORTRAIT_SIZE - starsW)/2,
                                  cardsY + HUD_PORTRAIT_SIZE + 1, 10, starColor);
                     }
 
@@ -4892,12 +4935,12 @@ int main(void)
                             if (slotHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
                                 abbrSize = 11 + (int)(3.0f * (hoverTimer / tooltipDelay));
                             const char *abbr = ABILITY_DEFS[aslot->abilityId].abbrev;
-                            int aw2 = MeasureText(abbr, abbrSize);
-                            DrawText(abbr, ax + (HUD_ABILITY_SLOT_SIZE - aw2) / 2,
+                            int aw2 = GameMeasureText(abbr, abbrSize);
+                            GameDrawText(abbr, ax + (HUD_ABILITY_SLOT_SIZE - aw2) / 2,
                                     ay + (HUD_ABILITY_SLOT_SIZE - abbrSize) / 2, abbrSize, WHITE);
                             // Level indicator (bottom-left)
                             const char *lvl = TextFormat("L%d", aslot->level + 1);
-                            DrawText(lvl, ax + 2, ay + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
+                            GameDrawText(lvl, ax + 2, ay + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
                             // Cooldown overlay (combat only)
                             if (aslot->cooldownRemaining > 0 && phase == PHASE_COMBAT) {
                                 const AbilityDef *adef = &ABILITY_DEFS[aslot->abilityId];
@@ -4906,8 +4949,8 @@ int main(void)
                                 int overlayH = (int)(HUD_ABILITY_SLOT_SIZE * cdFrac);
                                 DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, overlayH, (Color){0,0,0,150});
                                 const char *cdTxt = TextFormat("%.0f", aslot->cooldownRemaining);
-                                int cdw = MeasureText(cdTxt, 12);
-                                DrawText(cdTxt, ax + (HUD_ABILITY_SLOT_SIZE - cdw)/2,
+                                int cdw = GameMeasureText(cdTxt, 12);
+                                GameDrawText(cdTxt, ax + (HUD_ABILITY_SLOT_SIZE - cdw)/2,
                                         ay + (HUD_ABILITY_SLOT_SIZE - 12)/2, 12, WHITE);
                             }
                         } else {
@@ -4915,8 +4958,8 @@ int main(void)
                             DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
                                          (Color){ 40, 40, 55, 255 });
                             const char *q = "?";
-                            int qw = MeasureText(q, 16);
-                            DrawText(q, ax + (HUD_ABILITY_SLOT_SIZE - qw) / 2,
+                            int qw = GameMeasureText(q, 16);
+                            GameDrawText(q, ax + (HUD_ABILITY_SLOT_SIZE - qw) / 2,
                                     ay + (HUD_ABILITY_SLOT_SIZE - 16) / 2, 16, (Color){ 80, 80, 100, 255 });
                         }
                         DrawRectangleLines(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
@@ -4929,15 +4972,15 @@ int main(void)
                         Color orderCol = (Color){100,100,120,255};
                         if (phase == PHASE_COMBAT && ACTIVATION_ORDER[units[ui].nextAbilitySlot] == a)
                             orderCol = YELLOW;
-                        DrawText(TextFormat("%d", orderNum), ax + HUD_ABILITY_SLOT_SIZE - 8, ay + 1, 8, orderCol);
+                        GameDrawText(TextFormat("%d", orderNum), ax + HUD_ABILITY_SLOT_SIZE - 8, ay + 1, 8, orderCol);
                     }
                 }
                 else
                 {
                     // Empty slot placeholder
                     const char *emptyText = "EMPTY";
-                    int ew = MeasureText(emptyText, 14);
-                    DrawText(emptyText,
+                    int ew = GameMeasureText(emptyText, 14);
+                    GameDrawText(emptyText,
                             cardX + (HUD_CARD_WIDTH - ew) / 2,
                             cardsY + (HUD_CARD_HEIGHT - 14) / 2,
                             14, (Color){ 60, 60, 80, 255 });
@@ -4948,7 +4991,7 @@ int main(void)
             {
                 int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP)) - 20;
                 int invStartY = cardsY + 15;
-                DrawText("INV", invStartX, invStartY - 14, 10, (Color){160,160,180,255});
+                GameDrawText("INV", invStartX, invStartY - 14, 10, (Color){160,160,180,255});
                 for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
                     int icol = inv % HUD_INVENTORY_COLS;
                     int irow = inv / HUD_INVENTORY_COLS;
@@ -4967,11 +5010,11 @@ int main(void)
                         if (invHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
                             invAbbrSize = 11 + (int)(3.0f * (hoverTimer / tooltipDelay));
                         const char *iabbr = ABILITY_DEFS[inventory[inv].abilityId].abbrev;
-                        int iaw = MeasureText(iabbr, invAbbrSize);
-                        DrawText(iabbr, ix + (HUD_ABILITY_SLOT_SIZE-iaw)/2,
+                        int iaw = GameMeasureText(iabbr, invAbbrSize);
+                        GameDrawText(iabbr, ix + (HUD_ABILITY_SLOT_SIZE-iaw)/2,
                                  iy + (HUD_ABILITY_SLOT_SIZE-invAbbrSize)/2, invAbbrSize, WHITE);
                         const char *ilvl = TextFormat("L%d", inventory[inv].level + 1);
-                        DrawText(ilvl, ix + 2, iy + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
+                        GameDrawText(ilvl, ix + 2, iy + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
                     }
                 }
             }
@@ -5052,9 +5095,9 @@ int main(void)
                     // Colored dot
                     DrawCircle(synPanelX + 5, rowY + synRowH / 2, 4, syn->color);
                     // Synergy name
-                    DrawText(syn->name, synPanelX + 14, rowY + 2, 10, WHITE);
+                    GameDrawText(syn->name, synPanelX + 14, rowY + 2, 10, WHITE);
                     // Tier pips
-                    int pipX = synPanelX + 14 + MeasureText(syn->name, 10) + 6;
+                    int pipX = synPanelX + 14 + GameMeasureText(syn->name, 10) + 6;
                     for (int t = 0; t < syn->tierCount; t++) {
                         Color pipColor = (t <= synTier[s])
                             ? syn->color
@@ -5064,7 +5107,7 @@ int main(void)
                     // Buff text
                     if (syn->buffDesc[synTier[s]]) {
                         int buffX = pipX + syn->tierCount * 10 + 6;
-                        DrawText(syn->buffDesc[synTier[s]], buffX, rowY + 4, 10,
+                        GameDrawText(syn->buffDesc[synTier[s]], buffX, rowY + 4, 10,
                                  (Color){ 160, 160, 180, 200 });
                     }
                     activeSynCount++;
@@ -5078,13 +5121,13 @@ int main(void)
                     for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
                         if (!unitSyn[sl][s]) continue;
                         const SynergyDef *syn = &SYNERGY_DEFS[s];
-                        int abbrW = MeasureText(syn->abbrev, 9) + 6;
+                        int abbrW = GameMeasureText(syn->abbrev, 9) + 6;
                         // Pill background
                         DrawRectangle(badgeX, badgeY, abbrW, 14,
                                       (Color){ syn->color.r, syn->color.g, syn->color.b, 180 });
                         DrawRectangleLines(badgeX, badgeY, abbrW, 14,
                                            (Color){ syn->color.r, syn->color.g, syn->color.b, 255 });
-                        DrawText(syn->abbrev, badgeX + 3, badgeY + 2, 9, WHITE);
+                        GameDrawText(syn->abbrev, badgeX + 3, badgeY + 2, 9, WHITE);
                         // Badge hover detection
                         Rectangle badgeRect = { (float)badgeX, (float)badgeY, (float)abbrW, 14.0f };
                         if (CheckCollisionPointRec(GetMousePosition(), badgeRect))
@@ -5101,8 +5144,8 @@ int main(void)
                               ABILITY_DEFS[dragState.abilityId].color);
                 DrawRectangleLines((int)dmouse.x - 16, (int)dmouse.y - 16, 32, 32, WHITE);
                 const char *dabbr = ABILITY_DEFS[dragState.abilityId].abbrev;
-                int daw = MeasureText(dabbr, 11);
-                DrawText(dabbr, (int)dmouse.x - daw/2, (int)dmouse.y - 5, 11, WHITE);
+                int daw = GameMeasureText(dabbr, 11);
+                GameDrawText(dabbr, (int)dmouse.x - daw/2, (int)dmouse.y - 5, 11, WHITE);
             }
 
             // --- Shop panel (only during PREP, above unit bar) ---
@@ -5122,8 +5165,8 @@ int main(void)
                 DrawRectangleRec(rollBtn, rollColor);
                 DrawRectangleLinesEx(rollBtn, 2, (Color){ 120, 90, 20, 255 });
                 const char *rollText = TextFormat("ROLL %dg", rollCost);
-                int rollW = MeasureText(rollText, 14);
-                DrawText(rollText, (int)(rollBtn.x + (80 - rollW) / 2),
+                int rollW = GameMeasureText(rollText, 14);
+                GameDrawText(rollText, (int)(rollBtn.x + (80 - rollW) / 2),
                         (int)(rollBtn.y + (30 - 14) / 2), 14, WHITE);
 
                 // Shop ability cards (3 slots, centered)
@@ -5148,24 +5191,24 @@ int main(void)
                         DrawRectangle(scx, scy, shopCardW, shopCardH, cardBg);
                         DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){90,90,110,255});
                         const char *sname = TextFormat("%s %dg", sdef->name, sdef->goldCost);
-                        int snw = MeasureText(sname, 12);
-                        DrawText(sname, scx + (shopCardW - snw)/2, scy + (shopCardH - 12)/2, 12,
+                        int snw = GameMeasureText(sname, 12);
+                        GameDrawText(sname, scx + (shopCardW - snw)/2, scy + (shopCardH - 12)/2, 12,
                                 canAfford ? WHITE : (Color){100,100,120,255});
                     } else {
                         DrawRectangle(scx, scy, shopCardW, shopCardH, (Color){35,35,45,255});
                         DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){60,60,80,255});
-                        DrawText("SOLD", scx + (shopCardW - MeasureText("SOLD",12))/2,
+                        GameDrawText("SOLD", scx + (shopCardW - GameMeasureText("SOLD",12))/2,
                                 scy + (shopCardH - 12)/2, 12, (Color){60,60,80,255});
                     }
                     // Keybind indicator
                     const char *keyLabel = TextFormat("[%d]", s + 1);
-                    DrawText(keyLabel, scx + 2, scy + 2, 10, (Color){180, 180, 200, 160});
+                    GameDrawText(keyLabel, scx + 2, scy + 2, 10, (Color){180, 180, 200, 160});
                 }
 
                 // Gold display (right side)
                 const char *goldText = TextFormat("Gold: %d", playerGold);
-                int gw = MeasureText(goldText, 18);
-                DrawText(goldText, hudSw - gw - 20, shopY + 16, 18, (Color){ 240, 200, 60, 255 });
+                int gw = GameMeasureText(goldText, 18);
+                GameDrawText(goldText, hudSw - gw - 20, shopY + 16, 18, (Color){ 240, 200, 60, 255 });
             }
         }
 
@@ -5180,10 +5223,10 @@ int main(void)
             DrawRectangleLinesEx((Rectangle){ (float)popX, (float)popY, (float)popW, (float)popH },
                                 2, (Color){ 180, 60, 60, 255 });
             const char *confirmText = "Remove this unit?";
-            int ctw = MeasureText(confirmText, 16);
-            DrawText(confirmText, popX + (popW - ctw) / 2, popY + 12, 16, WHITE);
+            int ctw = GameMeasureText(confirmText, 16);
+            GameDrawText(confirmText, popX + (popW - ctw) / 2, popY + 12, 16, WHITE);
             // Abilities returned note
-            DrawText("(abilities return to inventory)", popX + 14, popY + 32, 9, (Color){160,160,180,255});
+            GameDrawText("(abilities return to inventory)", popX + 14, popY + 32, 9, (Color){160,160,180,255});
             // Yes / No buttons
             Rectangle yesBtn = { (float)(popX + 20), (float)(popY + popH - 32), 80, 24 };
             Rectangle noBtn  = { (float)(popX + popW - 100), (float)(popY + popH - 32), 80, 24 };
@@ -5195,9 +5238,9 @@ int main(void)
             DrawRectangleRec(noBtn, noBg);
             DrawRectangleLinesEx(yesBtn, 1, (Color){120,40,40,255});
             DrawRectangleLinesEx(noBtn, 1, (Color){80,80,100,255});
-            int yw = MeasureText("YES", 14), nw = MeasureText("NO", 14);
-            DrawText("YES", (int)(yesBtn.x + (80 - yw) / 2), (int)(yesBtn.y + 5), 14, WHITE);
-            DrawText("NO",  (int)(noBtn.x + (80 - nw) / 2), (int)(noBtn.y + 5), 14, WHITE);
+            int yw = GameMeasureText("YES", 14), nw = GameMeasureText("NO", 14);
+            GameDrawText("YES", (int)(yesBtn.x + (80 - yw) / 2), (int)(yesBtn.y + 5), 14, WHITE);
+            GameDrawText("NO",  (int)(noBtn.x + (80 - nw) / 2), (int)(noBtn.y + 5), 14, WHITE);
         }
 
         // --- Hover tooltip timer + drawing ---
@@ -5302,8 +5345,8 @@ int main(void)
             if (tipY < 0) tipY = (int)mpos.y + 20;
             DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
             DrawRectangleLines(tipX, tipY, tipW, tipH, (Color){100, 100, 130, 255});
-            DrawText(tipDef->name, tipX + 6, tipY + 4, 14, WHITE);
-            DrawText(tipDef->description, tipX + 6, tipY + 22, 10, (Color){180, 180, 200, 255});
+            GameDrawText(tipDef->name, tipX + 6, tipY + 4, 14, WHITE);
+            GameDrawText(tipDef->description, tipX + 6, tipY + 22, 10, (Color){180, 180, 200, 255});
 
             Color dimStatColor = { 100, 100, 120, 255 };
             int lineY = tipY + 38;
@@ -5312,24 +5355,24 @@ int main(void)
                 if (sl == cdLineIdx) {
                     // Cooldown line
                     const char *cdLabel = "CD: ";
-                    DrawText(cdLabel, lx, lineY, 10, (Color){180,180,200,255});
-                    lx += MeasureText(cdLabel, 10);
+                    GameDrawText(cdLabel, lx, lineY, 10, (Color){180,180,200,255});
+                    lx += GameMeasureText(cdLabel, 10);
                     for (int lv = 0; lv < ABILITY_MAX_LEVELS; lv++) {
                         const char *val = TextFormat("%.1fs", tipDef->cooldown[lv]);
                         Color vc = (lv == hoverAbilityLevel) ? WHITE : dimStatColor;
-                        DrawText(val, lx, lineY, 10, vc);
-                        lx += MeasureText(val, 10);
+                        GameDrawText(val, lx, lineY, 10, vc);
+                        lx += GameMeasureText(val, 10);
                         if (lv < ABILITY_MAX_LEVELS - 1) {
-                            DrawText(" / ", lx, lineY, 10, dimStatColor);
-                            lx += MeasureText(" / ", 10);
+                            GameDrawText(" / ", lx, lineY, 10, dimStatColor);
+                            lx += GameMeasureText(" / ", 10);
                         }
                     }
                 } else {
                     // Stat value line
                     char labelBuf[32];
                     snprintf(labelBuf, sizeof(labelBuf), "%s: ", statLines[sl].label);
-                    DrawText(labelBuf, lx, lineY, 10, (Color){180,180,200,255});
-                    lx += MeasureText(labelBuf, 10);
+                    GameDrawText(labelBuf, lx, lineY, 10, (Color){180,180,200,255});
+                    lx += GameMeasureText(labelBuf, 10);
                     for (int lv = 0; lv < ABILITY_MAX_LEVELS; lv++) {
                         float v = tipDef->values[lv][statLines[sl].valueIndex];
                         const char *val;
@@ -5340,11 +5383,11 @@ int main(void)
                         else
                             val = TextFormat("%.1f", v);
                         Color vc = (lv == hoverAbilityLevel) ? WHITE : dimStatColor;
-                        DrawText(val, lx, lineY, 10, vc);
-                        lx += MeasureText(val, 10);
+                        GameDrawText(val, lx, lineY, 10, vc);
+                        lx += GameMeasureText(val, 10);
                         if (lv < ABILITY_MAX_LEVELS - 1) {
-                            DrawText(" / ", lx, lineY, 10, dimStatColor);
-                            lx += MeasureText(" / ", 10);
+                            GameDrawText(" / ", lx, lineY, 10, dimStatColor);
+                            lx += GameMeasureText(" / ", 10);
                         }
                     }
                 }
@@ -5422,13 +5465,13 @@ int main(void)
             if (tipY < 0) tipY = (int)mpos.y + 20;
             DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
             DrawRectangleLines(tipX, tipY, tipW, tipH, syn->color);
-            DrawText(tierLabel, tipX + 6, tipY + 4, 12, WHITE);
-            DrawText(bonusText, tipX + 6, tipY + 20, 10, (Color){200, 200, 220, 220});
-            DrawText(countText, tipX + 6, tipY + 36, 10, (Color){160, 160, 180, 200});
+            GameDrawText(tierLabel, tipX + 6, tipY + 4, 12, WHITE);
+            GameDrawText(bonusText, tipX + 6, tipY + 20, 10, (Color){200, 200, 220, 220});
+            GameDrawText(countText, tipX + 6, tipY + 36, 10, (Color){160, 160, 180, 200});
             if (nextThresh > 0) {
                 const char *nextText = TextFormat("Next: %d for tier %s",
                     nextThresh, (curTier + 1 == 1) ? "II" : "III");
-                DrawText(nextText, tipX + 6, tipY + 50, 9, (Color){120, 120, 140, 180});
+                GameDrawText(nextText, tipX + 6, tipY + 50, 9, (Color){120, 120, 140, 180});
             }
         }
 
@@ -5443,27 +5486,27 @@ int main(void)
             // Title text (floating over the 3D scene)
             const char *title = "Relic Rivals";
             int titleSize = 72;
-            int tw = MeasureText(title, titleSize);
-            DrawText(title, msw/2 - tw/2, 60, titleSize, (Color){200, 180, 255, 220});
+            int tw = GameMeasureText(title, titleSize);
+            GameDrawText(title, msw/2 - tw/2, 60, titleSize, (Color){200, 180, 255, 220});
 
             const char *subtitle = "Scan a figure to begin";
             int subSize = 32;
-            int sw2 = MeasureText(subtitle, subSize);
-            DrawText(subtitle, msw/2 - sw2/2, 140, subSize, (Color){160,140,200,160});
+            int sw2 = GameMeasureText(subtitle, subSize);
+            GameDrawText(subtitle, msw/2 - sw2/2, 140, subSize, (Color){160,140,200,160});
 
             // Draw floating 2D labels above 3D objects
             {
                 Vector2 trophyScreen = GetWorldToScreen((Vector3){trophyPos.x, trophyPos.y + 14.0f, trophyPos.z}, camera);
                 const char *tLabel = "LEADERBOARD";
-                int tlw = MeasureText(tLabel, 14);
+                int tlw = GameMeasureText(tLabel, 14);
                 Color tlCol = (plazaHoverObject == 1) ? YELLOW : (Color){200,200,220,200};
-                DrawText(tLabel, (int)trophyScreen.x - tlw/2, (int)trophyScreen.y, 14, tlCol);
+                GameDrawText(tLabel, (int)trophyScreen.x - tlw/2, (int)trophyScreen.y, 14, tlCol);
 
                 Vector2 doorScreen = GetWorldToScreen((Vector3){doorPos.x, doorPos.y + 18.0f, doorPos.z}, camera);
                 const char *dLabel = "MULTIPLAYER";
-                int dlw = MeasureText(dLabel, 14);
+                int dlw = GameMeasureText(dLabel, 14);
                 Color dlCol = (plazaHoverObject == 2) ? YELLOW : (Color){200,200,220,200};
-                DrawText(dLabel, (int)doorScreen.x - dlw/2, (int)doorScreen.y, 14, dlCol);
+                GameDrawText(dLabel, (int)doorScreen.x - dlw/2, (int)doorScreen.y, 14, dlCol);
             }
 
             // Leaderboard overlay (reused from old menu)
@@ -5478,16 +5521,16 @@ int main(void)
                 DrawRectangleLinesEx((Rectangle){(float)panelX,(float)panelY,(float)panelW,(float)panelH}, 2, (Color){100,100,130,255});
 
                 const char *lbTitle = "LEADERBOARD";
-                int ltw = MeasureText(lbTitle, 24);
-                DrawText(lbTitle, panelX + panelW/2 - ltw/2, panelY + 10, 24, GOLD);
+                int ltw = GameMeasureText(lbTitle, 24);
+                GameDrawText(lbTitle, panelX + panelW/2 - ltw/2, panelY + 10, 24, GOLD);
 
                 Rectangle closeBtn = { (float)(panelX + panelW - 40), (float)panelY, 40, 40 };
                 Color closeBg = (Color){180,50,50,200};
                 if (CheckCollisionPointRec(GetMousePosition(), closeBtn))
                     closeBg = (Color){230,70,70,255};
                 DrawRectangleRec(closeBtn, closeBg);
-                int xw = MeasureText("X", 18);
-                DrawText("X", (int)(closeBtn.x + 20 - xw/2), (int)(closeBtn.y + 11), 18, WHITE);
+                int xw = GameMeasureText("X", 18);
+                GameDrawText("X", (int)(closeBtn.x + 20 - xw/2), (int)(closeBtn.y + 11), 18, WHITE);
 
                 int listTop = panelY + 50;
                 int listH = panelH - 60;
@@ -5502,18 +5545,18 @@ int main(void)
                     DrawRectangle(panelX + 4, rowY, panelW - 8, rowH - 2, rowBg);
 
                     const char *rankText = TextFormat("#%d", e + 1);
-                    DrawText(rankText, panelX + 12, rowY + 8, 20, GOLD);
+                    GameDrawText(rankText, panelX + 12, rowY + 8, 20, GOLD);
                     const char *roundText = TextFormat("Wave %d", le->highestRound);
-                    DrawText(roundText, panelX + 60, rowY + 8, 18, WHITE);
-                    DrawText(le->playerName, panelX + 180, rowY + 8, 16, (Color){180,180,200,255});
+                    GameDrawText(roundText, panelX + 60, rowY + 8, 18, WHITE);
+                    GameDrawText(le->playerName, panelX + 180, rowY + 8, 16, (Color){180,180,200,255});
 
                     int ux = panelX + 180;
                     int uy = rowY + 32;
                     for (int u = 0; u < le->unitCount && u < BLUE_TEAM_MAX_SIZE; u++) {
                         SavedUnit *su = &le->units[u];
                         const char *uname = (su->typeIndex < unitTypeCount) ? unitTypes[su->typeIndex].name : "???";
-                        DrawText(uname, ux, uy, 12, (Color){150,180,255,255});
-                        int nameW = MeasureText(uname, 12);
+                        GameDrawText(uname, ux, uy, 12, (Color){150,180,255,255});
+                        int nameW = GameMeasureText(uname, 12);
                         int gridX = ux + nameW + 6;
                         int miniSize = 14, miniGap = 2;
                         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
@@ -5523,7 +5566,7 @@ int main(void)
                             if (su->abilities[a].abilityId >= 0 && su->abilities[a].abilityId < ABILITY_COUNT) {
                                 DrawRectangle(ax, ay, miniSize, miniSize, ABILITY_DEFS[su->abilities[a].abilityId].color);
                                 const char *abbr = ABILITY_DEFS[su->abilities[a].abilityId].abbrev;
-                                DrawText(abbr, ax + 1, ay + 2, 7, WHITE);
+                                GameDrawText(abbr, ax + 1, ay + 2, 7, WHITE);
                             } else {
                                 DrawRectangle(ax, ay, miniSize, miniSize, (Color){40,40,55,255});
                             }
@@ -5535,8 +5578,8 @@ int main(void)
 
                 if (leaderboard.entryCount == 0) {
                     const char *emptyText = "No entries yet - play and Set in Stone!";
-                    int etw = MeasureText(emptyText, 16);
-                    DrawText(emptyText, panelX + panelW/2 - etw/2, panelY + panelH/2, 16, (Color){100,100,120,255});
+                    int etw = GameMeasureText(emptyText, 16);
+                    GameDrawText(emptyText, panelX + panelW/2 - etw/2, panelY + panelH/2, 16, (Color){100,100,120,255});
                 }
             }
 
@@ -5552,8 +5595,8 @@ int main(void)
                 DrawRectangleLinesEx((Rectangle){(float)panelX,(float)panelY,(float)panelW,(float)panelH}, 2, (Color){100,100,130,255});
 
                 const char *mpTitle = "MULTIPLAYER";
-                int mptw = MeasureText(mpTitle, 24);
-                DrawText(mpTitle, panelX + panelW/2 - mptw/2, panelY + 10, 24, (Color){200,180,255,255});
+                int mptw = GameMeasureText(mpTitle, 24);
+                GameDrawText(mpTitle, panelX + panelW/2 - mptw/2, panelY + 10, 24, (Color){200,180,255,255});
 
                 // Close button
                 Rectangle closeBtn = { (float)(panelX + panelW - 36), (float)(panelY + 4), 32, 32 };
@@ -5561,19 +5604,19 @@ int main(void)
                 if (CheckCollisionPointRec(GetMousePosition(), closeBtn))
                     closeBg = (Color){230,70,70,255};
                 DrawRectangleRec(closeBtn, closeBg);
-                DrawText("X", (int)(closeBtn.x + 10), (int)(closeBtn.y + 7), 18, WHITE);
+                GameDrawText("X", (int)(closeBtn.x + 10), (int)(closeBtn.y + 7), 18, WHITE);
 
                 // Name input
-                DrawText("Player Name:", panelX + 50, panelY + 45, 14, (Color){180,180,200,255});
+                GameDrawText("Player Name:", panelX + 50, panelY + 45, 14, (Color){180,180,200,255});
                 Rectangle nameField = { (float)(panelX + 50), (float)(panelY + 60), (float)(panelW - 100), 36 };
                 Color nameBg = nameInputActive ? (Color){50,50,70,255} : (Color){35,35,50,255};
                 DrawRectangleRec(nameField, nameBg);
                 DrawRectangleLinesEx(nameField, 2, nameInputActive ? (Color){150,140,200,255} : (Color){80,80,100,255});
-                DrawText(playerName, panelX + 58, panelY + 69, 18, WHITE);
+                GameDrawText(playerName, panelX + 58, panelY + 69, 18, WHITE);
                 if (nameInputActive) {
                     float blinkTime = (float)GetTime();
                     if ((int)(blinkTime * 2) % 2 == 0) {
-                        int cw = MeasureText(playerName, 18);
+                        int cw = GameMeasureText(playerName, 18);
                         DrawRectangle(panelX + 58 + cw + 2, panelY + 69, 2, 18, WHITE);
                     }
                 }
@@ -5585,8 +5628,8 @@ int main(void)
                 DrawRectangleRec(createBtn, cBg);
                 DrawRectangleLinesEx(createBtn, 2, (Color){30,100,40,255});
                 const char *cText = "CREATE LOBBY";
-                int ctw = MeasureText(cText, 16);
-                DrawText(cText, (int)(createBtn.x + (panelW-100)/2 - ctw/2), (int)(createBtn.y + 12), 16, WHITE);
+                int ctw = GameMeasureText(cText, 16);
+                GameDrawText(cText, (int)(createBtn.x + (panelW-100)/2 - ctw/2), (int)(createBtn.y + 12), 16, WHITE);
 
                 // JOIN LOBBY button
                 bool codeReady = (joinCodeLen == LOBBY_CODE_LEN);
@@ -5596,22 +5639,22 @@ int main(void)
                 DrawRectangleRec(joinBtn, jBg);
                 DrawRectangleLinesEx(joinBtn, 2, (Color){100,70,20,255});
                 const char *jText = "JOIN LOBBY";
-                int jtw = MeasureText(jText, 16);
-                DrawText(jText, (int)(joinBtn.x + (panelW-100)/2 - jtw/2), (int)(joinBtn.y + 12), 16, WHITE);
+                int jtw = GameMeasureText(jText, 16);
+                GameDrawText(jText, (int)(joinBtn.x + (panelW-100)/2 - jtw/2), (int)(joinBtn.y + 12), 16, WHITE);
 
                 // Lobby code input
-                DrawText("Lobby Code:", panelX + 50, panelY + 230, 12, (Color){150,150,170,255});
+                GameDrawText("Lobby Code:", panelX + 50, panelY + 230, 12, (Color){150,150,170,255});
                 Rectangle codeBox = { (float)(panelX + 50), (float)(panelY + 248), 120, 30 };
                 DrawRectangleRec(codeBox, (Color){35,35,50,255});
                 DrawRectangleLinesEx(codeBox, 2, (Color){80,80,100,255});
                 char codeBuf[8];
                 snprintf(codeBuf, sizeof(codeBuf), "%s_", joinCodeInput);
-                DrawText(codeBuf, panelX + 58, panelY + 254, 18, WHITE);
+                GameDrawText(codeBuf, panelX + 58, panelY + 254, 18, WHITE);
 
                 // Error message
                 if (menuError[0]) {
-                    int ew = MeasureText(menuError, 12);
-                    DrawText(menuError, panelX + panelW/2 - ew/2, panelY + panelH - 20, 12, RED);
+                    int ew = GameMeasureText(menuError, 12);
+                    GameDrawText(menuError, panelX + panelW/2 - ew/2, panelY + panelH - 20, 12, RED);
                 }
             }
         }
@@ -5626,27 +5669,27 @@ int main(void)
             DrawRectangle(0, 0, lsw, lsh, (Color){ 20, 20, 30, 255 });
 
             const char *waitText = "WAITING FOR OPPONENT";
-            int wtw = MeasureText(waitText, 30);
-            DrawText(waitText, lsw/2 - wtw/2, lsh/2 - 60, 30, (Color){200, 180, 255, 255});
+            int wtw = GameMeasureText(waitText, 30);
+            GameDrawText(waitText, lsw/2 - wtw/2, lsh/2 - 60, 30, (Color){200, 180, 255, 255});
 
             // Show lobby code
             if (netClient.lobbyCode[0]) {
                 const char *codeLabel = "Share this code:";
-                int clw = MeasureText(codeLabel, 16);
-                DrawText(codeLabel, lsw/2 - clw/2, lsh/2, 16, (Color){150,150,170,255});
-                int ccw = MeasureText(netClient.lobbyCode, 40);
-                DrawText(netClient.lobbyCode, lsw/2 - ccw/2, lsh/2 + 25, 40, WHITE);
+                int clw = GameMeasureText(codeLabel, 16);
+                GameDrawText(codeLabel, lsw/2 - clw/2, lsh/2, 16, (Color){150,150,170,255});
+                int ccw = GameMeasureText(netClient.lobbyCode, 40);
+                GameDrawText(netClient.lobbyCode, lsw/2 - ccw/2, lsh/2 + 25, 40, WHITE);
             }
 
             // Animated dots
             int dots = (int)(GetTime() * 2) % 4;
             char dotBuf[8] = "";
             for (int d = 0; d < dots; d++) strcat(dotBuf, ".");
-            DrawText(dotBuf, lsw/2 + wtw/2 + 5, lsh/2 - 60, 30, WHITE);
+            GameDrawText(dotBuf, lsw/2 + wtw/2 + 5, lsh/2 - 60, 30, WHITE);
 
             const char *escText = "Press ESC to cancel";
-            int ew = MeasureText(escText, 14);
-            DrawText(escText, lsw/2 - ew/2, lsh/2 + 90, 14, (Color){100,100,120,255});
+            int ew = GameMeasureText(escText, 14);
+            GameDrawText(escText, lsw/2 - ew/2, lsh/2 + 90, 14, (Color){100,100,120,255});
         }
 
         //==============================================================================
@@ -5662,12 +5705,12 @@ int main(void)
 
             // Title
             const char *msTitle = TextFormat("MILESTONE REACHED - Wave %d", currentRound);
-            int mstw = MeasureText(msTitle, 32);
-            DrawText(msTitle, msw/2 - mstw/2, 40, 32, GOLD);
+            int mstw = GameMeasureText(msTitle, 32);
+            GameDrawText(msTitle, msw/2 - mstw/2, 40, 32, GOLD);
 
             const char *msSubtitle = "Set your party in stone, or risk it all and continue";
-            int mssw = MeasureText(msSubtitle, 16);
-            DrawText(msSubtitle, msw/2 - mssw/2, 80, 16, (Color){200,200,220,200});
+            int mssw = GameMeasureText(msSubtitle, 16);
+            GameDrawText(msSubtitle, msw/2 - mssw/2, 80, 16, (Color){200,200,220,200});
 
             // Collect active blue units
             int msBlue[BLUE_TEAM_MAX_SIZE]; int msCount = 0;
@@ -5699,7 +5742,7 @@ int main(void)
                 }
 
                 // Unit name
-                DrawText(type->name, cx + 10, cardY + 96, 14, (Color){200,200,220,255});
+                GameDrawText(type->name, cx + 10, cardY + 96, 14, (Color){200,200,220,255});
 
                 // 2x2 ability grid
                 int abilX = cx + 100;
@@ -5714,10 +5757,10 @@ int main(void)
                     if (aslot->abilityId >= 0 && aslot->abilityId < ABILITY_COUNT) {
                         DrawRectangle(ax, ay, slotSize, slotSize, ABILITY_DEFS[aslot->abilityId].color);
                         const char *abbr = ABILITY_DEFS[aslot->abilityId].abbrev;
-                        int aw = MeasureText(abbr, 10);
-                        DrawText(abbr, ax + (slotSize - aw)/2, ay + (slotSize - 10)/2, 10, WHITE);
+                        int aw = GameMeasureText(abbr, 10);
+                        GameDrawText(abbr, ax + (slotSize - aw)/2, ay + (slotSize - 10)/2, 10, WHITE);
                         const char *lvl = TextFormat("L%d", aslot->level + 1);
-                        DrawText(lvl, ax + 2, ay + slotSize - 8, 7, (Color){220,220,220,200});
+                        GameDrawText(lvl, ax + 2, ay + slotSize - 8, 7, (Color){220,220,220,200});
                     } else {
                         DrawRectangle(ax, ay, slotSize, slotSize, (Color){40,40,55,255});
                     }
@@ -5741,8 +5784,8 @@ int main(void)
                 DrawRectangleRec(setBtn, setBg);
                 DrawRectangleLinesEx(setBtn, 2, (Color){140,120,30,255});
                 const char *setText = "SET IN STONE";
-                int setW = MeasureText(setText, 16);
-                DrawText(setText, (int)(setBtn.x + btnW2/2 - setW/2), (int)(setBtn.y + 14), 16, WHITE);
+                int setW = GameMeasureText(setText, 16);
+                GameDrawText(setText, (int)(setBtn.x + btnW2/2 - setW/2), (int)(setBtn.y + 14), 16, WHITE);
             }
 
             // CONTINUE button
@@ -5754,17 +5797,17 @@ int main(void)
                 DrawRectangleRec(contBtn, contBg);
                 DrawRectangleLinesEx(contBtn, 2, DARKGREEN);
                 const char *contText = "CONTINUE";
-                int contW = MeasureText(contText, 16);
-                DrawText(contText, (int)(contBtn.x + btnW2/2 - contW/2), (int)(contBtn.y + 14), 16, WHITE);
+                int contW = GameMeasureText(contText, 16);
+                GameDrawText(contText, (int)(contBtn.x + btnW2/2 - contW/2), (int)(contBtn.y + 14), 16, WHITE);
             }
 
             // Risk warning
             const char *warnText = "SET IN STONE saves your party to the leaderboard and ends the run.";
-            int warnW = MeasureText(warnText, 12);
-            DrawText(warnText, msw/2 - warnW/2, btnY2 + btnH2 + 10, 12, (Color){255,180,80,200});
+            int warnW = GameMeasureText(warnText, 12);
+            GameDrawText(warnText, msw/2 - warnW/2, btnY2 + btnH2 + 10, 12, (Color){255,180,80,200});
             const char *riskText = "CONTINUE risks everything - losing past this point means permanent death!";
-            int riskW = MeasureText(riskText, 12);
-            DrawText(riskText, msw/2 - riskW/2, btnY2 + btnH2 + 26, 12, (Color){255,100,80,200});
+            int riskW = GameMeasureText(riskText, 12);
+            GameDrawText(riskText, msw/2 - riskW/2, btnY2 + btnH2 + 26, 12, (Color){255,100,80,200});
         }
 
         //==============================================================================
@@ -5777,16 +5820,16 @@ int main(void)
             DrawRectangle(0, 0, gosw, gosh, (Color){20,20,30,240});
 
             const char *goTitle = roundResultText;
-            int gotw = MeasureText(goTitle, 36);
-            DrawText(goTitle, gosw/2 - gotw/2, gosh/2 - 60, 36, GOLD);
+            int gotw = GameMeasureText(goTitle, 36);
+            GameDrawText(goTitle, gosw/2 - gotw/2, gosh/2 - 60, 36, GOLD);
 
             const char *goScore = TextFormat("Score: %d - %d", blueWins, redWins);
-            int gsw = MeasureText(goScore, 20);
-            DrawText(goScore, gosw/2 - gsw/2, gosh/2, 20, WHITE);
+            int gsw = GameMeasureText(goScore, 20);
+            GameDrawText(goScore, gosw/2 - gsw/2, gosh/2, 20, WHITE);
 
             const char *goRestart = "Press R to return to menu";
-            int grw = MeasureText(goRestart, 16);
-            DrawText(goRestart, gosw/2 - grw/2, gosh/2 + 40, 16, (Color){150,150,170,255});
+            int grw = GameMeasureText(goRestart, 16);
+            GameDrawText(goRestart, gosw/2 - grw/2, gosh/2 + 40, 16, (Color){150,150,170,255});
         }
 
         //==============================================================================
@@ -5802,12 +5845,12 @@ int main(void)
 
             // Title
             const char *goTitle = "SET IN STONE";
-            int gotw = MeasureText(goTitle, 36);
-            DrawText(goTitle, gosw/2 - gotw/2, 40, 36, GOLD);
+            int gotw = GameMeasureText(goTitle, 36);
+            GameDrawText(goTitle, gosw/2 - gotw/2, 40, 36, GOLD);
 
             const char *goRound = TextFormat("Reached Wave %d  |  Score: %d - %d", currentRound, blueWins, redWins);
-            int gorw = MeasureText(goRound, 18);
-            DrawText(goRound, gosw/2 - gorw/2, 85, 18, WHITE);
+            int gorw = GameMeasureText(goRound, 18);
+            GameDrawText(goRound, gosw/2 - gorw/2, 85, 18, WHITE);
 
             // Collect surviving blue units
             int goBlue[BLUE_TEAM_MAX_SIZE]; int goCount = 0;
@@ -5817,12 +5860,12 @@ int main(void)
             // Subtitle
             if (goCount > 0) {
                 const char *goSub = "Withdraw units before resetting (placeholder for NFC export)";
-                int gosub = MeasureText(goSub, 14);
-                DrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){180,180,200,180});
+                int gosub = GameMeasureText(goSub, 14);
+                GameDrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){180,180,200,180});
             } else {
                 const char *goSub = "All units have been set in stone!";
-                int gosub = MeasureText(goSub, 14);
-                DrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){180,180,200,180});
+                int gosub = GameMeasureText(goSub, 14);
+                GameDrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){180,180,200,180});
             }
 
             // Unit cards with WITHDRAW button
@@ -5849,7 +5892,7 @@ int main(void)
                 }
 
                 // Unit name
-                DrawText(type->name, cx + 10, goCardY + 90, 14, (Color){200,200,220,255});
+                GameDrawText(type->name, cx + 10, goCardY + 90, 14, (Color){200,200,220,255});
 
                 // 2x2 ability grid
                 int goAbilX = cx + 100;
@@ -5864,10 +5907,10 @@ int main(void)
                     if (aslot->abilityId >= 0 && aslot->abilityId < ABILITY_COUNT) {
                         DrawRectangle(ax, ay, goSlotSize, goSlotSize, ABILITY_DEFS[aslot->abilityId].color);
                         const char *abbr = ABILITY_DEFS[aslot->abilityId].abbrev;
-                        int aw = MeasureText(abbr, 10);
-                        DrawText(abbr, ax + (goSlotSize - aw)/2, ay + (goSlotSize - 10)/2, 10, WHITE);
+                        int aw = GameMeasureText(abbr, 10);
+                        GameDrawText(abbr, ax + (goSlotSize - aw)/2, ay + (goSlotSize - 10)/2, 10, WHITE);
                         const char *lvl = TextFormat("L%d", aslot->level + 1);
-                        DrawText(lvl, ax + 2, ay + goSlotSize - 8, 7, (Color){220,220,220,200});
+                        GameDrawText(lvl, ax + 2, ay + goSlotSize - 8, 7, (Color){220,220,220,200});
                     } else {
                         DrawRectangle(ax, ay, goSlotSize, goSlotSize, (Color){40,40,55,255});
                     }
@@ -5882,8 +5925,8 @@ int main(void)
                 DrawRectangleRec(wdBtn, wdBg);
                 DrawRectangleLinesEx(wdBtn, 1, (Color){100,80,160,255});
                 const char *wdText = "WITHDRAW";
-                int wdw = MeasureText(wdText, 12);
-                DrawText(wdText, (int)(wdBtn.x + (goCardW - 20)/2 - wdw/2), (int)(wdBtn.y + 8), 12, WHITE);
+                int wdw = GameMeasureText(wdText, 12);
+                GameDrawText(wdText, (int)(wdBtn.x + (goCardW - 20)/2 - wdw/2), (int)(wdBtn.y + 8), 12, WHITE);
             }
 
             // RESET button
@@ -5896,8 +5939,8 @@ int main(void)
             DrawRectangleRec(resetBtn, resetBg);
             DrawRectangleLinesEx(resetBtn, 2, (Color){120,40,40,255});
             const char *resetText = "RESET";
-            int rstw = MeasureText(resetText, 18);
-            DrawText(resetText, (int)(resetBtn.x + resetBtnW/2 - rstw/2), (int)(resetBtn.y + 13), 18, WHITE);
+            int rstw = GameMeasureText(resetText, 18);
+            GameDrawText(resetText, (int)(resetBtn.x + resetBtnW/2 - rstw/2), (int)(resetBtn.y + 13), 18, WHITE);
         }
 
         //==============================================================================
@@ -6025,25 +6068,25 @@ int main(void)
             }
             const char *introName = unitTypes[intro.typeIndex].name;
             int nameFontSize = ish / 8;
-            int nameW = MeasureText(introName, nameFontSize);
+            int nameW = GameMeasureText(introName, nameFontSize);
             float nameFinalX = isw * 0.08f;
             float nameStartX = (float)(-nameW - 20);
             float nameX = nameStartX + (nameFinalX - nameStartX) * textSlide;
             float nameY = ish * 0.2f;
 
             // Shadow
-            DrawText(introName, (int)nameX + 3, (int)nameY + 3, nameFontSize,
+            GameDrawText(introName, (int)nameX + 3, (int)nameY + 3, nameFontSize,
                 (Color){ 0, 0, 0, (unsigned char)(alpha * 0.6f) });
             // Main text
             Color nameColor = GetTeamTint(TEAM_BLUE);
             nameColor.a = alpha;
-            DrawText(introName, (int)nameX, (int)nameY, nameFontSize, nameColor);
+            GameDrawText(introName, (int)nameX, (int)nameY, nameFontSize, nameColor);
 
             // Subtitle
             int subSize = nameFontSize / 3;
             if (subSize < 12) subSize = 12;
             const char *subText = "joins the battle!";
-            DrawText(subText, (int)nameX + 4, (int)nameY + nameFontSize + 4, subSize,
+            GameDrawText(subText, (int)nameX + 4, (int)nameY + nameFontSize + 4, subSize,
                 (Color){ 200, 200, 220, (unsigned char)(alpha * 0.8f) });
 
             // --- Decorative line under name ---
@@ -6075,17 +6118,17 @@ int main(void)
                         abilCol.a = aa;
                         DrawRectangle(ax, abilY, slotSize, slotSize, abilCol);
                         const char *abbr = ABILITY_DEFS[slot->abilityId].abbrev;
-                        int aw = MeasureText(abbr, 16);
-                        DrawText(abbr, ax + (slotSize - aw)/2,
+                        int aw = GameMeasureText(abbr, 16);
+                        GameDrawText(abbr, ax + (slotSize - aw)/2,
                             abilY + (slotSize - 16)/2, 16, (Color){ 255, 255, 255, aa });
                         // Level
                         const char *lvl = TextFormat("L%d", slot->level + 1);
-                        DrawText(lvl, ax + 2, abilY + slotSize - 10, 8, (Color){ 220, 220, 220, aa });
+                        GameDrawText(lvl, ax + 2, abilY + slotSize - 10, 8, (Color){ 220, 220, 220, aa });
                     } else {
                         DrawRectangle(ax, abilY, slotSize, slotSize, (Color){ 40, 40, 55, aa });
                         const char *q = "?";
-                        int qw = MeasureText(q, 22);
-                        DrawText(q, ax + (slotSize - qw)/2,
+                        int qw = GameMeasureText(q, 22);
+                        GameDrawText(q, ax + (slotSize - qw)/2,
                             abilY + (slotSize - 22)/2, 22, (Color){ 80, 80, 100, aa });
                     }
                     DrawRectangleLines(ax, abilY, slotSize, slotSize,
@@ -6094,23 +6137,10 @@ int main(void)
             }
         }
 
-        EndTextureMode();
-
-        // Apply FXAA post-process to final image
-        {
-            float fxaaRes[2] = { (float)fxaaRTWidth, (float)fxaaRTHeight };
-            SetShaderValue(fxaaShader, fxaaResLoc, fxaaRes, SHADER_UNIFORM_VEC2);
-            BeginShaderMode(fxaaShader);
-            DrawTextureRec(fxaaRT.texture,
-                (Rectangle){ 0, 0, (float)fxaaRTWidth, -(float)fxaaRTHeight },
-                (Vector2){ 0, 0 }, WHITE);
-            EndShaderMode();
-        }
-
         // Shadow debug overlay
         if (shadowDebugMode > 0) {
             const char *modeNames[] = { "", "Shadow Factor", "Light Depth", "Light UV", "Sampled Depth" };
-            DrawText(TextFormat("[F10] Shadow Debug: %d - %s", shadowDebugMode, modeNames[shadowDebugMode]),
+            GameDrawText(TextFormat("[F10] Shadow Debug: %d - %s", shadowDebugMode, modeNames[shadowDebugMode]),
                 10, GetScreenHeight() - 30, 20, YELLOW);
             // Draw shadow map depth as small preview in corner
             float previewSize = 256.0f;
@@ -6118,7 +6148,7 @@ int main(void)
             Rectangle dstRec = { GetScreenWidth() - previewSize - 10, 10, previewSize, previewSize };
             DrawTexturePro(shadowRT.texture, srcRec, dstRec, (Vector2){0,0}, 0.0f, WHITE);
             DrawRectangleLines((int)dstRec.x, (int)dstRec.y, (int)previewSize, (int)previewSize, YELLOW);
-            DrawText("Shadow Color RT", (int)dstRec.x, (int)dstRec.y + (int)previewSize + 4, 16, YELLOW);
+            GameDrawText("Shadow Color RT", (int)dstRec.x, (int)dstRec.y + (int)previewSize + 4, 16, YELLOW);
         }
 
         // Easter egg overlay
@@ -6127,11 +6157,11 @@ int main(void)
             float alpha = easterEggTimer > 1.0f ? 1.0f : easterEggTimer;
             const char *msg = "hey judges :)";
             int fontSize = 120;
-            int w = MeasureText(msg, fontSize);
+            int w = GameMeasureText(msg, fontSize);
             int x = (GetScreenWidth() - w) / 2;
             int y = (GetScreenHeight() - fontSize) / 2;
-            DrawText(msg, x + 3, y + 3, fontSize, Fade(BLACK, alpha * 0.5f));
-            DrawText(msg, x, y, fontSize, Fade(GOLD, alpha));
+            GameDrawText(msg, x + 3, y + 3, fontSize, Fade(BLACK, alpha * 0.5f));
+            GameDrawText(msg, x, y, fontSize, Fade(GOLD, alpha));
         }
 
         DrawFPS(10, 10);
