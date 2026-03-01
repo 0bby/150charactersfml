@@ -34,6 +34,7 @@ uniform vec3 viewPos;
 uniform vec3 fogColor;
 uniform float fogDensity;
 uniform int shadowDebug; // 0=off, 1=shadow factor, 2=light depth, 3=light UV, 4=sampled depth
+uniform int noShadow;    // 1=skip shadows + apply own gamma (for intro/offscreen renders)
 
 float ShadowCalculation(vec4 posLightSpace)
 {
@@ -64,7 +65,7 @@ void main()
     vec3 viewD = normalize(viewPos - fragPosition);
     vec3 specular = vec3(0.0);
 
-    float shadow = ShadowCalculation(fragPosLightSpace);
+    float shadow = (noShadow == 1) ? 1.0 : ShadowCalculation(fragPosLightSpace);
 
     // Debug visualizations
     if (shadowDebug == 1) {
@@ -125,8 +126,8 @@ void main()
     finalColor = (texelColor*((tint + vec4(specular, 1.0))*vec4(lightDot, 1.0)));
     finalColor += texelColor*(ambient/10.0)*tint;
 
-    // Gamma correction
-    finalColor = pow(finalColor, vec4(1.0/2.2));
+    // Gamma correction for offscreen renders that skip the SSAO/tonemap pass
+    if (noShadow == 1) finalColor = pow(finalColor, vec4(1.0/2.2));
 
     // Distance fog
     float dist = length(viewPos - fragPosition);

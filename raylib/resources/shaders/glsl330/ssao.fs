@@ -52,5 +52,13 @@ void main() {
     occlusion = occlusion / float(samples);
     float ao = 1.0 - occlusion * 0.6;  // strength factor
 
-    finalColor = vec4(sceneColor.rgb * ao, sceneColor.a);
+    vec3 color = sceneColor.rgb * ao;
+
+    // ACES filmic tonemap (Narkowicz fit) + gamma
+    color *= 20; // exposure
+    float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+    color = clamp((color*(a*color + b)) / (color*(c*color + d) + e), 0.0, 1.0);
+    color = pow(color, vec3(1.0/2.2));
+
+    finalColor = vec4(color, sceneColor.a);
 }

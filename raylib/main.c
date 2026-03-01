@@ -292,6 +292,7 @@ int main(void)
     int lightVPLoc = GetShaderLocation(lightShader, "lightVP");
     int shadowMapLoc = GetShaderLocation(lightShader, "shadowMap");
     int shadowDebugLoc = GetShaderLocation(lightShader, "shadowDebug");
+    int noShadowLoc = GetShaderLocation(lightShader, "noShadow");
 
     // Assign lighting shader to all loaded models
     for (int i = 0; i < unitTypeCount; i++)
@@ -3398,6 +3399,68 @@ int main(void)
         EndMode3D();
         EndTextureMode();
 
+        // Render offscreen textures before fxaaRT to avoid nested render targets
+        // (raylib's EndTextureMode always restores to FBO 0, breaking nesting)
+
+        // Game-over portraits
+        if (phase == PHASE_GAME_OVER && !isMultiplayer && !deathPenalty) {
+            int noShadowOn = 1, noShadowOff = 0;
+            SetShaderValue(lightShader, noShadowLoc, &noShadowOn, SHADER_UNIFORM_INT);
+            int goBlueRT[BLUE_TEAM_MAX_SIZE]; int goCountRT = 0;
+            for (int i = 0; i < unitCount && goCountRT < BLUE_TEAM_MAX_SIZE; i++)
+                if (units[i].active && units[i].team == TEAM_BLUE) goBlueRT[goCountRT++] = i;
+            for (int h = 0; h < goCountRT; h++) {
+                int ui = goBlueRT[h];
+                UnitType *type = &unitTypes[units[ui].typeIndex];
+                if (!type->loaded) continue;
+                BoundingBox bb = type->baseBounds;
+                float centerY = (bb.min.y + bb.max.y) / 2.0f * type->scale;
+                float extent = (bb.max.y - bb.min.y) * type->scale;
+                portraitCam.target = (Vector3){ 0.0f, centerY, 0.0f };
+                portraitCam.position = (Vector3){ 0.0f, centerY, extent * 2.5f };
+                BeginTextureMode(portraits[h]);
+                    ClearBackground((Color){ 30, 30, 40, 255 });
+                    BeginMode3D(portraitCam);
+                        if (type->hasAnimations && type->animIndex[ANIM_IDLE] >= 0)
+                            UpdateModelAnimation(type->model, type->idleAnims[type->animIndex[ANIM_IDLE]], 0);
+                        DrawModel(type->model, (Vector3){ 0, 0, 0 }, type->scale, GetTeamTint(TEAM_BLUE));
+                    EndMode3D();
+                EndTextureMode();
+            }
+            SetShaderValue(lightShader, noShadowLoc, &noShadowOff, SHADER_UNIFORM_INT);
+        }
+
+        // Intro model
+        if (intro.active) {
+            UnitType *itype = &unitTypes[intro.typeIndex];
+            if (itype->loaded) {
+                BoundingBox ib = itype->baseBounds;
+                float icenterY = (ib.min.y + ib.max.y) / 2.0f * itype->scale;
+                float iextent  = (ib.max.y - ib.min.y) * itype->scale;
+
+                Camera introCam = { 0 };
+                introCam.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+                introCam.fovy = 30.0f;
+                introCam.projection = CAMERA_PERSPECTIVE;
+                introCam.target   = (Vector3){ 0.0f, icenterY, 0.0f };
+                introCam.position = (Vector3){ 0.0f, icenterY, iextent * 2.0f };
+
+                int noShadowOn = 1, noShadowOff = 0;
+                SetShaderValue(lightShader, noShadowLoc, &noShadowOn, SHADER_UNIFORM_INT);
+                BeginTextureMode(introModelRT);
+                    ClearBackground(BLANK);
+                    BeginMode3D(introCam);
+                        if (itype->hasAnimations && itype->animIndex[ANIM_IDLE] >= 0)
+                            UpdateModelAnimation(itype->model,
+                                itype->idleAnims[itype->animIndex[ANIM_IDLE]], intro.animFrame);
+                        DrawModel(itype->model, (Vector3){0,0,0}, itype->scale,
+                                  GetTeamTint(TEAM_BLUE));
+                    EndMode3D();
+                EndTextureMode();
+                SetShaderValue(lightShader, noShadowLoc, &noShadowOff, SHADER_UNIFORM_INT);
+            }
+        }
+
         // Composite scene + post-process into FXAA RT (avoid nesting render targets)
         BeginTextureMode(fxaaRT);
         ClearBackground((Color){ 45, 40, 35, 255 });
@@ -4698,26 +4761,6 @@ int main(void)
             int goStartX = (gosw - goTotalW) / 2;
             int goCardY = gosh / 2 - 40;
 
-            // Re-render portraits for game-over screen
-            for (int h = 0; h < goCount; h++) {
-                int ui = goBlue[h];
-                UnitType *type = &unitTypes[units[ui].typeIndex];
-                if (!type->loaded) continue;
-                BoundingBox bb = type->baseBounds;
-                float centerY = (bb.min.y + bb.max.y) / 2.0f * type->scale;
-                float extent = (bb.max.y - bb.min.y) * type->scale;
-                portraitCam.target = (Vector3){ 0.0f, centerY, 0.0f };
-                portraitCam.position = (Vector3){ 0.0f, centerY, extent * 2.5f };
-                BeginTextureMode(portraits[h]);
-                    ClearBackground((Color){ 30, 30, 40, 255 });
-                    BeginMode3D(portraitCam);
-                        if (type->hasAnimations && type->animIndex[ANIM_IDLE] >= 0)
-                            UpdateModelAnimation(type->model, type->idleAnims[type->animIndex[ANIM_IDLE]], 0);
-                        DrawModel(type->model, (Vector3){ 0, 0, 0 }, type->scale, GetTeamTint(TEAM_BLUE));
-                    EndMode3D();
-                EndTextureMode();
-            }
-
             for (int h = 0; h < goCount; h++) {
                 int cx = goStartX + h * (goCardW + goCardGap);
                 int ui = goBlue[h];
@@ -4805,31 +4848,6 @@ int main(void)
             }
             unsigned char alpha = (unsigned char)(255.0f * fadeAlpha);
 
-            // --- Render 3D model into offscreen texture ---
-            UnitType *itype = &unitTypes[intro.typeIndex];
-            if (itype->loaded) {
-                BoundingBox ib = itype->baseBounds;
-                float icenterY = (ib.min.y + ib.max.y) / 2.0f * itype->scale;
-                float iextent  = (ib.max.y - ib.min.y) * itype->scale;
-
-                Camera introCam = { 0 };
-                introCam.up = (Vector3){ 0.0f, 1.0f, 0.0f };
-                introCam.fovy = 30.0f;
-                introCam.projection = CAMERA_PERSPECTIVE;
-                introCam.target   = (Vector3){ 0.0f, icenterY, 0.0f };
-                introCam.position = (Vector3){ 0.0f, icenterY, iextent * 2.0f };
-
-                BeginTextureMode(introModelRT);
-                    ClearBackground(BLANK);
-                    BeginMode3D(introCam);
-                        if (itype->hasAnimations && itype->animIndex[ANIM_IDLE] >= 0)
-                            UpdateModelAnimation(itype->model,
-                                itype->idleAnims[itype->animIndex[ANIM_IDLE]], intro.animFrame);
-                        DrawModel(itype->model, (Vector3){0,0,0}, itype->scale,
-                                  GetTeamTint(TEAM_BLUE));
-                    EndMode3D();
-                EndTextureMode();
-            }
 
             // --- Procedural background (clipped to wipe) ---
             int wipeW = (int)(isw * wipeProgress);
