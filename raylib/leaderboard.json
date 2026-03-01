@@ -2,6 +2,11 @@
   "version": 2,
   "entries": [
     {
+      "player": "Player",
+      "round": 10,
+      "units": ["2VA3AS1PC1XX", "2CA4VC1PC1DG3", "2CF1CF2SW2CF1", "2BR2ML1PC2XX"]
+    },
+    {
       "player": "obby",
       "round": 5,
       "units": ["0SG2FI1CA3VC3", "0CF3MM3DG2EQ1", "0SP3SU3BR1XX", "0XXSU1XXXX"]

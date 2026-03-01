@@ -1,0 +1,34 @@
+# Cross-compile to Windows .exe using mingw-w64
+#
+# Setup:
+#   1. Install mingw:  sudo pacman -S mingw-w64-gcc
+#   2. Download Windows raylib from:
+#      https://github.com/raysan5/raylib/releases  (raylib-X.X_win64_mingw-w64.zip)
+#   3. Extract to deps/raylib-win/ so you have:
+#        deps/raylib-win/lib/libraylib.a
+#        deps/raylib-win/include/raylib.h
+#   4. Run:  make -f Makefile.win
+
+CC = x86_64-w64-mingw32-gcc
+CFLAGS = -Wall -Wextra -O2
+
+GAME_DIR = raylib
+RAYLIB_WIN = deps/raylib-win
+
+GAME_SRCS = $(filter-out $(GAME_DIR)/screenpicker.c, $(wildcard $(GAME_DIR)/*.c))
+GAME_HDRS = $(wildcard $(GAME_DIR)/*.h)
+GAME_TARGET = $(GAME_DIR)/game.exe
+
+GAME_CFLAGS = $(CFLAGS) -I$(GAME_DIR) -I$(RAYLIB_WIN)/include
+GAME_LDFLAGS = -L$(RAYLIB_WIN)/lib -lraylib -lopengl32 -lgdi32 -lwinmm -lm -lpthread -static
+
+.PHONY: all clean
+
+all: $(GAME_TARGET)
+	@echo "Built: $(GAME_TARGET)"
+
+$(GAME_TARGET): $(GAME_SRCS) $(GAME_HDRS)
+	$(CC) $(GAME_CFLAGS) -o $@ $(GAME_SRCS) $(GAME_LDFLAGS)
+
+clean:
+	rm -f $(GAME_TARGET)

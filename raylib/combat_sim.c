@@ -31,13 +31,14 @@ static void EmitEvent(CombatEvent events[], int *eventCount, CombatEventType typ
     (*eventCount)++;
 }
 
-int CombatTick(Unit units[], int unitCount,
+int CombatTick(Unit units[], int *unitCountPtr,
                Modifier modifiers[],
                Projectile projectiles[],
                Fissure fissures[],
                float dt,
                CombatEvent events[], int *eventCount)
 {
+    int unitCount = *unitCountPtr;
     if (eventCount) *eventCount = 0;
 
     // === STEP 1: Tick modifiers ===
@@ -97,6 +98,7 @@ int CombatTick(Unit units[], int unitCount,
                         else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                     }
                     units[ti].currentHealth -= hitDmg;
+                    CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
                     if (units[ti].currentHealth <= 0) {
                         units[ti].active = false;
                     } else {
@@ -119,6 +121,7 @@ int CombatTick(Unit units[], int unitCount,
                         else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                     }
                     units[ti].currentHealth -= hitDmg;
+                    CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
                     if (units[ti].currentHealth <= 0) units[ti].active = false;
                 }
                 if (projectiles[p].bouncesRemaining > 0) {
@@ -147,6 +150,7 @@ int CombatTick(Unit units[], int unitCount,
                         else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                     }
                     units[ti].currentHealth -= hitDmg;
+                    CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
                     // Lifesteal from devil bolt
                     if (si >= 0 && si < unitCount && units[si].active) {
                         float ls = GetModifierValue(modifiers, si, MOD_LIFESTEAL);
@@ -171,6 +175,7 @@ int CombatTick(Unit units[], int unitCount,
                     else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                 }
                 units[ti].currentHealth -= hitDmg;
+                CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
                 if (projectiles[p].stunDuration > 0) {
                     AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
                     EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, ti, -1,
@@ -181,6 +186,7 @@ int CombatTick(Unit units[], int unitCount,
             // Chain Frost bounce
             if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
                 projectiles[p].bouncesRemaining--;
+                projectiles[p].damage += projectiles[p].damageIncrease;
                 projectiles[p].lastHitUnit = ti;
                 projectiles[p].position = units[ti].position;
                 projectiles[p].position.y += 3.0f;
@@ -367,7 +373,8 @@ int CombatTick(Unit units[], int unitCount,
                     def->values[slot->level][AV_CF_PROJ_SPEED],
                     def->values[slot->level][AV_CF_DAMAGE],
                     (int)def->values[slot->level][AV_CF_BOUNCES],
-                    def->values[slot->level][AV_CF_BOUNCE_RANGE]);
+                    def->values[slot->level][AV_CF_BOUNCE_RANGE],
+                    def->values[slot->level][AV_CF_DMG_INCREASE]);
                 slot->cooldownRemaining = def->cooldown[slot->level];
                 castThisFrame = true;
             } break;
@@ -387,6 +394,7 @@ int CombatTick(Unit units[], int unitCount,
                     float d = DistXZ(units[i].position, units[j].position);
                     if (d <= radius) {
                         units[j].currentHealth -= damage;
+                        CheckMushroomSpawn(units, &unitCount, j, damage);
                         if (units[j].currentHealth <= 0) units[j].active = false;
                     }
                 }
@@ -445,6 +453,7 @@ int CombatTick(Unit units[], int unitCount,
                     float perpDist = sqrtf(perpX * perpX + perpZ * perpZ);
                     if (perpDist <= width + 3.0f) {
                         units[j].currentHealth -= damage;
+                        CheckMushroomSpawn(units, &unitCount, j, damage);
                         if (units[j].currentHealth <= 0) units[j].active = false;
                     }
                 }
@@ -576,6 +585,7 @@ int CombatTick(Unit units[], int unitCount,
                                 else { dmgHit -= units[j].shieldHP; units[j].shieldHP = 0; }
                             }
                             units[j].currentHealth -= dmgHit;
+                            CheckMushroomSpawn(units, &unitCount, j, dmgHit);
                             if (units[j].currentHealth <= 0) units[j].active = false;
                             float kx = units[j].position.x - units[ct].position.x;
                             float kz = units[j].position.z - units[ct].position.z;
@@ -671,6 +681,7 @@ int CombatTick(Unit units[], int unitCount,
                         else { dmg -= units[target].shieldHP; units[target].shieldHP = 0; }
                     }
                     units[target].currentHealth -= dmg;
+                    CheckMushroomSpawn(units, &unitCount, target, dmg);
                     // Lifesteal
                     float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
                     if (ls > 0) {
@@ -778,6 +789,7 @@ int CombatTick(Unit units[], int unitCount,
     }
 
     // === STEP 5: Check round end ===
+    *unitCountPtr = unitCount;
     int ba, ra;
     CountTeams(units, unitCount, &ba, &ra);
     if (ba == 0 && ra == 0) return 3; // draw

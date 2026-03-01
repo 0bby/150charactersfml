@@ -203,9 +203,9 @@ int main(void)
     SetMusicVolume(bgm, BGM_VOL);
     PlayMusicStream(bgm);
 
-    // Camera presets — prep (top-down auto-chess) vs combat (diagonal MOBA) vs plaza (cinematic)
-    const float prepHeight = 200.0f, prepDistance = 150.0f, prepFOV = 48.0f, prepX = 0.0f;
-    const float combatHeight = 135.0f, combatDistance = 165.0f, combatFOV = 55.0f, combatX = 37.0f;
+    // Camera presets — prep (diagonal side-on) vs combat (top-down auto-chess) vs plaza (cinematic)
+    const float prepHeight = 135.0f, prepDistance = 165.0f, prepFOV = 55.0f, prepX = 37.0f;
+    const float combatHeight = 200.0f, combatDistance = 150.0f, combatFOV = 48.0f, combatX = 0.0f;
     const float plazaHeight = 120.0f, plazaDistance = 180.0f, plazaFOV = 55.0f, plazaX = 25.0f;
     const float camLerpSpeed = 2.5f;
 
@@ -604,8 +604,8 @@ int main(void)
     Modifier modifiers[MAX_MODIFIERS] = { 0 };
     Projectile projectiles[MAX_PROJECTILES] = { 0 };
     Particle particles[MAX_PARTICLES] = { 0 };
-    int playerGold = 25;
-    int goldPerRound = 15;
+    int playerGold = 20;
+    int roundGoldReward = 0;  // computed at round end: 2g/kill + 5g/boss + 1g/ally alive
     int rollCost = 1;
     const int rollCostBase = 1;
     const int rollCostIncrement = 1;
@@ -622,6 +622,7 @@ int main(void)
     StatueSpawn statueSpawn = { .phase = SSPAWN_INACTIVE };
     int hoverAbilityId = -1;
     int hoverAbilityLevel = 0;
+    int hoverAbilityUnitIndex = -1;
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
     bool usedShopHotkey = false;  // hides hotkey hint after first use
@@ -1027,6 +1028,7 @@ int main(void)
     float roundOverTimer = 0.0f;   // brief pause after a round ends
     const char *roundResultText = "";
     bool debugMode = false;
+    int debugSpawnRarity = RARITY_COMMON;
     int shadowDebugMode = 0;
 
     // Leaderboard & prestige state
@@ -1142,6 +1144,7 @@ int main(void)
         GamePhase prevPhase = phase;
         UpdateShake(&shake, dt);
         if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
+        if (debugMode && IsKeyPressed(KEY_G)) debugSpawnRarity = (debugSpawnRarity + 1) % 3;
         if (IsKeyPressed(KEY_F6)) cgDebugOverlay = !cgDebugOverlay;
         if (cgDebugOverlay) {
             float step = 0.01f;
@@ -1305,8 +1308,11 @@ int main(void)
 
         // Hover tooltip tracking
         int prevHoverAbilityId = hoverAbilityId;
+        int prevHoverAbilityLevel = hoverAbilityLevel;
+        int prevHoverAbilityUnitIndex = hoverAbilityUnitIndex;
         hoverAbilityId = -1;
         hoverAbilityLevel = 0;
+        hoverAbilityUnitIndex = -1;
         int prevHoverSynergyIdx = hoverSynergyIdx;
         hoverSynergyIdx = -1;
 
@@ -1527,7 +1533,7 @@ int main(void)
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
                     statueSpawn.phase = SSPAWN_INACTIVE;
-                    playerGold = 25;
+                    playerGold = 20;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     RollShop(shopSlots, &playerGold, 0);
                     rollCost = rollCostBase;
@@ -2132,7 +2138,7 @@ int main(void)
                 int prepValidCount = 0;
                 for (int i = 0; i < unitTypeCount; i++) if (unitTypes[i].name) prepValidCount++;
                 int btnYStart = hudTop - (prepValidCount * (btnHeight + btnMargin)) - btnMargin;
-                Rectangle playBtn = { (float)(sw/2 - playBtnW/2), (float)(hudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
+                Rectangle playBtn = { (float)(20), (float)(hudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 bool clickedButton = false;
 
                 // NFC input box click check (debug only)
@@ -2249,6 +2255,8 @@ int main(void)
                                 units[j].selected = false;
                                 units[j].dragging = false;
                                 units[j].nextAbilitySlot = 0;
+                                units[j].damageTaken = 0;
+                                units[j].hasSpawnedMushling = false;
                                 for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
                                     units[j].abilities[a].cooldownRemaining = 0;
                                     units[j].abilities[a].triggered = false;
@@ -2271,38 +2279,15 @@ int main(void)
                         if (CheckCollisionPointRec(mouse, r) && unitTypes[i].loaded)
                         {
                             if (SpawnUnit(units, &unitCount, i, TEAM_BLUE)) {
+                                if (debugSpawnRarity > 0) {
+                                    units[unitCount-1].rarity = debugSpawnRarity;
+                                    ApplyUnitRarity(&units[unitCount-1]);
+                                }
                                 PlaySound(sfxNewCharacter);
                                 intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                     .typeIndex = i, .unitIndex = unitCount - 1, .animFrame = 0 };
                             }
                             clickedButton = true; break;
-                        }
-                    }
-                    // Rarity debug buttons (rare + legendary mushroom)
-                    if (!clickedButton) {
-                        int rY = btnYStart + ci * (btnHeight + btnMargin);
-                        Rectangle rr = { (float)btnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
-                        if (CheckCollisionPointRec(mouse, rr) && unitTypes[0].loaded) {
-                            if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE)) {
-                                PlaySound(sfxNewCharacter);
-                                units[unitCount-1].rarity = RARITY_RARE;
-                                ApplyUnitRarity(&units[unitCount-1]);
-                                intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                                    .typeIndex = 0, .unitIndex = unitCount - 1, .animFrame = 0 };
-                            }
-                            clickedButton = true;
-                        }
-                        rY += btnHeight + btnMargin;
-                        Rectangle lr = { (float)btnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
-                        if (!clickedButton && CheckCollisionPointRec(mouse, lr) && unitTypes[0].loaded) {
-                            if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE)) {
-                                PlaySound(sfxNewCharacter);
-                                units[unitCount-1].rarity = RARITY_LEGENDARY;
-                                ApplyUnitRarity(&units[unitCount-1]);
-                                intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                                    .typeIndex = 0, .unitIndex = unitCount - 1, .animFrame = 0 };
-                            }
-                            clickedButton = true;
                         }
                     }
                 }
@@ -2394,40 +2379,75 @@ int main(void)
                             PlaySound(sfxUiBuy);
                             if (isMultiplayer) {
                                 net_client_send_buy(&netClient, s);
-                                // Also process locally so ability appears in inventory immediately
                                 BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
                             } else {
-                                BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
+                                // Try selected unit first (same as hotkey logic)
+                                int selUnit = -1;
+                                for (int i2 = 0; i2 < unitCount; i2++) {
+                                    if (units[i2].active && units[i2].team == TEAM_BLUE && units[i2].selected) {
+                                        selUnit = i2; break;
+                                    }
+                                }
+                                if (selUnit >= 0) {
+                                    int cost = ABILITY_DEFS[shopSlots[s].abilityId].goldCost;
+                                    if (playerGold >= cost) {
+                                        bool placed = false;
+                                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                            if (units[selUnit].abilities[a].abilityId == shopSlots[s].abilityId &&
+                                                units[selUnit].abilities[a].level < ABILITY_MAX_LEVELS - 1) {
+                                                units[selUnit].abilities[a].level++;
+                                                playerGold -= cost;
+                                                shopSlots[s].abilityId = -1;
+                                                placed = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!placed) {
+                                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                                if (units[selUnit].abilities[a].abilityId < 0) {
+                                                    units[selUnit].abilities[a].abilityId = shopSlots[s].abilityId;
+                                                    units[selUnit].abilities[a].level = shopSlots[s].level;
+                                                    playerGold -= cost;
+                                                    shopSlots[s].abilityId = -1;
+                                                    placed = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if (!placed) {
+                                            BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
+                                        }
+                                    }
+                                } else {
+                                    BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
+                                }
                             }
                             clickedButton = true;
                             break;
                         }
                     }
                 }
-                // --- Drag start: inventory slots ---
+                // --- X button on unit cards to remove (check before card selection) ---
                 if (!clickedButton && !dragState.dragging) {
-                    int totalCardsW = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
-                    int cardsStartX = (sw - totalCardsW) / 2;
-                    int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
-                    int invStartY = hudTop + hudShopH + 15;
-                    for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
-                        int col = inv % HUD_INVENTORY_COLS;
-                        int row = inv / HUD_INVENTORY_COLS;
-                        int ix = invStartX + col * (hudAbilSlotSize + hudAbilSlotGap);
-                        int iy = invStartY + row * (hudAbilSlotSize + hudAbilSlotGap);
-                        Rectangle r = { (float)ix, (float)iy, (float)hudAbilSlotSize, (float)hudAbilSlotSize };
-                        if (CheckCollisionPointRec(mouse, r) && inventory[inv].abilityId >= 0) {
-                            PlaySound(sfxUiDrag);
-                            dragState = (DragState){ .dragging = true, .sourceType = 0,
-                                .sourceIndex = inv, .sourceUnitIndex = -1,
-                                .abilityId = inventory[inv].abilityId, .level = inventory[inv].level };
-                            inventory[inv].abilityId = -1;
+                    int tmpBlue2[BLUE_TEAM_MAX_SIZE]; int tmpCount2 = 0;
+                    for (int i2 = 0; i2 < unitCount && tmpCount2 < BLUE_TEAM_MAX_SIZE; i2++)
+                        if (units[i2].active && units[i2].team == TEAM_BLUE) tmpBlue2[tmpCount2++] = i2;
+                    int totalCardsW2 = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
+                    int cardsStartX2 = (sw - totalCardsW2) / 2;
+                    int cardsY2 = hudTop + hudShopH + 5;
+                    for (int h = 0; h < tmpCount2; h++) {
+                        int cardX = cardsStartX2 + h * (hudCardW + hudCardSpacing);
+                        int xBtnSize = S(18);
+                        Rectangle xBtn = { (float)(cardX + hudCardW - xBtnSize - 2),
+                                           (float)(cardsY2 + 2), (float)xBtnSize, (float)xBtnSize };
+                        if (CheckCollisionPointRec(mouse, xBtn)) {
+                            removeConfirmUnit = tmpBlue2[h];
                             clickedButton = true;
                             break;
                         }
                     }
                 }
-                // --- Drag start: unit ability slots on HUD ---
+                // --- Drag start: unit ability slots on HUD (check before card selection) ---
                 if (!clickedButton && !dragState.dragging) {
                     // Need blueHudUnits — build it here too
                     int tmpBlue[BLUE_TEAM_MAX_SIZE]; int tmpCount = 0;
@@ -2459,21 +2479,46 @@ int main(void)
                         }
                     }
                 }
-                // --- X button on unit cards to remove ---
+                // --- Drag start: inventory slots ---
                 if (!clickedButton && !dragState.dragging) {
-                    int tmpBlue2[BLUE_TEAM_MAX_SIZE]; int tmpCount2 = 0;
-                    for (int i2 = 0; i2 < unitCount && tmpCount2 < BLUE_TEAM_MAX_SIZE; i2++)
-                        if (units[i2].active && units[i2].team == TEAM_BLUE) tmpBlue2[tmpCount2++] = i2;
-                    int totalCardsW2 = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
-                    int cardsStartX2 = (sw - totalCardsW2) / 2;
-                    int cardsY2 = hudTop + hudShopH + 5;
-                    for (int h = 0; h < tmpCount2; h++) {
-                        int cardX = cardsStartX2 + h * (hudCardW + hudCardSpacing);
-                        int xBtnSize = S(18);
-                        Rectangle xBtn = { (float)(cardX + hudCardW - xBtnSize - 2),
-                                           (float)(cardsY2 + 2), (float)xBtnSize, (float)xBtnSize };
-                        if (CheckCollisionPointRec(mouse, xBtn)) {
-                            removeConfirmUnit = tmpBlue2[h];
+                    int totalCardsW = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
+                    int cardsStartX = (sw - totalCardsW) / 2;
+                    int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
+                    int invStartY = hudTop + hudShopH + 15;
+                    for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
+                        int col = inv % HUD_INVENTORY_COLS;
+                        int row = inv / HUD_INVENTORY_COLS;
+                        int ix = invStartX + col * (hudAbilSlotSize + hudAbilSlotGap);
+                        int iy = invStartY + row * (hudAbilSlotSize + hudAbilSlotGap);
+                        Rectangle r = { (float)ix, (float)iy, (float)hudAbilSlotSize, (float)hudAbilSlotSize };
+                        if (CheckCollisionPointRec(mouse, r) && inventory[inv].abilityId >= 0) {
+                            PlaySound(sfxUiDrag);
+                            dragState = (DragState){ .dragging = true, .sourceType = 0,
+                                .sourceIndex = inv, .sourceUnitIndex = -1,
+                                .abilityId = inventory[inv].abilityId, .level = inventory[inv].level };
+                            inventory[inv].abilityId = -1;
+                            clickedButton = true;
+                            break;
+                        }
+                    }
+                }
+                // --- Click to select unit from bottom card (catch-all, checked last) ---
+                if (!clickedButton) {
+                    int tmpBlueCards[BLUE_TEAM_MAX_SIZE]; int tmpCardCount = 0;
+                    for (int i2 = 0; i2 < unitCount && tmpCardCount < BLUE_TEAM_MAX_SIZE; i2++)
+                        if (units[i2].active && units[i2].team == TEAM_BLUE && !units[i2].isMushling)
+                            tmpBlueCards[tmpCardCount++] = i2;
+                    int totalCardsWC = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
+                    int cardsStartXC = (sw - totalCardsWC) / 2;
+                    int cardsYC = hudTop + hudShopH + 5;
+                    for (int h = 0; h < tmpCardCount; h++) {
+                        int cardX = cardsStartXC + h * (hudCardW + hudCardSpacing);
+                        Rectangle cardRect = { (float)cardX, (float)cardsYC, (float)hudCardW, (float)hudCardH };
+                        if (CheckCollisionPointRec(mouse, cardRect)) {
+                            int ui = tmpBlueCards[h];
+                            for (int j = 0; j < unitCount; j++)
+                                units[j].selected = (j == ui);
+                            PlaySound(sfxUiDrag);
                             clickedButton = true;
                             break;
                         }
@@ -2646,7 +2691,7 @@ int main(void)
                     int szY = cardsY + S(18);
                     Rectangle sellRect = { (float)szX, (float)szY, (float)szSize, (float)szSize };
                     if (CheckCollisionPointRec(mouse, sellRect)) {
-                        int sellValue = ABILITY_DEFS[dragState.abilityId].goldCost / 2;
+                        int sellValue = ABILITY_DEFS[dragState.abilityId].goldCost * (dragState.level + 1) / 2;
                         if (sellValue < 1) sellValue = 1;
                         playerGold += sellValue;
                         PlaySound(sfxUiBuy);
@@ -2803,6 +2848,7 @@ int main(void)
                                 else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                             }
                             units[ti].currentHealth -= hitDmg;
+                            CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
                             units[ti].hitFlash = HIT_FLASH_DURATION;
                             SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
 
@@ -2843,6 +2889,7 @@ int main(void)
                                 else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                             }
                             units[ti].currentHealth -= hitDmg;
+                            CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
                             units[ti].hitFlash = HIT_FLASH_DURATION;
                             SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
 
@@ -2891,6 +2938,7 @@ int main(void)
                                 else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                             }
                             units[ti].currentHealth -= hitDmg;
+                            CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
                             PlaySound(sfxProjectileHit);
                             units[ti].hitFlash = HIT_FLASH_DURATION;
                             SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, false);
@@ -2936,6 +2984,7 @@ int main(void)
                             else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
                         }
                         units[ti].currentHealth -= hitDmg;
+                        CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
                         units[ti].hitFlash = HIT_FLASH_DURATION;
                         SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
                         if (projectiles[p].stunDuration > 0) {
@@ -2961,6 +3010,7 @@ int main(void)
                     // Chain Frost bounce
                     if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
                         projectiles[p].bouncesRemaining--;
+                        projectiles[p].damage += projectiles[p].damageIncrease;
                         projectiles[p].lastHitUnit = ti;
                         projectiles[p].position = units[ti].position;
                         projectiles[p].position.y += 3.0f;
@@ -3200,6 +3250,7 @@ int main(void)
                                         else { dmgHit -= units[j].shieldHP; units[j].shieldHP = 0; }
                                     }
                                     units[j].currentHealth -= dmgHit;
+                                    CheckMushroomSpawn(units, &unitCount, j, dmgHit);
                                     units[j].hitFlash = HIT_FLASH_DURATION;
                                     SpawnDamageNumber(floatingTexts, units[j].position, dmgHit, true);
         
@@ -3322,6 +3373,7 @@ int main(void)
                                 else { dmg -= units[target].shieldHP; units[target].shieldHP = 0; }
                             }
                             units[target].currentHealth -= dmg;
+                            CheckMushroomSpawn(units, &unitCount, target, dmg);
                             PlaySound(sfxMeleeHit);
                             units[target].hitFlash = HIT_FLASH_DURATION;
                             SpawnDamageNumber(floatingTexts, units[target].position, dmg, false);
@@ -3514,6 +3566,19 @@ int main(void)
                     if (ba > 0) { blueWins++; roundResultText = "BLUE WINS THE ROUND!"; blueLostLastRound = false; }
                     else if (ra > 0) { redWins++; roundResultText = "RED WINS THE ROUND!"; blueLostLastRound = true; }
                     else { roundResultText = "DRAW — NO SURVIVORS!"; blueLostLastRound = true; }
+                    // Calculate gold reward: 2g per enemy killed, 5g per boss, 1g per ally alive
+                    {
+                        int enemyKills = 0, bossKills = 0, alliesAlive = 0;
+                        for (int i = 0; i < unitCount; i++) {
+                            if (units[i].team == TEAM_RED && !units[i].active) {
+                                if (units[i].scaleOverride > 1.5f) bossKills++;
+                                else enemyKills++;
+                            }
+                            if (units[i].team == TEAM_BLUE && units[i].active && !units[i].isMushling)
+                                alliesAlive++;
+                        }
+                        roundGoldReward = enemyKills * 2 + bossKills * 5 + alliesAlive * 1;
+                    }
                     currentRound++;
                     lastOutcomeWin = (ba > 0);
                     phase = PHASE_ROUND_OVER;
@@ -3629,7 +3694,7 @@ int main(void)
                         if (roll < 50) snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy unit");
                         else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
                     }
-                    playerGold += goldPerRound;
+                    { int interest = playerGold / 5; playerGold += roundGoldReward + interest; }
                     RollShop(shopSlots, &playerGold, 0);
                     rollCost = rollCostBase;
                     phase = PHASE_PREP;
@@ -3715,7 +3780,7 @@ int main(void)
                         if (roll < 50) snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy unit");
                         else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
                     }
-                    playerGold += goldPerRound;
+                    { int interest = playerGold / 5; playerGold += roundGoldReward + interest; }
                     RollShop(shopSlots, &playerGold, 0);
                     rollCost = rollCostBase;
                     phase = PHASE_PREP;
@@ -3743,7 +3808,7 @@ int main(void)
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
-                playerGold = 25;
+                playerGold = 20;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
                 joinCodeLen = 0;
@@ -3818,7 +3883,7 @@ int main(void)
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
                     statueSpawn.phase = SSPAWN_INACTIVE;
-                    playerGold = 25;
+                    playerGold = 20;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     dragState.dragging = false;
                     unitCount = 0;
@@ -3856,7 +3921,7 @@ int main(void)
                 ClearAllFissures(fissures);
                 intro.active = false;
                 statueSpawn.phase = SSPAWN_INACTIVE;
-                playerGold = 25;
+                playerGold = 20;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
                 memset(plazaData, 0, sizeof(plazaData));
@@ -3927,11 +3992,11 @@ int main(void)
         BeginDrawing();
         ClearBackground((Color){ 45, 40, 35, 255 });
 
-        // Collect active blue units for HUD
+        // Collect active blue units for HUD (skip mushlings)
         int blueHudUnits[BLUE_TEAM_MAX_SIZE];
         int blueHudCount = 0;
         for (int i = 0; i < unitCount && blueHudCount < BLUE_TEAM_MAX_SIZE; i++) {
-            if (units[i].active && units[i].team == TEAM_BLUE)
+            if (units[i].active && units[i].team == TEAM_BLUE && !units[i].isMushling)
                 blueHudUnits[blueHudCount++] = i;
         }
 
@@ -4432,6 +4497,8 @@ int main(void)
                 PlazaDrawObjects(doorModel, trophyModel, doorPos, trophyPos, camera,
                     plazaHoverObject == 2, plazaHoverObject == 1, plazaSparkleTimer);
             }
+
+            // (range circle moved to after post-processing — see below)
         EndMode3D();
         EndTextureMode();
 
@@ -4556,6 +4623,47 @@ int main(void)
                 (Rectangle){ 0, 0, (float)fxaaRTWidth, -(float)fxaaRTHeight },
                 (Vector2){ 0, 0 }, WHITE);
             EndShaderMode();
+        }
+
+        // Draw ability range/radius circle on hover (prev frame's values, 1-frame delay)
+        if (prevHoverAbilityUnitIndex >= 0 && prevHoverAbilityUnitIndex < unitCount &&
+            units[prevHoverAbilityUnitIndex].active &&
+            prevHoverAbilityId >= 0 && prevHoverAbilityId < ABILITY_COUNT)
+        {
+            const AbilityDef *def = &ABILITY_DEFS[prevHoverAbilityId];
+            float displayRadius = 0.0f;
+            // Determine which radius to show based on ability type
+            if (def->isPassive) {
+                // Passives: no indicator
+            } else if (def->targetType == TARGET_CLOSEST_ENEMY) {
+                // Targeted abilities: show cast range
+                displayRadius = def->range[prevHoverAbilityLevel];
+            } else if (def->targetType == TARGET_SELF_AOE) {
+                // Self AoE: show actual effect radius from values
+                switch (prevHoverAbilityId) {
+                    case ABILITY_EARTHQUAKE: displayRadius = def->values[prevHoverAbilityLevel][AV_EQ_RADIUS]; break;
+                    case ABILITY_VACUUM:     displayRadius = def->values[prevHoverAbilityLevel][AV_VAC_RADIUS]; break;
+                    default:                 displayRadius = def->range[prevHoverAbilityLevel]; break;
+                }
+            } else {
+                // Other active abilities: check for special radius values
+                switch (prevHoverAbilityId) {
+                    case ABILITY_HOOK:          displayRadius = def->values[prevHoverAbilityLevel][AV_HK_RANGE]; break;
+                    case ABILITY_PRIMAL_CHARGE: displayRadius = def->values[prevHoverAbilityLevel][AV_PC_AOE_RADIUS]; break;
+                    default: break; // self-buff / no spatial component
+                }
+            }
+            if (displayRadius > 0.0f) {
+                BeginMode3D(camera);
+                    Vector3 ringPos = units[prevHoverAbilityUnitIndex].position;
+                    ringPos.y += 0.2f;
+                    Color ringCol = def->color;
+                    ringCol.a = 120;
+                    DrawArc3D(ringPos, displayRadius - 0.15f, 1.0f, ringCol);
+                    DrawArc3D(ringPos, displayRadius, 1.0f, ringCol);
+                    DrawArc3D(ringPos, displayRadius + 0.15f, 1.0f, ringCol);
+                EndMode3D();
+            }
         }
 
         // 2D overlay: labels + health bars (drawn directly to screen, no FXAA)
@@ -4789,7 +4897,9 @@ int main(void)
                     if (CheckCollisionPointRec(GetMousePosition(), r) && unitTypes[i].loaded) c = BLUE;
                     DrawRectangleRec(r, c);
                     DrawRectangleLinesEx(r, 2, unitTypes[i].loaded ? DARKBLUE : GRAY);
-                    const char *l = TextFormat("BLUE %s", unitTypes[i].name);
+                    const char *rarityPrefix = (debugSpawnRarity == RARITY_LEGENDARY) ? "LEG " :
+                                               (debugSpawnRarity == RARITY_RARE) ? "RARE " : "";
+                    const char *l = TextFormat("BLUE %s%s", rarityPrefix, unitTypes[i].name);
                     int lw = GameMeasureText(l, 14);
                     GameDrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
                     drawIdx++;
@@ -4810,30 +4920,12 @@ int main(void)
                     drawIdx++;
                 }
 
-                // Rarity debug spawn buttons (below blue column)
-                {
-                    int rY = dBtnYStart + drawIdx * (btnHeight + btnMargin);
-                    Rectangle rr = { (float)dBtnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
-                    Color rc = (Color){100,160,255,255};
-                    if (CheckCollisionPointRec(GetMousePosition(), rr)) rc = (Color){130,180,255,255};
-                    DrawRectangleRec(rr, rc);
-                    DrawRectangleLinesEx(rr, 2, (Color){180,200,255,255});
-                    const char *rl = "RARE Mushroom";
-                    int rlw = GameMeasureText(rl, 14);
-                    GameDrawText(rl, rr.x + (btnWidth-rlw)/2, rr.y + (btnHeight-14)/2, 14, (Color){180,200,255,255});
-
-                    rY += btnHeight + btnMargin;
-                    Rectangle lr = { (float)dBtnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
-                    Color lc = (Color){200,170,50,255};
-                    if (CheckCollisionPointRec(GetMousePosition(), lr)) lc = (Color){230,200,80,255};
-                    DrawRectangleRec(lr, lc);
-                    DrawRectangleLinesEx(lr, 2, (Color){255,215,0,255});
-                    const char *ll = "LEGEND Mushroom";
-                    int llw = GameMeasureText(ll, 14);
-                    GameDrawText(ll, lr.x + (btnWidth-llw)/2, lr.y + (btnHeight-14)/2, 14, (Color){255,215,0,255});
-                }
-
                 GameDrawText("[F1] DEBUG MODE", dBtnXBlue, dBtnYStart - 20, 12, YELLOW);
+                {
+                    const char *rarityNames[] = { "COMMON", "RARE", "LEGENDARY" };
+                    const char *gLabel = TextFormat("[G] Rarity: %s", rarityNames[debugSpawnRarity]);
+                    GameDrawText(gLabel, dBtnXBlue, dBtnYStart - 36, 12, YELLOW);
+                }
                 GameDrawText(TextFormat("[</>] Tiles: %s", tileLayoutNames[tileLayout]), dBtnXBlue, dBtnYStart - 36, 12, YELLOW);
 
                 // --- ENV PIECE spawn buttons (centered column) ---
@@ -4899,17 +4991,6 @@ int main(void)
                 int wlw = GameMeasureText(waveLabel, S(20));
                 GameDrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, S(20), WHITE);
 
-                // Wave upgrade description (shows what changed this round)
-                if (waveUpgradeText[0] != '\0') {
-                    int wuSz = S(14);
-                    int wuW = GameMeasureText(waveUpgradeText, wuSz);
-                    int wuX = sw / 2 - wuW / 2;
-                    int wuY = dBtnYStart - 25 + S(22);
-                    bool isBoss = (currentRound == 4);
-                    Color wuColor = isBoss ? (Color){255, 80, 80, 220} : (Color){255, 200, 100, 200};
-                    GameDrawText(waveUpgradeText, wuX, wuY, wuSz, wuColor);
-                }
-
                 // Drag hint (first round only, until player drags a unit)
                 if (currentRound == 0 && !hasDraggedUnit) {
                     const char *dhint = "Click and drag your units to reposition them!";
@@ -4968,20 +5049,9 @@ int main(void)
                 }
             }
 
-            // Danger zone indicator (pushing past a milestone)
-            if (lastMilestoneRound > 0) {
-                const char *dangerText = "DANGER ZONE - Losing means permanent death!";
-                int dtw = GameMeasureText(dangerText, 18);
-                GameDrawText(dangerText, sw/2 - dtw/2, 60, 18, RED);
-                int nextMilestone = ((currentRound / 5) + 1) * 5;
-                const char *nextText = TextFormat("Next milestone: Wave %d", nextMilestone);
-                int ntw = GameMeasureText(nextText, 14);
-                GameDrawText(nextText, sw/2 - ntw/2, 82, 14, ORANGE);
-            }
-
-            // PLAY / READY button (centre-bottom, prep phase only)
+            // PLAY / READY button (left side, prep phase only)
             if (phase == PHASE_PREP) {
-                Rectangle dPlayBtn = { (float)(sw/2 - playBtnW/2), (float)(dHudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
+                Rectangle dPlayBtn = { (float)(20), (float)(dHudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 int ba, ra;
                 CountTeams(units, unitCount, &ba, &ra);
                 bool canPlay = isMultiplayer ? (ba > 0) : (ba > 0 && ra > 0);
@@ -5012,13 +5082,48 @@ int main(void)
             }
         }
 
-        // ── HUD: round + score info ──
+        // ── HUD: round + score info (top of screen) ──
         {
             int sw = GetScreenWidth();
             int sh = GetScreenHeight();
             if (phase != PHASE_PLAZA) {
-                GameDrawText(TextFormat("Round: %d / %d", currentRound < TOTAL_ROUNDS ? currentRound + 1 : TOTAL_ROUNDS, TOTAL_ROUNDS),
-                         sw/2 - 60, 10, 20, BLACK);
+                // Round indicator (large, top center)
+                const char *roundText = TextFormat("Wave %d", currentRound + 1);
+                int roundSz = S(28);
+                int roundW = GameMeasureText(roundText, roundSz);
+                int roundX = sw / 2 - roundW / 2;
+                int roundY = S(8);
+                DrawRectangle(roundX - S(12), roundY - S(4), roundW + S(24), roundSz + S(8), (Color){20, 20, 30, 200});
+                GameDrawText(roundText, roundX, roundY, roundSz, (Color){255, 230, 120, 255});
+
+                // Wave upgrade description (below round indicator)
+                if (waveUpgradeText[0] != '\0') {
+                    int wuSz = S(18);
+                    int wuW = GameMeasureText(waveUpgradeText, wuSz);
+                    int wuX = sw / 2 - wuW / 2;
+                    int wuY = roundY + roundSz + S(6);
+                    bool isBoss = (currentRound == 4);
+                    Color wuColor = isBoss ? (Color){255, 80, 80, 240} : (Color){255, 200, 100, 220};
+                    DrawRectangle(wuX - S(8), wuY - S(2), wuW + S(16), wuSz + S(4), (Color){20, 20, 30, 180});
+                    GameDrawText(waveUpgradeText, wuX, wuY, wuSz, wuColor);
+                }
+
+                // Danger zone + next milestone (top center, below wave info)
+                if (lastMilestoneRound > 0) {
+                    int dangerY = roundY + roundSz + S(6);
+                    if (waveUpgradeText[0] != '\0') dangerY += S(24);
+                    const char *dangerText = "DANGER ZONE - Losing means permanent death!";
+                    int dangerSz = S(22);
+                    int dtw = GameMeasureText(dangerText, dangerSz);
+                    DrawRectangle(sw/2 - dtw/2 - S(8), dangerY - S(2), dtw + S(16), dangerSz + S(4), (Color){60, 10, 10, 200});
+                    GameDrawText(dangerText, sw/2 - dtw/2, dangerY, dangerSz, RED);
+                    int nextMilestone = ((currentRound / 5) + 1) * 5;
+                    const char *nextText = TextFormat("Next milestone: Wave %d", nextMilestone);
+                    int nextSz = S(18);
+                    int ntw = GameMeasureText(nextText, nextSz);
+                    GameDrawText(nextText, sw/2 - ntw/2, dangerY + dangerSz + S(4), nextSz, ORANGE);
+                }
+
                 GameDrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
             }
             if (isMultiplayer) {
@@ -5317,21 +5422,6 @@ int main(void)
                                         (float)(hudCardW + 2), (float)(hudCardH + 2) },
                             2, (Color){ 100, 255, 100, 255 });
 
-                    // Rarity border glow
-                    if (units[ui].rarity == RARITY_LEGENDARY) {
-                        float pulse = (sinf((float)GetTime() * 2.5f + (float)slot * 1.7f) + 1.0f) * 0.5f;
-                        unsigned char alpha = (unsigned char)(120 + pulse * 80);
-                        DrawRectangleLinesEx(
-                            (Rectangle){ (float)(cardX-1), (float)(cardsY-1),
-                                        (float)(hudCardW+2), (float)(hudCardH+2) },
-                            2, (Color){ 255, 60, 60, alpha });
-                    } else if (units[ui].rarity == RARITY_RARE) {
-                        DrawRectangleLinesEx(
-                            (Rectangle){ (float)(cardX-1), (float)(cardsY-1),
-                                        (float)(hudCardW+2), (float)(hudCardH+2) },
-                            1, (Color){ 180, 100, 255, 160 });
-                    }
-
                     // X button (remove unit) — prep phase only
                     if (phase == PHASE_PREP) {
                         int xBtnSize = S(18);
@@ -5408,7 +5498,7 @@ int main(void)
                             // Hover detection
                             bool slotHovered = CheckCollisionPointRec(GetMousePosition(),
                                 (Rectangle){(float)ax,(float)ay,(float)hudAbilSlotSize,(float)hudAbilSlotSize});
-                            if (slotHovered) { hoverAbilityId = aslot->abilityId; hoverAbilityLevel = aslot->level; }
+                            if (slotHovered) { hoverAbilityId = aslot->abilityId; hoverAbilityLevel = aslot->level; hoverAbilityUnitIndex = ui; }
                             // Abbreviation (scale up when charging tooltip)
                             int abbrSize = S(13);
                             if (slotHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
@@ -5496,7 +5586,7 @@ int main(void)
                     sellZoneY + sellZoneSize / 2 - S(16), S(14), sellBorder);
                 // Gold indicator
                 if (dragState.dragging && dragState.abilityId >= 0 && dragState.abilityId < ABILITY_COUNT) {
-                    int sellValue = ABILITY_DEFS[dragState.abilityId].goldCost / 2;
+                    int sellValue = ABILITY_DEFS[dragState.abilityId].goldCost * (dragState.level + 1) / 2;
                     if (sellValue < 1) sellValue = 1;
                     const char *sellGold = TextFormat("+%dg", sellValue);
                     int sgW = GameMeasureText(sellGold, S(12));
@@ -5631,8 +5721,10 @@ int main(void)
                     // Buff text
                     if (syn->buffDesc[synTier[s]]) {
                         int buffX = pipX + syn->tierCount * S(10) + S(6);
+                        BeginScissorMode(buffX, rowY, GetScreenWidth() - buffX - S(4), synRowH);
                         GameDrawText(syn->buffDesc[synTier[s]], buffX, rowY + S(3), S(11),
                                  (Color){ 160, 160, 180, 200 });
+                        EndScissorMode();
                     }
                     activeSynCount++;
                 }
@@ -5757,6 +5849,11 @@ int main(void)
                 const char *goldText = TextFormat("Gold: %d", playerGold);
                 int gw = GameMeasureText(goldText, S(20));
                 GameDrawText(goldText, hudSw - gw - 20, shopY + 16, S(20), (Color){ 240, 200, 60, 255 });
+                {
+                    const char *intText = TextFormat("+%d interest", playerGold / 5);
+                    int iw = GameMeasureText(intText, S(12));
+                    GameDrawText(intText, hudSw - iw - 20, shopY + 16 + S(22), S(12), (Color){200, 180, 60, 180});
+                }
 
                 // Hotkey hint (first round only, until player uses a hotkey)
                 if (currentRound == 0 && !usedShopHotkey) {
@@ -5843,6 +5940,7 @@ int main(void)
             case ABILITY_CHAIN_FROST:
                 statLines[numStatLines++] = (StatLine){ "Damage", AV_CF_DAMAGE, false };
                 statLines[numStatLines++] = (StatLine){ "Bounces", AV_CF_BOUNCES, false };
+                statLines[numStatLines++] = (StatLine){ "Dmg/Bounce", AV_CF_DMG_INCREASE, false };
                 break;
             case ABILITY_BLOOD_RAGE:
                 statLines[numStatLines++] = (StatLine){ "Lifesteal", AV_BR_LIFESTEAL, true };

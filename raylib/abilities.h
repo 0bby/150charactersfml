@@ -76,6 +76,7 @@ typedef enum {
 #define AV_CF_BOUNCES      1
 #define AV_CF_PROJ_SPEED   2
 #define AV_CF_BOUNCE_RANGE 3
+#define AV_CF_DMG_INCREASE 4
 // -- Blood Rage
 #define AV_BR_LIFESTEAL    0
 #define AV_BR_DURATION     1
@@ -186,17 +187,17 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         },
     },
     [ABILITY_CHAIN_FROST] = {
-        .name = "Chain Frost", .description = "Bouncing damage projectile",
+        .name = "Chain Frost", .description = "Bouncing projectile, gains dmg per bounce",
         .abbrev = "CF", .color = { 80, 140, 255, 255 },
         .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 5,
         .range    = { 50.0f, 58.0f, 66.0f, 78.0f, 92.0f },
         .cooldown = { 14.0f, 12.0f, 10.0f, 8.0f, 6.0f },
         .values = {
-            { [AV_CF_DAMAGE]=50.0f,  [AV_CF_BOUNCES]=3.0f,  [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f },
-            { [AV_CF_DAMAGE]=70.0f,  [AV_CF_BOUNCES]=4.0f,  [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f },
-            { [AV_CF_DAMAGE]=90.0f,  [AV_CF_BOUNCES]=5.0f,  [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f },
-            { [AV_CF_DAMAGE]=120.0f, [AV_CF_BOUNCES]=7.0f,  [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=45.0f },
-            { [AV_CF_DAMAGE]=160.0f, [AV_CF_BOUNCES]=10.0f, [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=50.0f },
+            { [AV_CF_DAMAGE]=2.0f,  [AV_CF_BOUNCES]=3.0f,  [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f, [AV_CF_DMG_INCREASE]=3.0f },
+            { [AV_CF_DAMAGE]=3.0f,  [AV_CF_BOUNCES]=4.0f,  [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f, [AV_CF_DMG_INCREASE]=5.0f },
+            { [AV_CF_DAMAGE]=3.0f,  [AV_CF_BOUNCES]=5.0f,  [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=40.0f, [AV_CF_DMG_INCREASE]=7.0f },
+            { [AV_CF_DAMAGE]=4.0f,  [AV_CF_BOUNCES]=7.0f,  [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=45.0f, [AV_CF_DMG_INCREASE]=10.0f },
+            { [AV_CF_DAMAGE]=5.0f,  [AV_CF_BOUNCES]=10.0f, [AV_CF_PROJ_SPEED]=50.0f, [AV_CF_BOUNCE_RANGE]=50.0f, [AV_CF_DMG_INCREASE]=14.0f },
         },
     },
     [ABILITY_BLOOD_RAGE] = {

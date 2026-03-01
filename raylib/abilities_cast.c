@@ -7,7 +7,7 @@
 //------------------------------------------------------------------------------------
 void SpawnChainFrostProjectile(Projectile projectiles[],
     Vector3 startPos, int targetIndex, int sourceIndex, Team sourceTeam, int level,
-    float speed, float damage, int bounces, float bounceRange)
+    float speed, float damage, int bounces, float bounceRange, float damageIncrease)
 {
     for (int p = 0; p < MAX_PROJECTILES; p++) {
         if (!projectiles[p].active) {
@@ -15,7 +15,7 @@ void SpawnChainFrostProjectile(Projectile projectiles[],
                 .type = PROJ_CHAIN_FROST,
                 .position = (Vector3){ startPos.x, startPos.y + 3.0f, startPos.z },
                 .targetIndex = targetIndex, .sourceIndex = sourceIndex, .sourceTeam = sourceTeam,
-                .speed = speed, .damage = damage, .stunDuration = 0,
+                .speed = speed, .damage = damage, .damageIncrease = damageIncrease, .stunDuration = 0,
                 .bouncesRemaining = bounces, .bounceRange = bounceRange, .lastHitUnit = -1,
                 .level = level, .color = (Color){ 80, 140, 255, 255 }, .active = true,
                 .chargeTimer = 0.2f, .chargeMax = 0.2f,
@@ -183,7 +183,8 @@ bool CastChainFrost(CombatState *state, int caster, AbilitySlot *slot, int targe
         def->values[slot->level][AV_CF_PROJ_SPEED],
         def->values[slot->level][AV_CF_DAMAGE],
         (int)def->values[slot->level][AV_CF_BOUNCES],
-        def->values[slot->level][AV_CF_BOUNCE_RANGE]);
+        def->values[slot->level][AV_CF_BOUNCE_RANGE],
+        def->values[slot->level][AV_CF_DMG_INCREASE]);
     slot->cooldownRemaining = def->cooldown[slot->level];
     return true;
 }

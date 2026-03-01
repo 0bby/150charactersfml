@@ -86,6 +86,7 @@ typedef struct {
     Team sourceTeam;
     float speed;
     float damage;
+    float damageIncrease;
     float stunDuration;
     int bouncesRemaining;
     float bounceRange;
@@ -204,6 +205,11 @@ typedef struct {
     float hitFlash;        // >0 = flash white on damage (decays to 0)
     float castPause;       // >0 = frozen after casting projectile ability
     float attackAnimTimer; // >0 = playing attack animation (counts down)
+    // Mushroom synergy fields
+    float damageTaken;         // cumulative damage this combat
+    float mushroomSpawnThresh; // 0 = disabled
+    bool  hasSpawnedMushling;
+    bool  isMushling;          // spawned mushling (no further spawns)
     // NFC tag UID (travels with unit during array compaction)
     unsigned char nfcUid[7];
     int nfcUidLen;         // 0 = not from NFC

@@ -57,15 +57,15 @@ static const SynergyDef SYNERGY_DEFS[] = {
 #ifndef SERVER_BUILD
         .color = { 180, 100, 60, 255 },
 #endif
-        .buffDesc = { "+20% HP", "+40% HP", "+60% HP, +10% DMG", NULL },
+        .buffDesc = { "Spawn@50% dmg", "Spawn@25% dmg", "Spawn@12.5% dmg", NULL },
         .requiredTypes = { 0 },       // Mushroom
         .requiredTypeCount = 1,
         .targetType = 0,              // buff goes to mushrooms
         .tierCount = 3,
         .tiers = {
-            { .minUnits = 2, .speedMult = 1.0f, .hpMult = 1.20f, .dmgMult = 1.0f },
-            { .minUnits = 3, .speedMult = 1.0f, .hpMult = 1.40f, .dmgMult = 1.0f },
-            { .minUnits = 4, .speedMult = 1.0f, .hpMult = 1.60f, .dmgMult = 1.10f },
+            { .minUnits = 2, .speedMult = 1.0f, .hpMult = 1.0f, .dmgMult = 1.0f },
+            { .minUnits = 3, .speedMult = 1.0f, .hpMult = 1.0f, .dmgMult = 1.0f },
+            { .minUnits = 4, .speedMult = 1.0f, .hpMult = 1.0f, .dmgMult = 1.0f },
         }
     },
     // 2: Reptile Fury

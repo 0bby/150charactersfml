@@ -728,23 +728,23 @@ static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
     }},
     // Round 2: 2 enemies, 1 ability each
     { .count = 2, .entries = {
-        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.2f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.2f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
     // Round 3: 2 enemies, 2 abilities each
     { .count = 2, .entries = {
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.5f, .dmgMult = 1.2f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.5f, .dmgMult = 1.2f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.2f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.2f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
     // Round 4: 3 enemies, 2 abilities level 0-1
     { .count = 3, .entries = {
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.8f, .dmgMult = 1.4f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.8f, .dmgMult = 1.4f, .scaleMult = 1.0f },
-        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.8f, .dmgMult = 1.4f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.4f, .dmgMult = 1.1f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.4f, .dmgMult = 1.1f, .scaleMult = 1.0f },
+        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.4f, .dmgMult = 1.1f, .scaleMult = 1.0f },
     }},
     // Round 5: BOSS — single massive unit, 4 abilities all level 2
     { .count = 1, .entries = {
-        { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 5.5f, .dmgMult = 2.0f, .scaleMult = 2.5f },
+        { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 4.0f, .dmgMult = 1.5f, .scaleMult = 2.5f },
     }},
 };
 
@@ -771,29 +771,21 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
             }
         }
     } else {
-        // Infinite scaling (round 6+) — each wave randomly gets ONE bonus:
-        //   either +1 enemy unit, or +1 ability point (new ability or upgrade existing)
-        // We simulate accumulated choices using seeded random per-round.
+        // Infinite scaling (round 6+)
+        // Extra enemy only added every 5-round milestone; other rounds upgrade abilities
         int extraRounds = round - TOTAL_ROUNDS;  // 0 for round 6, 1 for round 7, etc.
-        int bonusUnits = 0;
-        int abilityPoints = 0;
-        for (int r = 0; r <= extraRounds; r++) {
-            // Deterministic coin flip per wave so both clients agree
-            int roll = ((r * 7 + 13) * 31) % 100;
-            if (roll < 50) bonusUnits++;
-            else abilityPoints++;
-        }
+        int bonusUnits = (extraRounds + 1) / 5;  // +1 enemy every 5 rounds past scripted
+        int abilityPoints = extraRounds + 1 - bonusUnits;
         int enemyCount = 3 + bonusUnits;
         if (enemyCount > MAX_WAVE_ENEMIES) enemyCount = MAX_WAVE_ENEMIES;
         // Distribute ability points: each point is either a new ability or a level-up
-        // numAb = how many ability slots filled, abLevel = base level for those
         int numAb = 1 + abilityPoints / 2;
         if (numAb > MAX_ABILITIES_PER_UNIT) numAb = MAX_ABILITIES_PER_UNIT;
         int abLevel = (abilityPoints > 0) ? (abilityPoints - 1) / 2 : 0;
         if (abLevel > ABILITY_MAX_LEVELS - 1) abLevel = ABILITY_MAX_LEVELS - 1;
-        // Stats scale gently
-        float hpScale = 2.0f + 0.3f * (float)(extraRounds + 1);
-        float dmgScale = 1.3f + 0.15f * (float)(extraRounds + 1);
+        // Stats scale gently (reduced from previous)
+        float hpScale = 1.5f + 0.15f * (float)(extraRounds + 1);
+        float dmgScale = 1.1f + 0.08f * (float)(extraRounds + 1);
         for (int e = 0; e < enemyCount; e++) {
             int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
             if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
@@ -835,6 +827,55 @@ void ApplyRarityBuffs(Unit units[], int unitCount)
     for (int i = 0; i < unitCount; i++) {
         if (!units[i].active) continue;
         ApplyUnitRarity(&units[i]);
+    }
+}
+
+void SpawnMushling(Unit units[], int *unitCount, int parentIndex)
+{
+    if (*unitCount >= MAX_UNITS) return;
+    Unit *parent = &units[parentIndex];
+    const UnitStats *stats = &UNIT_STATS[parent->typeIndex];
+    int idx = *unitCount;
+    units[idx] = (Unit){
+        .typeIndex      = parent->typeIndex,
+        .position       = { parent->position.x + ((GetRandomValue(0,1)*2-1) * 3.0f),
+                            0.0f,
+                            parent->position.z + ((GetRandomValue(0,1)*2-1) * 3.0f) },
+        .team           = parent->team,
+        .currentHealth  = stats->health * parent->hpMultiplier * 0.5f,
+        .attackCooldown = 0.0f,
+        .targetIndex    = -1,
+        .active         = true,
+        .selected       = false,
+        .dragging       = false,
+        .facingAngle    = parent->facingAngle,
+        .currentAnim    = ANIM_IDLE,
+        .animFrame      = GetRandomValue(0, 999),
+        .scaleOverride  = 0.5f,
+        .hpMultiplier   = parent->hpMultiplier * 0.5f,
+        .dmgMultiplier  = parent->dmgMultiplier * 0.5f,
+        .speedMultiplier = parent->speedMultiplier,
+        .shieldHP       = 0.0f,
+        .abilityCastDelay = 0.0f,
+        .chargeTarget   = -1,
+        .isMushling     = true,
+    };
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+        units[idx].abilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
+            .cooldownRemaining = 0, .triggered = false };
+    (*unitCount)++;
+}
+
+void CheckMushroomSpawn(Unit units[], int *unitCount, int damagedUnit, float damage)
+{
+    if (damagedUnit < 0 || damagedUnit >= *unitCount) return;
+    Unit *u = &units[damagedUnit];
+    if (!u->active || u->isMushling || u->hasSpawnedMushling) return;
+    if (u->mushroomSpawnThresh <= 0) return;
+    u->damageTaken += damage;
+    if (u->damageTaken >= u->mushroomSpawnThresh) {
+        u->hasSpawnedMushling = true;
+        SpawnMushling(units, unitCount, damagedUnit);
     }
 }
 
@@ -908,6 +949,34 @@ void ApplySynergies(Unit units[], int unitCount)
                     // Scale current health proportionally
                     if (oldMax > 0)
                         units[i].currentHealth *= (newMax / oldMax);
+                }
+            }
+        }
+    }
+
+    // Mushroom Fort: set spawn thresholds on non-mushling mushrooms
+    // Synergy index 1 = Mushroom Fort; thresholds: tier0=50%, tier1=25%, tier2=12.5%
+    {
+        const float thresholds[] = { 0.50f, 0.25f, 0.125f };
+        for (int team = 0; team < 2; team++) {
+            Team t = (Team)team;
+            // Count mushrooms on this team
+            int mushCount = 0;
+            for (int i = 0; i < unitCount; i++) {
+                if (!units[i].active || units[i].team != t) continue;
+                if (units[i].typeIndex == 0 && !units[i].isMushling) mushCount++;
+            }
+            if (mushCount < 2) continue;
+            int tier = -1;
+            if (mushCount >= 4) tier = 2;
+            else if (mushCount >= 3) tier = 1;
+            else if (mushCount >= 2) tier = 0;
+            if (tier < 0) continue;
+            for (int i = 0; i < unitCount; i++) {
+                if (!units[i].active || units[i].team != t) continue;
+                if (units[i].typeIndex == 0 && !units[i].isMushling) {
+                    float maxHP = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+                    units[i].mushroomSpawnThresh = maxHP * thresholds[tier];
                 }
             }
         }

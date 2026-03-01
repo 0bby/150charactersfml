@@ -24,7 +24,7 @@ void SpawnProjectile(Projectile projectiles[], ProjectileType type,
     float speed, float damage, float stunDur, Color color);
 void SpawnChainFrostProjectile(Projectile projectiles[],
     Vector3 startPos, int targetIndex, int sourceIndex, Team sourceTeam, int level,
-    float speed, float damage, int bounces, float bounceRange);
+    float speed, float damage, int bounces, float bounceRange, float damageIncrease);
 void SpawnHookProjectile(Projectile projectiles[], Vector3 startPos, int targetIndex,
     int sourceIndex, Team sourceTeam, int level, float speed, float dmgPerDist, float range);
 void SpawnMaelstromProjectile(Projectile projectiles[], Vector3 startPos, int targetIndex,
@@ -111,6 +111,10 @@ int FindLowestHPAlly(Unit units[], int unitCount, int selfIndex);
 // Rarity buffs
 void ApplyUnitRarity(Unit *unit);
 void ApplyRarityBuffs(Unit units[], int unitCount);
+
+// Mushroom synergy helpers
+void SpawnMushling(Unit units[], int *unitCount, int parentIndex);
+void CheckMushroomSpawn(Unit units[], int *unitCount, int damagedUnit, float damage);
 
 // Synergy system
 void ApplySynergies(Unit units[], int unitCount);

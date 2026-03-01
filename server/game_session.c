@@ -383,7 +383,7 @@ int session_tick(GameSession *s, float dt)
 
     case SESSION_COMBAT: {
         // Run headless combat simulation
-        int result = CombatTick(s->combatUnits, s->combatUnitCount,
+        int result = CombatTick(s->combatUnits, &s->combatUnitCount,
                                 s->combatModifiers, s->combatProjectiles,
                                 s->combatFissures, COMBAT_DT, NULL, NULL);
         if (result > 0) {
