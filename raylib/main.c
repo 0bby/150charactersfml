@@ -627,6 +627,7 @@ int main(void)
     bool usedShopHotkey = false;  // hides hotkey hint after first use
     bool usedRollHotkey = false;  // hides roll hint after first use
     bool hasDraggedUnit = false;  // hides drag hint after first drag
+    char waveUpgradeText[128] = "";  // describes what changed this wave
 
     // Synergy hover tooltip state
     int hoverSynergyIdx = -1;
@@ -1532,6 +1533,7 @@ int main(void)
                     rollCost = rollCostBase;
                     dragState.dragging = false;
                     SpawnWave(units, &unitCount, 0, unitTypeCount);
+                    waveUpgradeText[0] = '\0';
                     phase = PHASE_PREP;
                 }
             }
@@ -3587,6 +3589,21 @@ int main(void)
                     ClearAllFissures(fissures);
                     ClearRedUnits(units, &unitCount);
                     SpawnWave(units, &unitCount, currentRound, unitTypeCount);
+                    // Generate wave upgrade description
+                    if (currentRound < TOTAL_ROUNDS) {
+                        switch (currentRound) {
+                            case 1: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, each with 1 ability"); break;
+                            case 2: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemies now have 2 abilities"); break;
+                            case 3: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, abilities leveled up"); break;
+                            case 4: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "BOSS ROUND!"); break;
+                            default: waveUpgradeText[0] = '\0'; break;
+                        }
+                    } else {
+                        int extraR = currentRound - TOTAL_ROUNDS;
+                        int roll = ((extraR * 7 + 13) * 31) % 100;
+                        if (roll < 50) snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy unit");
+                        else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
+                    }
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0);
                     rollCost = rollCostBase;
@@ -3658,6 +3675,21 @@ int main(void)
                 if (CheckCollisionPointRec(mouse, contBtn)) {
                     lastMilestoneRound = currentRound;
                     SpawnWave(units, &unitCount, currentRound, unitTypeCount);
+                    // Generate wave upgrade description
+                    if (currentRound < TOTAL_ROUNDS) {
+                        switch (currentRound) {
+                            case 1: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, each with 1 ability"); break;
+                            case 2: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemies now have 2 abilities"); break;
+                            case 3: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, abilities leveled up"); break;
+                            case 4: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "BOSS ROUND!"); break;
+                            default: waveUpgradeText[0] = '\0'; break;
+                        }
+                    } else {
+                        int extraR = currentRound - TOTAL_ROUNDS;
+                        int roll = ((extraR * 7 + 13) * 31) % 100;
+                        if (roll < 50) snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy unit");
+                        else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
+                    }
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0);
                     rollCost = rollCostBase;
@@ -4841,6 +4873,17 @@ int main(void)
                 }
                 int wlw = GameMeasureText(waveLabel, S(20));
                 GameDrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, S(20), WHITE);
+
+                // Wave upgrade description (shows what changed this round)
+                if (waveUpgradeText[0] != '\0') {
+                    int wuSz = S(14);
+                    int wuW = GameMeasureText(waveUpgradeText, wuSz);
+                    int wuX = sw / 2 - wuW / 2;
+                    int wuY = dBtnYStart - 25 + S(22);
+                    bool isBoss = (currentRound == 4);
+                    Color wuColor = isBoss ? (Color){255, 80, 80, 220} : (Color){255, 200, 100, 200};
+                    GameDrawText(waveUpgradeText, wuX, wuY, wuSz, wuColor);
+                }
 
                 // Drag hint (first round only, until player drags a unit)
                 if (currentRound == 0 && !hasDraggedUnit) {
