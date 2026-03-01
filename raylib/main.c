@@ -4790,11 +4790,13 @@ int main(void)
                     rtColor.g = (unsigned char)(200 + pulse * 55);
                 }
                 int rtw = GameMeasureText(roundResultText, rtFontSize);
-                GameDrawText(roundResultText, sw/2 - rtw/2, sh/2 - 40, rtFontSize, rtColor);
+                int rtY = sh/2 - rtFontSize - S(5);
+                GameDrawText(roundResultText, sw/2 - rtw/2, rtY, rtFontSize, rtColor);
 
                 const char *scoreText = TextFormat("Score: %d - %d", blueWins, redWins);
-                int stw = GameMeasureText(scoreText, S(22));
-                GameDrawText(scoreText, sw/2 - stw/2, sh/2 - 10, S(22), WHITE);
+                int stFontSize = S(22);
+                int stw = GameMeasureText(scoreText, stFontSize);
+                GameDrawText(scoreText, sw/2 - stw/2, rtY + rtFontSize + S(8), stFontSize, WHITE);
             }
 
             // Battle Log panel (during combat, round over, and next prep)
@@ -4810,11 +4812,11 @@ int main(void)
                 // Title
                 const char *blogTitle = "BATTLE LOG";
                 int btw = GameMeasureText(blogTitle, S(14));
-                GameDrawText(blogTitle, blogX + blogW/2 - btw/2, blogY + 4, S(14), (Color){200, 200, 220, 255});
+                GameDrawText(blogTitle, blogX + blogW/2 - btw/2, blogY + S(4), S(14), (Color){200, 200, 220, 255});
                 // Entry area
-                int entryY = blogY + 20;
-                int entryH = blogH - 24;
-                int lineH = S(16);
+                int entryY = blogY + S(20);
+                int entryH = blogH - S(24);
+                int lineH = S(18);
                 int maxVisible = entryH / lineH;
                 // Mouse wheel scroll when not in active combat
                 if (phase != PHASE_COMBAT) {
@@ -4840,13 +4842,13 @@ int main(void)
                     int drawY = entryY + (ei - startIdx) * lineH;
                     // Timestamp
                     const char *ts = TextFormat("%d:%02d", (int)e->timestamp / 60, (int)e->timestamp % 60);
-                    GameDrawText(ts, blogX + 4, drawY, S(12), (Color){140, 140, 140, 200});
+                    GameDrawText(ts, blogX + S(4), drawY, S(12), (Color){140, 140, 140, 200});
                     // Icon
                     const char *icon = (e->type == BLOG_KILL) ? "X" : "*";
                     Color iconColor = (e->type == BLOG_KILL) ? (Color){255, 80, 80, 255} : (Color){80, 200, 255, 255};
-                    GameDrawText(icon, blogX + 32, drawY, S(12), iconColor);
+                    GameDrawText(icon, blogX + S(34), drawY, S(12), iconColor);
                     // Text (truncated to fit)
-                    GameDrawText(e->text, blogX + 42, drawY, S(12), e->color);
+                    GameDrawText(e->text, blogX + S(44), drawY, S(12), e->color);
                 }
                 EndScissorMode();
             }
@@ -5175,8 +5177,9 @@ int main(void)
             // --- Inventory (left of unit cards) ---
             {
                 int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
-                int invStartY = cardsY + 15;
-                GameDrawText("INV", invStartX, invStartY - S(16), S(14), (Color){160,160,180,255});
+                int invLabelY = cardsY + S(2);
+                GameDrawText("INV", invStartX, invLabelY, S(14), (Color){160,160,180,255});
+                int invStartY = invLabelY + S(16);
                 for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
                     int icol = inv % HUD_INVENTORY_COLS;
                     int irow = inv / HUD_INVENTORY_COLS;
@@ -5265,12 +5268,14 @@ int main(void)
                 }
 
                 // Draw synergy panel rows (right of the cards)
-                int synPanelX = cardsStartX + totalCardsW + 12;
-                int synPanelY = cardsY + 2;
-                int synRowH = S(22);
+                int synPanelX = cardsStartX + totalCardsW + S(12);
+                int synPanelY = cardsY + S(2);
+                int synRowH = S(20);
+                int maxSynRows = hudCardH / synRowH;
                 int activeSynCount = 0;
                 for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
                     if (synTier[s] < 0) continue;
+                    if (activeSynCount >= maxSynRows) break;
                     const SynergyDef *syn = &SYNERGY_DEFS[s];
                     int rowY = synPanelY + activeSynCount * synRowH;
 
@@ -5280,46 +5285,49 @@ int main(void)
                     if (synHovered) hoverSynergyIdx = s;
 
                     // Colored dot
-                    DrawCircle(synPanelX + 5, rowY + synRowH / 2, S(5), syn->color);
+                    DrawCircle(synPanelX + S(5), rowY + synRowH / 2, S(4), syn->color);
                     // Synergy name
-                    GameDrawText(syn->name, synPanelX + 14, rowY + 2, S(12), WHITE);
+                    GameDrawText(syn->name, synPanelX + S(14), rowY + S(2), S(11), WHITE);
                     // Tier pips
-                    int pipX = synPanelX + 14 + GameMeasureText(syn->name, S(12)) + 6;
+                    int pipX = synPanelX + S(14) + GameMeasureText(syn->name, S(11)) + S(6);
                     for (int t = 0; t < syn->tierCount; t++) {
                         Color pipColor = (t <= synTier[s])
                             ? syn->color
                             : (Color){ 60, 60, 80, 255 };
-                        DrawCircle(pipX + t * 10, rowY + synRowH / 2, 3, pipColor);
+                        DrawCircle(pipX + t * S(10), rowY + synRowH / 2, S(3), pipColor);
                     }
                     // Buff text
                     if (syn->buffDesc[synTier[s]]) {
-                        int buffX = pipX + syn->tierCount * 10 + 6;
-                        GameDrawText(syn->buffDesc[synTier[s]], buffX, rowY + 4, S(12),
+                        int buffX = pipX + syn->tierCount * S(10) + S(6);
+                        GameDrawText(syn->buffDesc[synTier[s]], buffX, rowY + S(3), S(11),
                                  (Color){ 160, 160, 180, 200 });
                     }
                     activeSynCount++;
                 }
 
-                // Per-card synergy badges (below each unit card)
+                // Per-card synergy badges (inside card, at bottom)
+                int badgeFsz = S(9);
+                int badgeH = badgeFsz + S(4);
                 for (int sl = 0; sl < blueHudCount; sl++) {
                     int cardX = cardsStartX + sl * (hudCardW + hudCardSpacing);
-                    int badgeY = cardsY + hudCardH + 2;
-                    int badgeX = cardX + 2;
+                    int badgeY = cardsY + hudCardH - badgeH - S(2);
+                    int badgeX = cardX + S(2);
                     for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
                         if (!unitSyn[sl][s]) continue;
                         const SynergyDef *syn = &SYNERGY_DEFS[s];
-                        int abbrW = GameMeasureText(syn->abbrev, 9) + 6;
+                        int abbrW = GameMeasureText(syn->abbrev, badgeFsz) + S(6);
+                        if (badgeX + abbrW > cardX + hudCardW - S(2)) break;
                         // Pill background
-                        DrawRectangle(badgeX, badgeY, abbrW, 14,
+                        DrawRectangle(badgeX, badgeY, abbrW, badgeH,
                                       (Color){ syn->color.r, syn->color.g, syn->color.b, 180 });
-                        DrawRectangleLines(badgeX, badgeY, abbrW, 14,
+                        DrawRectangleLines(badgeX, badgeY, abbrW, badgeH,
                                            (Color){ syn->color.r, syn->color.g, syn->color.b, 255 });
-                        GameDrawText(syn->abbrev, badgeX + 3, badgeY + 2, 9, WHITE);
+                        GameDrawText(syn->abbrev, badgeX + S(3), badgeY + S(2), badgeFsz, WHITE);
                         // Badge hover detection
-                        Rectangle badgeRect = { (float)badgeX, (float)badgeY, (float)abbrW, 14.0f };
+                        Rectangle badgeRect = { (float)badgeX, (float)badgeY, (float)abbrW, (float)badgeH };
                         if (CheckCollisionPointRec(GetMousePosition(), badgeRect))
                             hoverSynergyIdx = s;
-                        badgeX += abbrW + 3;
+                        badgeX += abbrW + S(3);
                     }
                 }
             }
