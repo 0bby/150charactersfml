@@ -118,7 +118,7 @@ void main()
             lightDot += lights[i].color.rgb * NdotL * shadowFactor;
 
             float specCo = 0.0;
-            if (NdotL > 0.0) specCo = pow(max(0.0, dot(viewD, reflect(-(light), normal))), 16.0) * shadowFactor;
+            if (NdotL > 0.0) specCo = pow(max(0.0, dot(viewD, reflect(-(light), normal))), 32.0) * 0.25 * shadowFactor;
             specular += specCo;
         }
     }
