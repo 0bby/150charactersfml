@@ -626,6 +626,7 @@ int main(void)
     const float tooltipDelay = 0.5f;
     bool usedShopHotkey = false;  // hides hotkey hint after first use
     bool usedRollHotkey = false;  // hides roll hint after first use
+    bool hasDraggedUnit = false;  // hides drag hint after first drag
 
     // Synergy hover tooltip state
     int hoverSynergyIdx = -1;
@@ -2489,6 +2490,7 @@ int main(void)
                             PlaySound(sfxUiDrag);
                             units[i].selected = true;
                             units[i].dragging = true;
+                            hasDraggedUnit = true;
                             hitAny = true;
                             for (int j = 0; j < unitCount; j++) if (j != i) units[j].selected = false;
                             break;
@@ -4839,6 +4841,21 @@ int main(void)
                 }
                 int wlw = GameMeasureText(waveLabel, S(20));
                 GameDrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, S(20), WHITE);
+
+                // Drag hint (first round only, until player drags a unit)
+                if (currentRound == 0 && !hasDraggedUnit) {
+                    const char *dhint = "Click and drag your units to reposition them!";
+                    int dhSz = S(14);
+                    int dhW = GameMeasureText(dhint, dhSz);
+                    int dhX = sw / 2 - dhW / 2;
+                    int dhY = dBtnYStart - 25 - dhSz - S(14);
+                    float dpulse = 0.5f + 0.5f * sinf((float)GetTime() * 3.0f);
+                    unsigned char dhAlpha = (unsigned char)(160 + (int)(dpulse * 95));
+                    DrawRectangle(dhX - 8, dhY - 4, dhW + 16, dhSz + 8, (Color){20, 20, 35, (unsigned char)(dhAlpha * 0.7f)});
+                    DrawRectangleLinesEx((Rectangle){(float)(dhX - 8), (float)(dhY - 4),
+                        (float)(dhW + 16), (float)(dhSz + 8)}, 1, (Color){255, 220, 100, dhAlpha});
+                    GameDrawText(dhint, dhX, dhY, dhSz, (Color){255, 230, 120, dhAlpha});
+                }
             }
 
             // NFC emulation input box (debug only)
@@ -6201,10 +6218,6 @@ int main(void)
             int mstw = GameMeasureText(msTitle, 40);
             GameDrawText(msTitle, msw/2 - mstw/2, 30, 40, GOLD);
 
-            const char *msSubtitle = "Immortalise your party, or gamble their fate?";
-            int mssw = GameMeasureText(msSubtitle, 22);
-            GameDrawText(msSubtitle, msw/2 - mssw/2, 78, 22, (Color){220,220,240,220});
-
             // Collect active blue units
             int msBlue[BLUE_TEAM_MAX_SIZE]; int msCount = 0;
             for (int i = 0; i < unitCount && msCount < BLUE_TEAM_MAX_SIZE; i++)
@@ -6280,13 +6293,9 @@ int main(void)
                 int setW = GameMeasureText(setText, 22);
                 GameDrawText(setText, (int)(setBtn.x + btnW2/2 - setW/2), (int)(setBtn.y + 16), 22, WHITE);
 
-                // Description under SET IN STONE
-                const char *setDesc1 = "Save your party to the leaderboard.";
-                int sd1w = GameMeasureText(setDesc1, 16);
-                GameDrawText(setDesc1, (int)(setBtn.x + btnW2/2 - sd1w/2), (int)(setBtn.y + btnH2 + 8), 16, (Color){255,210,80,230});
-                const char *setDesc2 = "Your creatures are imprisoned forever.";
-                int sd2w = GameMeasureText(setDesc2, 14);
-                GameDrawText(setDesc2, (int)(setBtn.x + btnW2/2 - sd2w/2), (int)(setBtn.y + btnH2 + 28), 14, (Color){255,180,60,180});
+                const char *setDesc = "Saves to leaderboard. Imprisons your party.";
+                int sdw = GameMeasureText(setDesc, 14);
+                GameDrawText(setDesc, (int)(setBtn.x + btnW2/2 - sdw/2), (int)(setBtn.y + btnH2 + 10), 14, (Color){255,210,80,200});
             }
 
             // CONTINUE button
@@ -6301,13 +6310,9 @@ int main(void)
                 int contW = GameMeasureText(contText, 22);
                 GameDrawText(contText, (int)(contBtn.x + btnW2/2 - contW/2), (int)(contBtn.y + 16), 22, WHITE);
 
-                // Description under CONTINUE
-                const char *contDesc1 = "Keep fighting. Higher risk, higher glory.";
-                int cd1w = GameMeasureText(contDesc1, 16);
-                GameDrawText(contDesc1, (int)(contBtn.x + btnW2/2 - cd1w/2), (int)(contBtn.y + btnH2 + 8), 16, (Color){100,220,120,230});
-                const char *contDesc2 = "If you lose, your party dies for nothing!";
-                int cd2w = GameMeasureText(contDesc2, 14);
-                GameDrawText(contDesc2, (int)(contBtn.x + btnW2/2 - cd2w/2), (int)(contBtn.y + btnH2 + 28), 14, (Color){255,100,80,200});
+                const char *contDesc = "Keep fighting. Lose and they die.";
+                int cdw = GameMeasureText(contDesc, 14);
+                GameDrawText(contDesc, (int)(contBtn.x + btnW2/2 - cdw/2), (int)(contBtn.y + btnH2 + 10), 14, (Color){255,100,80,200});
             }
         }
 
