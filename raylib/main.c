@@ -876,9 +876,10 @@ int main(void)
                                     uint8_t nfcStatus, nfcTypeIdx, nfcRarity;
                                     AbilitySlot nfcAbilities[MAX_ABILITIES_PER_UNIT];
                                     // Dedup: skip if this UID is already on the blue team
+                                    // Check ALL units (not just active) — dead units still count
                                     bool uidAlreadySpawned = false;
                                     for (int u = 0; u < unitCount; u++) {
-                                        if (units[u].active && units[u].team == TEAM_BLUE &&
+                                        if (units[u].team == TEAM_BLUE &&
                                             units[u].nfcUidLen == nfcUidLen &&
                                             memcmp(units[u].nfcUid, nfcUid, nfcUidLen) == 0) {
                                             uidAlreadySpawned = true;
