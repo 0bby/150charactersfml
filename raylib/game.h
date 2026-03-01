@@ -392,9 +392,11 @@ typedef struct {
 typedef struct {
     const char *name;        // display name for UI
     const char *modelPath;
-    const char *texturePath; // NULL if no separate texture
+    const char *texturePath;    // NULL if no separate BC texture
+    const char *ormTexturePath; // NULL if no separate ORM texture
     Model model;
-    Texture2D texture;       // separately loaded texture (id=0 if none)
+    Texture2D texture;          // BC texture (id=0 if none)
+    Texture2D ormTexture;       // ORM texture (id=0 if none)
     bool loaded;
 } EnvModelDef;
 

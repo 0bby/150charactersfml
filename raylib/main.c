@@ -126,6 +126,15 @@ int main(void)
         UnloadImage(img);
     }
 
+    // Default 1x1 ORM texture for models without ORM files.
+    // (R=255,G=128,B=0) = AO=1.0, Roughness~0.5, Metallic=0.0 — preserves current look.
+    Texture2D defaultORM;
+    {
+        Image ormImg = GenImageColor(1, 1, (Color){ 255, 128, 0, 255 });
+        defaultORM = LoadTextureFromImage(ormImg);
+        UnloadImage(ormImg);
+    }
+
     // Background music
     Music bgm = LoadMusicStream("music/bgm.ogg");
     SetMusicVolume(bgm, BGM_VOL);
@@ -188,8 +197,10 @@ int main(void)
         else unitTypes[i].loaded = false;
 
         // Fix GLB alpha: force all material diffuse maps to full opacity
-        for (int m = 0; m < unitTypes[i].model.materialCount; m++)
+        for (int m = 0; m < unitTypes[i].model.materialCount; m++) {
             unitTypes[i].model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            unitTypes[i].model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = defaultORM;
+        }
     }
 
     // Load goblin animations from separate GLBs
@@ -440,6 +451,7 @@ int main(void)
         "assets/goblin/environment/tiles/Tile5.obj",
     };
     Texture2D tileDiffuse = LoadTexture("assets/goblin/environment/tiles/T_Tiles_BC.png");
+    Texture2D tileORM = LoadTexture("assets/goblin/environment/tiles/T_Tiles_ORM.png");
 
     for (int i = 0; i < TILE_VARIANTS; i++) {
         tileModels[i] = LoadModel(tilePaths[i]);
@@ -450,10 +462,11 @@ int main(void)
             (bb.min.y + bb.max.y) * 0.5f,
             (bb.min.z + bb.max.z) * 0.5f,
         };
-        // Assign diffuse texture and lighting shader to all materials
+        // Assign diffuse + ORM textures and lighting shader to all materials
         for (int m = 0; m < tileModels[i].materialCount; m++) {
             tileModels[i].materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = tileDiffuse;
             tileModels[i].materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            tileModels[i].materials[m].maps[MATERIAL_MAP_METALNESS].texture = tileORM;
             tileModels[i].materials[m].shader = lightShader;
         }
     }
@@ -619,6 +632,7 @@ int main(void)
     Model doorModel = LoadModel("assets/goblin/environment/door/Door.obj");
     for (int m = 0; m < doorModel.materialCount; m++) {
         doorModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        doorModel.materials[m].maps[MATERIAL_MAP_METALNESS].texture = defaultORM;
         doorModel.materials[m].shader = lightShader;
     }
     // Re-center and scale Door (Maya cm export, verts in 300-1000 range)
@@ -636,6 +650,7 @@ int main(void)
     Model trophyModel = LoadModel("assets/goblin/environment/trophy/Trophy.obj");
     for (int m = 0; m < trophyModel.materialCount; m++) {
         trophyModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        trophyModel.materials[m].maps[MATERIAL_MAP_METALNESS].texture = defaultORM;
         trophyModel.materials[m].shader = lightShader;
     }
     // Re-center and scale Trophy (Maya cm export, verts around -6000 range)
@@ -652,10 +667,12 @@ int main(void)
     }
     // --- Environment models: ground (replaces old platform), stairs, circle ---
     Texture2D groundDiffuse = LoadTexture("assets/goblin/environment/ground/T_Ground_BC.png");
+    Texture2D groundORM = LoadTexture("assets/goblin/environment/ground/T_Ground_ORM.png");
     Model platformModel = LoadModel("assets/goblin/environment/ground/ground.obj");
     for (int m = 0; m < platformModel.materialCount; m++) {
         platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = groundDiffuse;
         platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        platformModel.materials[m].maps[MATERIAL_MAP_METALNESS].texture = groundORM;
         platformModel.materials[m].shader = lightShader;
     }
     if (platformModel.meshCount > 0) {
@@ -671,10 +688,12 @@ int main(void)
     }
 
     Texture2D stairsDiffuse = LoadTexture("assets/goblin/environment/stairs/T_Stairs_BC.png");
+    Texture2D stairsORM = LoadTexture("assets/goblin/environment/stairs/T_Stairs_ORM.png");
     Model stairsModel = LoadModel("assets/goblin/environment/stairs/Stairs_LP.obj");
     for (int m = 0; m < stairsModel.materialCount; m++) {
         stairsModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = stairsDiffuse;
         stairsModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        stairsModel.materials[m].maps[MATERIAL_MAP_METALNESS].texture = stairsORM;
         stairsModel.materials[m].shader = lightShader;
     }
     if (stairsModel.meshCount > 0) {
@@ -690,10 +709,12 @@ int main(void)
     }
 
     Texture2D circleDiffuse = LoadTexture("assets/goblin/environment/circle/T_Circle_BC.png");
+    Texture2D circleORM = LoadTexture("assets/goblin/environment/circle/T_Circle_ORM.png");
     Model circleModel = LoadModel("assets/goblin/environment/circle/circle.obj");
     for (int m = 0; m < circleModel.materialCount; m++) {
         circleModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = circleDiffuse;
         circleModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        circleModel.materials[m].maps[MATERIAL_MAP_METALNESS].texture = circleORM;
         circleModel.materials[m].shader = lightShader;
     }
     if (circleModel.meshCount > 0) {
@@ -726,11 +747,14 @@ int main(void)
         em->name = "Arches";
         em->modelPath = "assets/goblin/environment/arches/Arches.obj";
         em->texturePath = "assets/goblin/environment/arches/T_Arches_BC.png";
+        em->ormTexturePath = "assets/goblin/environment/arches/T_Arches_ORM.png";
         em->texture = LoadTexture(em->texturePath);
+        em->ormTexture = LoadTexture(em->ormTexturePath);
         em->model = LoadModel(em->modelPath);
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = em->ormTexture;
             em->model.materials[m].shader = lightShader;
         }
         if (em->model.meshCount > 0) {
@@ -752,11 +776,14 @@ int main(void)
         em->name = "Wall";
         em->modelPath = "assets/goblin/environment/wall/Wall_LP.obj";
         em->texturePath = "assets/goblin/environment/wall/T_Wall_BC.png";
+        em->ormTexturePath = "assets/goblin/environment/wall/T_Wall_ORM.png";
         em->texture = LoadTexture(em->texturePath);
+        em->ormTexture = LoadTexture(em->ormTexturePath);
         em->model = LoadModel(em->modelPath);
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = em->ormTexture;
             em->model.materials[m].shader = lightShader;
         }
         if (em->model.meshCount > 0) {
@@ -804,6 +831,7 @@ int main(void)
         em->texture = (Texture2D){0};
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = defaultORM;
             em->model.materials[m].shader = lightShader;
         }
         if (em->model.meshCount > 0) {
@@ -6147,20 +6175,26 @@ int main(void)
     }
     for (int i = 0; i < TILE_VARIANTS; i++) UnloadModel(tileModels[i]);
     UnloadTexture(tileDiffuse);
+    UnloadTexture(tileORM);
     UnloadModel(doorModel);
     UnloadModel(trophyModel);
     UnloadModel(platformModel);
     UnloadTexture(groundDiffuse);
+    UnloadTexture(groundORM);
     UnloadModel(stairsModel);
     UnloadTexture(stairsDiffuse);
+    UnloadTexture(stairsORM);
     UnloadModel(circleModel);
     UnloadTexture(circleDiffuse);
+    UnloadTexture(circleORM);
     // Unload env models (skip 2=stairs, 3=circle, 5=ground which alias stairsModel/circleModel/platformModel)
     for (int i = 0; i < envModelCount; i++) {
         if (i == 2 || i == 3 || i == 5) continue;  // reused models, already unloaded above
         if (envModels[i].loaded) UnloadModel(envModels[i].model);
         if (envModels[i].texture.id > 0) UnloadTexture(envModels[i].texture);
+        if (envModels[i].ormTexture.id > 0) UnloadTexture(envModels[i].ormTexture);
     }
+    UnloadTexture(defaultORM);
     UnloadMusicStream(bgm);
     UnloadSound(sfxWin);
     UnloadSound(sfxLoss);

@@ -8,7 +8,8 @@ in vec3 fragNormal;
 in vec4 fragPosLightSpace;
 
 // Input uniform values
-uniform sampler2D texture0;
+uniform sampler2D texture0;      // BC (diffuse/albedo)
+uniform sampler2D texture1;      // ORM (Occlusion, Roughness, Metallic)
 uniform sampler2D shadowMap;
 uniform vec4 colDiffuse;
 
@@ -60,6 +61,10 @@ void main()
 {
     // Texel color fetching from texture sampler
     vec4 texelColor = texture(texture0, fragTexCoord);
+    vec3 orm = texture(texture1, fragTexCoord).rgb; // R=AO, G=Roughness, B=Metallic
+    float ao = orm.r;
+    float roughness = orm.g;
+
     vec3 lightDot = vec3(0.0);
     vec3 normal = normalize(fragNormal);
     vec3 viewD = normalize(viewPos - fragPosition);
@@ -118,13 +123,17 @@ void main()
             lightDot += lights[i].color.rgb * NdotL * shadowFactor;
 
             float specCo = 0.0;
-            if (NdotL > 0.0) specCo = pow(max(0.0, dot(viewD, reflect(-(light), normal))), 32.0) * 0.25 * shadowFactor;
+            if (NdotL > 0.0) {
+                float specPower = mix(64.0, 8.0, roughness);
+                float specScale = mix(0.5, 0.05, roughness);
+                specCo = pow(max(0.0, dot(viewD, reflect(-light, normal))), specPower) * specScale * shadowFactor;
+            }
             specular += specCo;
         }
     }
 
     finalColor = (texelColor*((tint + vec4(specular, 1.0))*vec4(lightDot, 1.0)));
-    finalColor += texelColor*(ambient/10.0)*tint;
+    finalColor += texelColor*(ambient/10.0)*tint*ao;
 
     // Gamma correction for offscreen renders that skip the SSAO/tonemap pass
     if (noShadow == 1) finalColor = pow(finalColor, vec4(1.0/2.2));
