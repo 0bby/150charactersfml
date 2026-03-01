@@ -5,9 +5,11 @@ in vec3 fragPosition;
 in vec2 fragTexCoord;
 in vec4 fragColor;
 in vec3 fragNormal;
+in vec4 fragPosLightSpace;
 
 // Input uniform values
 uniform sampler2D texture0;
+uniform sampler2D shadowMap;
 uniform vec4 colDiffuse;
 
 // Output fragment color
@@ -31,6 +33,27 @@ uniform vec4 ambient;
 uniform vec3 viewPos;
 uniform vec3 fogColor;
 uniform float fogDensity;
+uniform int shadowDebug; // 0=off, 1=shadow factor, 2=light depth, 3=light UV, 4=sampled depth
+
+float ShadowCalculation(vec4 posLightSpace)
+{
+    vec3 projCoords = posLightSpace.xyz / posLightSpace.w * 0.5 + 0.5;
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0 ||
+        projCoords.z > 1.0)
+        return 1.0;
+    float currentDepth = projCoords.z;
+    // PCF 3x3
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += (currentDepth - 0.005) > pcfDepth ? 0.3 : 1.0;
+        }
+    }
+    return shadow / 9.0;
+}
 
 void main()
 {
@@ -40,6 +63,34 @@ void main()
     vec3 normal = normalize(fragNormal);
     vec3 viewD = normalize(viewPos - fragPosition);
     vec3 specular = vec3(0.0);
+
+    float shadow = ShadowCalculation(fragPosLightSpace);
+
+    // Debug visualizations
+    if (shadowDebug == 1) {
+        // Shadow factor: white = lit, dark = shadowed
+        finalColor = vec4(vec3(shadow), 1.0);
+        return;
+    }
+    if (shadowDebug == 2) {
+        // Light-space depth (currentDepth)
+        vec3 pc = fragPosLightSpace.xyz / fragPosLightSpace.w * 0.5 + 0.5;
+        finalColor = vec4(vec3(pc.z), 1.0);
+        return;
+    }
+    if (shadowDebug == 3) {
+        // Light-space UV coords: R=U, G=V, B=0
+        vec3 pc = fragPosLightSpace.xyz / fragPosLightSpace.w * 0.5 + 0.5;
+        finalColor = vec4(pc.xy, 0.0, 1.0);
+        return;
+    }
+    if (shadowDebug == 4) {
+        // Shadow map sampled depth (what the light "sees")
+        vec3 pc = fragPosLightSpace.xyz / fragPosLightSpace.w * 0.5 + 0.5;
+        float d = texture(shadowMap, pc.xy).r;
+        finalColor = vec4(vec3(d), 1.0);
+        return;
+    }
 
     vec4 tint = colDiffuse*fragColor;
 
@@ -60,10 +111,13 @@ void main()
             }
 
             float NdotL = max(dot(normal, light), 0.0);
-            lightDot += lights[i].color.rgb*NdotL;
+
+            // Apply shadow only to directional light (light 0)
+            float shadowFactor = (i == 0 && lights[i].type == LIGHT_DIRECTIONAL) ? shadow : 1.0;
+            lightDot += lights[i].color.rgb * NdotL * shadowFactor;
 
             float specCo = 0.0;
-            if (NdotL > 0.0) specCo = pow(max(0.0, dot(viewD, reflect(-(light), normal))), 16.0); // 16 refers to shine
+            if (NdotL > 0.0) specCo = pow(max(0.0, dot(viewD, reflect(-(light), normal))), 16.0) * shadowFactor;
             specular += specCo;
         }
     }

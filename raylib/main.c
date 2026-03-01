@@ -261,6 +261,38 @@ int main(void)
     int fxaaRTHeight = sceneRTHeight;
     RenderTexture2D fxaaRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
 
+    // --- Shadow map setup (color+depth FBO for guaranteed completeness) ---
+    #define SHADOW_MAP_SIZE 2048
+    RenderTexture2D shadowRT = { 0 };
+    shadowRT.id = rlLoadFramebuffer();
+    shadowRT.texture.id = rlLoadTexture(NULL, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+    shadowRT.texture.width = SHADOW_MAP_SIZE;
+    shadowRT.texture.height = SHADOW_MAP_SIZE;
+    shadowRT.texture.format = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    shadowRT.texture.mipmaps = 1;
+    shadowRT.depth.id = rlLoadTextureDepth(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, false);
+    shadowRT.depth.width = SHADOW_MAP_SIZE;
+    shadowRT.depth.height = SHADOW_MAP_SIZE;
+    rlFramebufferAttach(shadowRT.id, shadowRT.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferAttach(shadowRT.id, shadowRT.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    if (!rlFramebufferComplete(shadowRT.id)) TraceLog(LOG_ERROR, "Shadow map FBO is not complete!");
+
+    Shader shadowDepthShader = LoadShader(
+        TextFormat("resources/shaders/glsl%i/shadow_depth.vs", GLSL_VERSION),
+        TextFormat("resources/shaders/glsl%i/shadow_depth.fs", GLSL_VERSION));
+
+    // Light-space matrix (static directional light)
+    Vector3 shadowLightPos = { 40.0f, 60.0f, -30.0f };
+    Vector3 shadowLightTarget = { 0.0f, 0.0f, 0.0f };
+    Matrix lightView = MatrixLookAt(shadowLightPos, shadowLightTarget, (Vector3){ 0.0f, 1.0f, 0.0f });
+    Matrix lightProj = MatrixOrtho(-160.0, 160.0, -160.0, 160.0, 1.0, 350.0);
+    Matrix lightVP = MatrixMultiply(lightView, lightProj);
+
+    // Uniform locations for shadow mapping in lighting shader
+    int lightVPLoc = GetShaderLocation(lightShader, "lightVP");
+    int shadowMapLoc = GetShaderLocation(lightShader, "shadowMap");
+    int shadowDebugLoc = GetShaderLocation(lightShader, "shadowDebug");
+
     // Assign lighting shader to all loaded models
     for (int i = 0; i < unitTypeCount; i++)
     {
@@ -561,6 +593,7 @@ int main(void)
     float roundOverTimer = 0.0f;   // brief pause after a round ends
     const char *roundResultText = "";
     bool debugMode = false;
+    int shadowDebugMode = 0;
 
     // Leaderboard & prestige state
     Leaderboard leaderboard = {0};
@@ -651,6 +684,10 @@ int main(void)
         GamePhase prevPhase = phase;
         UpdateShake(&shake, dt);
         if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
+        if (IsKeyPressed(KEY_F10)) {
+            shadowDebugMode = (shadowDebugMode + 1) % 5;
+            SetShaderValue(lightShader, shadowDebugLoc, &shadowDebugMode, SHADER_UNIFORM_INT);
+        }
 
         // Debug: cycle tile layouts with arrow keys
         if (debugMode) {
@@ -2958,6 +2995,106 @@ int main(void)
             }
         }
 
+        // --- Shadow map pass ---
+        {
+            rlDrawRenderBatchActive();
+            rlEnableFramebuffer(shadowRT.id);
+            rlViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+            rlClearScreenBuffers();
+            rlEnableDepthTest();
+            rlDisableColorBlend();
+
+            // Set light-space matrices for rlgl
+            rlSetMatrixProjection(lightProj);
+            rlSetMatrixModelview(lightView);
+
+            // Swap all model materials to shadow depth shader
+            for (int i = 0; i < unitTypeCount; i++) {
+                if (!unitTypes[i].loaded) continue;
+                for (int m = 0; m < unitTypes[i].model.materialCount; m++)
+                    unitTypes[i].model.materials[m].shader = shadowDepthShader;
+            }
+            for (int i = 0; i < TILE_VARIANTS; i++)
+                for (int m = 0; m < tileModels[i].materialCount; m++)
+                    tileModels[i].materials[m].shader = shadowDepthShader;
+            for (int m = 0; m < platformModel.materialCount; m++)
+                platformModel.materials[m].shader = shadowDepthShader;
+            for (int m = 0; m < stairsModel.materialCount; m++)
+                stairsModel.materials[m].shader = shadowDepthShader;
+            for (int m = 0; m < circleModel.materialCount; m++)
+                circleModel.materials[m].shader = shadowDepthShader;
+
+            // Draw shadow-casting geometry
+            DrawModel(platformModel, platformPos, 1.0f, WHITE);
+            {
+                float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
+                for (int r = 0; r < TILE_GRID_SIZE; r++) {
+                    for (int c = 0; c < TILE_GRID_SIZE; c++) {
+                        int vi = tileVariantGrid[r][c];
+                        float cellX = gridOrigin + (c + 0.5f) * TILE_WORLD_SIZE + tileJitterX[r][c];
+                        float cellZ = gridOrigin + (r + 0.5f) * TILE_WORLD_SIZE + tileJitterZ[r][c];
+                        float totalRot = tileRotationGrid[r][c] + tileJitterAngle[r][c];
+                        float angle = totalRot * DEG2RAD;
+                        float cosA = cosf(angle);
+                        float sinA = sinf(angle);
+                        float sxo = tileCenters[vi].x * tileScale;
+                        float szo = tileCenters[vi].z * tileScale;
+                        float rxo = sxo * cosA + szo * sinA;
+                        float rzo = -sxo * sinA + szo * cosA;
+                        Vector3 pos = {
+                            cellX - rxo,
+                            -tileCenters[vi].y * tileScale - 0.5f,
+                            cellZ - rzo,
+                        };
+                        DrawModelEx(tileModels[vi], pos,
+                            (Vector3){ 0.0f, 1.0f, 0.0f }, totalRot,
+                            (Vector3){ tileScale, tileScale, tileScale }, WHITE);
+                    }
+                }
+            }
+            DrawModelEx(stairsModel, stairsFarPos, (Vector3){0,1,0},   0.0f, (Vector3){1,1,1}, WHITE);
+            DrawModelEx(stairsModel, stairsLPos,   (Vector3){0,1,0},  90.0f, (Vector3){1,1,1}, WHITE);
+            DrawModelEx(stairsModel, stairsRPos,   (Vector3){0,1,0}, -90.0f, (Vector3){1,1,1}, WHITE);
+            DrawModel(circleModel, circlePos, 1.0f, WHITE);
+            for (int i = 0; i < unitCount; i++) {
+                if (!units[i].active) continue;
+                UnitType *type = &unitTypes[units[i].typeIndex];
+                if (!type->loaded) continue;
+                float s = type->scale * units[i].scaleOverride;
+                Vector3 drawPos = units[i].position;
+                drawPos.y += type->yOffset;
+                DrawModelEx(type->model, drawPos, (Vector3){0,1,0}, units[i].facingAngle,
+                    (Vector3){s, s, s}, WHITE);
+            }
+
+            // Restore lighting shader on all materials
+            for (int i = 0; i < unitTypeCount; i++) {
+                if (!unitTypes[i].loaded) continue;
+                for (int m = 0; m < unitTypes[i].model.materialCount; m++)
+                    unitTypes[i].model.materials[m].shader = lightShader;
+            }
+            for (int i = 0; i < TILE_VARIANTS; i++)
+                for (int m = 0; m < tileModels[i].materialCount; m++)
+                    tileModels[i].materials[m].shader = lightShader;
+            for (int m = 0; m < platformModel.materialCount; m++)
+                platformModel.materials[m].shader = lightShader;
+            for (int m = 0; m < stairsModel.materialCount; m++)
+                stairsModel.materials[m].shader = lightShader;
+            for (int m = 0; m < circleModel.materialCount; m++)
+                circleModel.materials[m].shader = lightShader;
+
+            rlDrawRenderBatchActive();
+            rlEnableColorBlend();
+            rlDisableFramebuffer();
+            rlViewport(0, 0, GetScreenWidth(), GetScreenHeight());
+        }
+
+        // Bind shadow map depth to texture slot 2 for lighting shader
+        rlActiveTextureSlot(2);
+        rlEnableTexture(shadowRT.depth.id);
+        SetShaderValue(lightShader, shadowMapLoc, (int[]){2}, SHADER_UNIFORM_INT);
+        SetShaderValueMatrix(lightShader, lightVPLoc, lightVP);
+
         // Render 3D scene into offscreen texture (for SSAO post-process)
         BeginTextureMode(sceneRT);
         ClearBackground((Color){ 45, 40, 35, 255 });
@@ -4854,6 +4991,20 @@ int main(void)
             EndShaderMode();
         }
 
+        // Shadow debug overlay
+        if (shadowDebugMode > 0) {
+            const char *modeNames[] = { "", "Shadow Factor", "Light Depth", "Light UV", "Sampled Depth" };
+            DrawText(TextFormat("[F10] Shadow Debug: %d - %s", shadowDebugMode, modeNames[shadowDebugMode]),
+                10, GetScreenHeight() - 30, 20, YELLOW);
+            // Draw shadow map depth as small preview in corner
+            float previewSize = 256.0f;
+            Rectangle srcRec = { 0, 0, (float)SHADOW_MAP_SIZE, -(float)SHADOW_MAP_SIZE };
+            Rectangle dstRec = { GetScreenWidth() - previewSize - 10, 10, previewSize, previewSize };
+            DrawTexturePro(shadowRT.texture, srcRec, dstRec, (Vector2){0,0}, 0.0f, WHITE);
+            DrawRectangleLines((int)dstRec.x, (int)dstRec.y, (int)previewSize, (int)previewSize, YELLOW);
+            DrawText("Shadow Color RT", (int)dstRec.x, (int)dstRec.y + (int)previewSize + 4, 16, YELLOW);
+        }
+
         DrawFPS(10, 10);
         EndDrawing();
     }
@@ -4872,6 +5023,10 @@ int main(void)
     rlUnloadTexture(sceneRT.depth.id);
     UnloadShader(ssaoShader);
     UnloadShader(fxaaShader);
+    rlUnloadFramebuffer(shadowRT.id);
+    rlUnloadTexture(shadowRT.texture.id);
+    rlUnloadTexture(shadowRT.depth.id);
+    UnloadShader(shadowDepthShader);
     UnloadTexture(particleTex);
     UnloadShader(lightShader);
     UnloadShader(borderShader);
