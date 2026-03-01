@@ -162,6 +162,15 @@ int main(void)
     unitTypes[2].modelPath = "assets/classes/devil/DevilIdle.glb";
     unitTypes[2].scale = 9.0f;
     unitTypes[2].yOffset = 0.0f;
+    // Puppycat & Siren — disabled until models are fixed
+    // unitTypes[3].name = "Puppycat";
+    unitTypes[3].modelPath = "assets/classes/puppycat/PuppycatIdle.glb";
+    unitTypes[3].scale = 9.0f;
+    unitTypes[3].yOffset = 0.0f;
+    // unitTypes[4].name = "Siren";
+    unitTypes[4].modelPath = "assets/classes/siren/SirenIdle.glb";
+    unitTypes[4].scale = 9.0f;
+    unitTypes[4].yOffset = 0.0f;
     unitTypes[5].name = "Reptile";
     unitTypes[5].modelPath = "assets/classes/reptile/ReptileIdle.glb";
     unitTypes[5].scale = 9.0f;
@@ -226,6 +235,56 @@ int main(void)
         if (unitTypes[5].animCount > 0)       unitTypes[5].animIndex[ANIM_SCARED] = 0;
         if (unitTypes[5].attackAnimCount > 0) unitTypes[5].animIndex[ANIM_ATTACK] = 0;
         unitTypes[5].hasAnimations = true;
+    }
+
+    // Puppycat animations
+    {
+        int cnt = 0;
+        ModelAnimation *walk = LoadModelAnimations("assets/classes/puppycat/PuppycatWalk.glb", &cnt);
+        unitTypes[3].anims = walk; unitTypes[3].animCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *idle = LoadModelAnimations("assets/classes/puppycat/PuppycatIdle.glb", &cnt);
+        unitTypes[3].idleAnims = idle; unitTypes[3].idleAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *atk = LoadModelAnimations("assets/classes/puppycat/PuppycatAttack.glb", &cnt);
+        unitTypes[3].attackAnims = atk; unitTypes[3].attackAnimCount = cnt;
+
+        unitTypes[3].scaredAnims = NULL; unitTypes[3].scaredAnimCount = 0;
+        unitTypes[3].castAnims = NULL;   unitTypes[3].castAnimCount = 0;
+
+        for (int s = 0; s < ANIM_COUNT; s++) unitTypes[3].animIndex[s] = -1;
+        if (unitTypes[3].idleAnimCount > 0)   unitTypes[3].animIndex[ANIM_IDLE] = 0;
+        if (unitTypes[3].animCount > 0)       unitTypes[3].animIndex[ANIM_WALK] = 0;
+        if (unitTypes[3].animCount > 0)       unitTypes[3].animIndex[ANIM_SCARED] = 0;
+        if (unitTypes[3].attackAnimCount > 0) unitTypes[3].animIndex[ANIM_ATTACK] = 0;
+        unitTypes[3].hasAnimations = true;
+    }
+
+    // Siren animations
+    {
+        int cnt = 0;
+        ModelAnimation *walk = LoadModelAnimations("assets/classes/siren/SirenWalk.glb", &cnt);
+        unitTypes[4].anims = walk; unitTypes[4].animCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *idle = LoadModelAnimations("assets/classes/siren/SirenIdle.glb", &cnt);
+        unitTypes[4].idleAnims = idle; unitTypes[4].idleAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *atk = LoadModelAnimations("assets/classes/siren/SirenAttack.glb", &cnt);
+        unitTypes[4].attackAnims = atk; unitTypes[4].attackAnimCount = cnt;
+
+        unitTypes[4].scaredAnims = NULL; unitTypes[4].scaredAnimCount = 0;
+        unitTypes[4].castAnims = NULL;   unitTypes[4].castAnimCount = 0;
+
+        for (int s = 0; s < ANIM_COUNT; s++) unitTypes[4].animIndex[s] = -1;
+        if (unitTypes[4].idleAnimCount > 0)   unitTypes[4].animIndex[ANIM_IDLE] = 0;
+        if (unitTypes[4].animCount > 0)       unitTypes[4].animIndex[ANIM_WALK] = 0;
+        if (unitTypes[4].animCount > 0)       unitTypes[4].animIndex[ANIM_SCARED] = 0;
+        if (unitTypes[4].attackAnimCount > 0) unitTypes[4].animIndex[ANIM_ATTACK] = 0;
+        unitTypes[4].hasAnimations = true;
     }
 
     // Devil animations
@@ -5700,8 +5759,36 @@ int main(void)
                     DrawLine(0, y, wipeW, y - 40,
                         (Color){ 80, 120, 50, (unsigned char)(alpha * 0.2f) });
                 }
+            } else if (intro.typeIndex == 3) {
+                // Puppycat: warm pink
+                DrawRectangle(0, 0, wipeW, ish, (Color){ 50, 25, 40, alpha });
+                for (int ring = 0; ring < 8; ring++) {
+                    float radius = 100.0f + ring * 80.0f;
+                    unsigned char ra = (unsigned char)(alpha * 0.3f);
+                    DrawCircleLines(isw * 65 / 100, ish / 2, radius,
+                        (Color){ (unsigned char)(180 + ring*6), (unsigned char)(80 + ring*5), (unsigned char)(140 + ring*4), ra });
+                }
+                for (int ln = 0; ln < 12; ln++) {
+                    int y = (ish / 12) * ln;
+                    DrawLine(0, y, wipeW, y - 30,
+                        (Color){ 200, 100, 160, (unsigned char)(alpha * 0.15f) });
+                }
+            } else if (intro.typeIndex == 4) {
+                // Siren: deep ocean
+                DrawRectangle(0, 0, wipeW, ish, (Color){ 15, 25, 50, alpha });
+                for (int ring = 0; ring < 8; ring++) {
+                    float radius = 100.0f + ring * 80.0f;
+                    unsigned char ra = (unsigned char)(alpha * 0.3f);
+                    DrawCircleLines(isw * 65 / 100, ish / 2, radius,
+                        (Color){ (unsigned char)(40 + ring*5), (unsigned char)(120 + ring*8), (unsigned char)(180 + ring*6), ra });
+                }
+                for (int ln = 0; ln < 15; ln++) {
+                    int y = (ish / 15) * ln;
+                    DrawLine(0, y + 80, wipeW, y - 80,
+                        (Color){ 60, 140, 200, (unsigned char)(alpha * 0.15f) });
+                }
             } else {
-                // Goblin: dark crimson
+                // Default: dark crimson
                 DrawRectangle(0, 0, wipeW, ish, (Color){ 45, 20, 20, alpha });
                 for (int ring = 0; ring < 8; ring++) {
                     float radius = 100.0f + ring * 80.0f;

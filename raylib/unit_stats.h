@@ -18,8 +18,8 @@ static const char *UNIT_TYPE_NAMES[] = {
     /* 0 */ "Mushroom",
     /* 1 */ "Goblin",
     /* 2 */ "Devil",
-    /* 3 */ NULL,
-    /* 4 */ NULL,
+    /* 3 */ NULL,       // "Puppycat" — disabled until models are fixed
+    /* 4 */ NULL,       // "Siren"    — disabled until models are fixed
     /* 5 */ "Reptile",
 };
 #define UNIT_TYPE_NAME_COUNT (int)(sizeof(UNIT_TYPE_NAMES) / sizeof(UNIT_TYPE_NAMES[0]))
@@ -30,14 +30,14 @@ static inline const char *GetUnitTypeName(int idx) {
 #endif
 
 // Valid (non-empty) unit type indices for random selection
-static const int VALID_UNIT_TYPES[] = { 0, 1, 2, 5 };
+static const int VALID_UNIT_TYPES[] = { 0, 1, 2, 5 };  // 3,4 disabled until models fixed
 #define VALID_UNIT_TYPE_COUNT (int)(sizeof(VALID_UNIT_TYPES) / sizeof(VALID_UNIT_TYPES[0]))
 
 static const UnitStats UNIT_STATS[] = {
     /* 0  Mushroom */ { .health = 40.0f, .movementSpeed = 12.0f, .attackDamage = 3.0f, .attackSpeed = 1.2f },
     /* 1  Goblin   */ { .health = 20.0f, .movementSpeed = 20.0f, .attackDamage = 2.0f, .attackSpeed = 0.5f },
     /* 2  Devil   */ { .health = 25.0f, .movementSpeed = 12.0f, .attackDamage = 6.0f, .attackSpeed = 1.1f },
-    /* 3  (unused) */ { .health = 0, .movementSpeed = 0, .attackDamage = 0, .attackSpeed = 0 },
-    /* 4  (unused) */ { .health = 0, .movementSpeed = 0, .attackDamage = 0, .attackSpeed = 0 },
+    /* 3  Puppycat */ { .health = 35.0f, .movementSpeed = 10.0f, .attackDamage = 2.5f, .attackSpeed = 1.0f },
+    /* 4  Siren    */ { .health = 18.0f, .movementSpeed = 18.0f, .attackDamage = 7.0f, .attackSpeed = 1.3f },
     /* 5  Reptile  */ { .health = 30.0f, .movementSpeed = 15.0f, .attackDamage = 5.0f, .attackSpeed = 0.9f },
 };

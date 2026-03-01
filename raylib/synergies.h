@@ -119,5 +119,56 @@ static const SynergyDef SYNERGY_DEFS[] = {
             { .minUnits = 3, .speedMult = 1.0f, .hpMult = 1.20f, .dmgMult = 1.30f },
         }
     },
+    // 5: Puppycat Guard
+    {
+        .name = "Puppycat Guard",
+        .abbrev = "PG",
+#ifndef SERVER_BUILD
+        .color = { 220, 120, 180, 255 },
+#endif
+        .buffDesc = { "+25% HP, +10% SPD", "+40% HP, +20% SPD", NULL, NULL },
+        .requiredTypes = { 3 },       // Puppycat
+        .requiredTypeCount = 1,
+        .targetType = 3,              // buff goes to puppycats
+        .tierCount = 2,
+        .tiers = {
+            { .minUnits = 2, .speedMult = 1.10f, .hpMult = 1.25f, .dmgMult = 1.0f },
+            { .minUnits = 3, .speedMult = 1.20f, .hpMult = 1.40f, .dmgMult = 1.0f },
+        }
+    },
+    // 6: Siren Song
+    {
+        .name = "Siren Song",
+        .abbrev = "SS",
+#ifndef SERVER_BUILD
+        .color = { 60, 160, 220, 255 },
+#endif
+        .buffDesc = { "+25% DMG", "+40% DMG, +15% SPD", NULL, NULL },
+        .requiredTypes = { 4 },       // Siren
+        .requiredTypeCount = 1,
+        .targetType = 4,              // buff goes to sirens
+        .tierCount = 2,
+        .tiers = {
+            { .minUnits = 2, .speedMult = 1.0f,  .hpMult = 1.0f, .dmgMult = 1.25f },
+            { .minUnits = 3, .speedMult = 1.15f, .hpMult = 1.0f, .dmgMult = 1.40f },
+        }
+    },
+    // 7: Mystic Duo
+    {
+        .name = "Mystic Duo",
+        .abbrev = "MD",
+#ifndef SERVER_BUILD
+        .color = { 160, 100, 220, 255 },
+#endif
+        .buffDesc = { "+15% DMG, +15% HP", NULL, NULL, NULL },
+        .requiredTypes = { 3, 4 },    // Puppycat + Siren
+        .requiredTypeCount = 2,
+        .targetType = -1,             // buff goes to all matching types
+        .requireAllTypes = true,      // need 1 of each type
+        .tierCount = 1,
+        .tiers = {
+            { .minUnits = 2, .speedMult = 1.0f, .hpMult = 1.15f, .dmgMult = 1.15f },
+        }
+    },
 };
 #define SYNERGY_COUNT (sizeof(SYNERGY_DEFS) / sizeof(SYNERGY_DEFS[0]))
