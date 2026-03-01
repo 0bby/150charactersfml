@@ -235,6 +235,11 @@ int main(void)
     int ssaoNearLoc = GetShaderLocation(ssaoShader, "near");
     int ssaoFarLoc  = GetShaderLocation(ssaoShader, "far");
     int ssaoDepthLoc = GetShaderLocation(ssaoShader, "texture1");
+
+    // --- FXAA post-process ---
+    Shader fxaaShader = LoadShader(NULL,
+        TextFormat("resources/shaders/glsl%i/fxaa.fs", GLSL_VERSION));
+    int fxaaResLoc = GetShaderLocation(fxaaShader, "resolution");
     // Scene render texture with samplable depth texture (not renderbuffer)
     int sceneRTWidth = GetScreenWidth();
     int sceneRTHeight = GetScreenHeight();
@@ -250,6 +255,11 @@ int main(void)
     sceneRT.depth.height = sceneRTHeight;
     rlFramebufferAttach(sceneRT.id, sceneRT.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
     rlFramebufferAttach(sceneRT.id, sceneRT.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+
+    // FXAA render target (fullscreen, color only)
+    int fxaaRTWidth = sceneRTWidth;
+    int fxaaRTHeight = sceneRTHeight;
+    RenderTexture2D fxaaRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
 
     // Assign lighting shader to all loaded models
     for (int i = 0; i < unitTypeCount; i++)
@@ -2922,7 +2932,7 @@ int main(void)
         camera.position.x += shake.offset.x;
         camera.position.y += shake.offset.y;
 
-        // Recreate scene RT if window was resized
+        // Recreate scene RT and FXAA RT if window was resized
         {
             int curW = GetScreenWidth(), curH = GetScreenHeight();
             if (curW != sceneRTWidth || curH != sceneRTHeight) {
@@ -2940,6 +2950,11 @@ int main(void)
                 sceneRT.depth.height = sceneRTHeight;
                 rlFramebufferAttach(sceneRT.id, sceneRT.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
                 rlFramebufferAttach(sceneRT.id, sceneRT.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+
+                UnloadRenderTexture(fxaaRT);
+                fxaaRTWidth = curW;
+                fxaaRTHeight = curH;
+                fxaaRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
             }
         }
 
@@ -3246,6 +3261,10 @@ int main(void)
         EndMode3D();
         EndTextureMode();
 
+        // Composite scene + post-process into FXAA RT (avoid nesting render targets)
+        BeginTextureMode(fxaaRT);
+        ClearBackground((Color){ 45, 40, 35, 255 });
+
         // Draw scene with SSAO post-process
         {
             float res[2] = { (float)sceneRTWidth, (float)sceneRTHeight };
@@ -3264,36 +3283,6 @@ int main(void)
             EndShaderMode();
             rlActiveTextureSlot(0);
         }
-
-        // Draw blob shadows on top of SSAO (separate 3D pass, no depth)
-        BeginMode3D(camera);
-            rlDisableDepthMask();
-            rlDisableDepthTest();
-            for (int i = 0; i < unitCount; i++)
-            {
-                if (!units[i].active) continue;
-                if (IsUnitInStatueSpawn(&statueSpawn, i)) continue;
-                if (intro.active && intro.unitIndex == i) continue;
-                float shadowRadius = 3.0f * units[i].scaleOverride;
-                float shadowY = 0.5f;
-                float shadowAlpha = 1.0f - units[i].position.y * 0.02f;
-                if (shadowAlpha < 0.1f) shadowAlpha = 0.1f;
-                unsigned char alpha = (unsigned char)(60.0f * shadowAlpha);
-                Vector3 center = { units[i].position.x, shadowY, units[i].position.z };
-                int segments = 16;
-                for (int si = 0; si < segments; si++) {
-                    float a0 = (float)si / segments * 2.0f * PI;
-                    float a1 = (float)(si + 1) / segments * 2.0f * PI;
-                    DrawTriangle3D(
-                        center,
-                        (Vector3){ center.x + cosf(a1)*shadowRadius, shadowY, center.z + sinf(a1)*shadowRadius },
-                        (Vector3){ center.x + cosf(a0)*shadowRadius, shadowY, center.z + sinf(a0)*shadowRadius },
-                        (Color){ 0, 0, 0, alpha });
-                }
-            }
-            rlEnableDepthTest();
-            rlEnableDepthMask();
-        EndMode3D();
 
         // Restore camera position after shake
         camera.position = camSaved;
@@ -4852,6 +4841,19 @@ int main(void)
             }
         }
 
+        EndTextureMode();
+
+        // Apply FXAA post-process to final image
+        {
+            float fxaaRes[2] = { (float)fxaaRTWidth, (float)fxaaRTHeight };
+            SetShaderValue(fxaaShader, fxaaResLoc, fxaaRes, SHADER_UNIFORM_VEC2);
+            BeginShaderMode(fxaaShader);
+            DrawTextureRec(fxaaRT.texture,
+                (Rectangle){ 0, 0, (float)fxaaRTWidth, -(float)fxaaRTHeight },
+                (Vector2){ 0, 0 }, WHITE);
+            EndShaderMode();
+        }
+
         DrawFPS(10, 10);
         EndDrawing();
     }
@@ -4864,10 +4866,12 @@ int main(void)
     }
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     UnloadRenderTexture(introModelRT);
+    UnloadRenderTexture(fxaaRT);
     rlUnloadFramebuffer(sceneRT.id);
     rlUnloadTexture(sceneRT.texture.id);
     rlUnloadTexture(sceneRT.depth.id);
     UnloadShader(ssaoShader);
+    UnloadShader(fxaaShader);
     UnloadTexture(particleTex);
     UnloadShader(lightShader);
     UnloadShader(borderShader);
