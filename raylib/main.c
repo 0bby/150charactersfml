@@ -910,25 +910,25 @@ int main(void)
         em->texture = LoadTexture(em->texturePath);
         em->ormTexture = LoadTexture(em->ormTexturePath);
         em->normalTexture = LoadTexture(em->normalTexturePath);
-        em->model = LoadModel(em->modelPath);
-        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
-        for (int m = 0; m < em->model.materialCount; m++) {
-            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
-            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
-            em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = em->ormTexture;
-            em->model.materials[m].shader = lightShader;
-        }
-        if (em->model.meshCount > 0) {
-            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
-            float cx = (bb.min.x + bb.max.x) * 0.5f;
-            float by = bb.min.y;
-            float cz = (bb.min.z + bb.max.z) * 0.5f;
-            float h  = bb.max.y - bb.min.y;
-            float s  = 15.0f / h;
-            em->model.transform = MatrixMultiply(
-                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
-        }
-        em->loaded = true;
+        // em->model = LoadModel(em->modelPath);
+        // for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
+        // for (int m = 0; m < em->model.materialCount; m++) {
+        //     em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+        //     em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        //     em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = em->ormTexture;
+        //     em->model.materials[m].shader = lightShader;
+        // }
+        // if (em->model.meshCount > 0) {
+        //     BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+        //     float cx = (bb.min.x + bb.max.x) * 0.5f;
+        //     float by = bb.min.y;
+        //     float cz = (bb.min.z + bb.max.z) * 0.5f;
+        //     float h  = bb.max.y - bb.min.y;
+        //     float s  = 15.0f / h;
+        //     em->model.transform = MatrixMultiply(
+        //         MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        // }
+        // em->loaded = true;
         envModelCount++;
     }
     // 7: PillarSmall (shares textures with PillarBig)
