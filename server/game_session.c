@@ -363,15 +363,7 @@ int session_tick(GameSession *s, float dt)
     case SESSION_PREP: {
         s->prepTimer -= dt;
         if (s->prepTimer <= 0) {
-            // Auto-ready players who haven't pressed ready
-            for (int p = 0; p < 2; p++) {
-                if (!s->players[p].ready) {
-                    s->players[p].ready = true;
-                    printf("[Session %s] Player %d auto-readied (timer expired)\n",
-                           s->lobbyCode, p);
-                }
-            }
-            session_start_combat(s);
+            s->prepTimer = 0;
         }
 
         // Poll for messages from both players

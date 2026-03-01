@@ -54,7 +54,7 @@
 int main(void)
 {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-    InitWindow(1280, 720, "Autochess — Set in Stone");
+    InitWindow(1280, 720, "Relic Rivals");
     SetWindowMinSize(640, 360);
     InitAudioDevice();
 
@@ -4688,7 +4688,7 @@ int main(void)
             int msh = GetScreenHeight();
 
             // Title text (floating over the 3D scene)
-            const char *title = "Sets of Skills";
+            const char *title = "Relic Rivals";
             int titleSize = 72;
             int tw = MeasureText(title, titleSize);
             DrawText(title, msw/2 - tw/2, 60, titleSize, (Color){200, 180, 255, 220});
