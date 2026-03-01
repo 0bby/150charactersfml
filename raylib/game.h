@@ -133,15 +133,16 @@ typedef struct {
 //------------------------------------------------------------------------------------
 // HUD Layout Constants
 //------------------------------------------------------------------------------------
-#define HUD_UNIT_BAR_HEIGHT 130
-#define HUD_SHOP_HEIGHT 50
-#define HUD_TOTAL_HEIGHT (HUD_UNIT_BAR_HEIGHT + HUD_SHOP_HEIGHT)
-#define HUD_CARD_WIDTH 180
-#define HUD_CARD_HEIGHT 120
-#define HUD_CARD_SPACING 10
-#define HUD_PORTRAIT_SIZE 80
-#define HUD_ABILITY_SLOT_SIZE 32
-#define HUD_ABILITY_SLOT_GAP 4
+// Base values (designed for 720p) — scaled at runtime via uiScale
+#define HUD_UNIT_BAR_HEIGHT_BASE 130
+#define HUD_SHOP_HEIGHT_BASE 50
+#define HUD_CARD_WIDTH_BASE 180
+#define HUD_CARD_HEIGHT_BASE 120
+#define HUD_CARD_SPACING_BASE 10
+#define HUD_PORTRAIT_SIZE_BASE 80
+#define HUD_ABILITY_SLOT_SIZE_BASE 32
+#define HUD_ABILITY_SLOT_GAP_BASE 4
+// Non-scaled constants
 #define HUD_INVENTORY_COLS 3
 #define HUD_INVENTORY_ROWS 2
 
