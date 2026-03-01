@@ -18,8 +18,8 @@ static const char *UNIT_TYPE_NAMES[] = {
     /* 0 */ "Mushroom",
     /* 1 */ "Goblin",
     /* 2 */ "Devil",
-    /* 3 */ NULL,       // "Puppycat" — disabled until models are fixed
-    /* 4 */ NULL,       // "Siren"    — disabled until models are fixed
+    /* 3 */ "Puppycat",
+    /* 4 */ "Siren",
     /* 5 */ "Reptile",
 };
 #define UNIT_TYPE_NAME_COUNT (int)(sizeof(UNIT_TYPE_NAMES) / sizeof(UNIT_TYPE_NAMES[0]))
@@ -30,7 +30,7 @@ static inline const char *GetUnitTypeName(int idx) {
 #endif
 
 // Valid (non-empty) unit type indices for random selection
-static const int VALID_UNIT_TYPES[] = { 0, 1, 2, 5 };  // 3,4 disabled until models fixed
+static const int VALID_UNIT_TYPES[] = { 0, 1, 2, 3, 4, 5 };
 #define VALID_UNIT_TYPE_COUNT (int)(sizeof(VALID_UNIT_TYPES) / sizeof(VALID_UNIT_TYPES[0]))
 
 static const UnitStats UNIT_STATS[] = {

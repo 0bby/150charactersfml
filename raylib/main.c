@@ -74,7 +74,7 @@ static inline int GameMeasureText(const char *text, int fontSize)
 //------------------------------------------------------------------------------------
 int main(void)
 {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI);
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 720, "Relic Rivals");
     SetWindowMinSize(640, 360);
     InitAudioDevice();
@@ -192,8 +192,8 @@ int main(void)
     int unitTypeCount = 6;
     UnitType unitTypes[MAX_UNIT_TYPES] = { 0 };
     unitTypes[0].name = "Mushroom";
-    unitTypes[0].modelPath = "MUSHROOMmixamotest.obj";
-    unitTypes[0].scale = 0.07f;
+    unitTypes[0].modelPath = "assets/classes/mushroom/MushroomTest.obj";
+    unitTypes[0].scale = 0.10f;
     unitTypes[0].yOffset = 1.5f;
     unitTypes[1].name = "Goblin";
     unitTypes[1].modelPath = "assets/goblin/animations/PluginGoblinWalk.glb";
@@ -202,14 +202,13 @@ int main(void)
     unitTypes[2].modelPath = "assets/classes/devil/DevilIdle.glb";
     unitTypes[2].scale = 9.0f;
     unitTypes[2].yOffset = 0.0f;
-    // Puppycat & Siren — disabled until models are fixed
-    // unitTypes[3].name = "Puppycat";
-    unitTypes[3].modelPath = "assets/classes/puppycat/PuppycatIdle.glb";
-    unitTypes[3].scale = 9.0f;
+    unitTypes[3].name = "Puppycat";
+    unitTypes[3].modelPath = "MUSHROOMmixamotest.obj";
+    unitTypes[3].scale = 0.07f;
     unitTypes[3].yOffset = 0.0f;
-    // unitTypes[4].name = "Siren";
-    unitTypes[4].modelPath = "assets/classes/siren/SirenIdle.glb";
-    unitTypes[4].scale = 9.0f;
+    unitTypes[4].name = "Siren";
+    unitTypes[4].modelPath = "MUSHROOMmixamotest.obj";
+    unitTypes[4].scale = 0.07f;
     unitTypes[4].yOffset = 0.0f;
     unitTypes[5].name = "Reptile";
     unitTypes[5].modelPath = "assets/classes/reptile/ReptileIdle.glb";
@@ -277,56 +276,6 @@ int main(void)
         if (unitTypes[5].animCount > 0)       unitTypes[5].animIndex[ANIM_SCARED] = 0;
         if (unitTypes[5].attackAnimCount > 0) unitTypes[5].animIndex[ANIM_ATTACK] = 0;
         unitTypes[5].hasAnimations = true;
-    }
-
-    // Puppycat animations
-    {
-        int cnt = 0;
-        ModelAnimation *walk = LoadModelAnimations("assets/classes/puppycat/PuppycatWalk.glb", &cnt);
-        unitTypes[3].anims = walk; unitTypes[3].animCount = cnt;
-
-        cnt = 0;
-        ModelAnimation *idle = LoadModelAnimations("assets/classes/puppycat/PuppycatIdle.glb", &cnt);
-        unitTypes[3].idleAnims = idle; unitTypes[3].idleAnimCount = cnt;
-
-        cnt = 0;
-        ModelAnimation *atk = LoadModelAnimations("assets/classes/puppycat/PuppycatAttack.glb", &cnt);
-        unitTypes[3].attackAnims = atk; unitTypes[3].attackAnimCount = cnt;
-
-        unitTypes[3].scaredAnims = NULL; unitTypes[3].scaredAnimCount = 0;
-        unitTypes[3].castAnims = NULL;   unitTypes[3].castAnimCount = 0;
-
-        for (int s = 0; s < ANIM_COUNT; s++) unitTypes[3].animIndex[s] = -1;
-        if (unitTypes[3].idleAnimCount > 0)   unitTypes[3].animIndex[ANIM_IDLE] = 0;
-        if (unitTypes[3].animCount > 0)       unitTypes[3].animIndex[ANIM_WALK] = 0;
-        if (unitTypes[3].animCount > 0)       unitTypes[3].animIndex[ANIM_SCARED] = 0;
-        if (unitTypes[3].attackAnimCount > 0) unitTypes[3].animIndex[ANIM_ATTACK] = 0;
-        unitTypes[3].hasAnimations = true;
-    }
-
-    // Siren animations
-    {
-        int cnt = 0;
-        ModelAnimation *walk = LoadModelAnimations("assets/classes/siren/SirenWalk.glb", &cnt);
-        unitTypes[4].anims = walk; unitTypes[4].animCount = cnt;
-
-        cnt = 0;
-        ModelAnimation *idle = LoadModelAnimations("assets/classes/siren/SirenIdle.glb", &cnt);
-        unitTypes[4].idleAnims = idle; unitTypes[4].idleAnimCount = cnt;
-
-        cnt = 0;
-        ModelAnimation *atk = LoadModelAnimations("assets/classes/siren/SirenAttack.glb", &cnt);
-        unitTypes[4].attackAnims = atk; unitTypes[4].attackAnimCount = cnt;
-
-        unitTypes[4].scaredAnims = NULL; unitTypes[4].scaredAnimCount = 0;
-        unitTypes[4].castAnims = NULL;   unitTypes[4].castAnimCount = 0;
-
-        for (int s = 0; s < ANIM_COUNT; s++) unitTypes[4].animIndex[s] = -1;
-        if (unitTypes[4].idleAnimCount > 0)   unitTypes[4].animIndex[ANIM_IDLE] = 0;
-        if (unitTypes[4].animCount > 0)       unitTypes[4].animIndex[ANIM_WALK] = 0;
-        if (unitTypes[4].animCount > 0)       unitTypes[4].animIndex[ANIM_SCARED] = 0;
-        if (unitTypes[4].attackAnimCount > 0) unitTypes[4].animIndex[ANIM_ATTACK] = 0;
-        unitTypes[4].hasAnimations = true;
     }
 
     // Devil animations
