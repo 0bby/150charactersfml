@@ -5640,9 +5640,20 @@ int main(void)
             DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
             DrawRectangleLines(tipX, tipY, tipW, tipH, (Color){100, 100, 130, 255});
             GameDrawText(tipDef->name, tipX + S(6), tipY + S(4), S(16), WHITE);
+            const char *lvlText = TextFormat("Lvl:%d/%d", hoverAbilityLevel + 1, ABILITY_MAX_LEVELS);
+            int lvlW = GameMeasureText(lvlText, S(12));
+            GameDrawText(lvlText, tipX + tipW - lvlW - S(6), tipY + S(6), S(12), (Color){180, 180, 200, 255});
             GameDrawText(tipDef->description, tipX + S(6), tipY + S(22), S(12), (Color){180, 180, 200, 255});
 
             Color dimStatColor = { 100, 100, 120, 255 };
+            // Rolling 3-window: show 3 levels centered on current
+            int winStart = hoverAbilityLevel <= 0 ? 0
+                         : (hoverAbilityLevel >= ABILITY_MAX_LEVELS - 1 ? ABILITY_MAX_LEVELS - 3
+                         : hoverAbilityLevel - 1);
+            if (winStart < 0) winStart = 0;
+            int winEnd = winStart + 3;
+            if (winEnd > ABILITY_MAX_LEVELS) winEnd = ABILITY_MAX_LEVELS;
+
             int lineY = tipY + S(40);
             for (int sl = 0; sl < numStatLines; sl++) {
                 int lx = tipX + S(6);
@@ -5651,12 +5662,12 @@ int main(void)
                     const char *cdLabel = "CD: ";
                     GameDrawText(cdLabel, lx, lineY, S(12), (Color){180,180,200,255});
                     lx += GameMeasureText(cdLabel, S(12));
-                    for (int lv = 0; lv < ABILITY_MAX_LEVELS; lv++) {
+                    for (int lv = winStart; lv < winEnd; lv++) {
                         const char *val = TextFormat("%.1fs", tipDef->cooldown[lv]);
                         Color vc = (lv == hoverAbilityLevel) ? WHITE : dimStatColor;
                         GameDrawText(val, lx, lineY, S(12), vc);
                         lx += GameMeasureText(val, S(12));
-                        if (lv < ABILITY_MAX_LEVELS - 1) {
+                        if (lv < winEnd - 1) {
                             GameDrawText(" / ", lx, lineY, S(12), dimStatColor);
                             lx += GameMeasureText(" / ", S(12));
                         }
@@ -5667,7 +5678,7 @@ int main(void)
                     snprintf(labelBuf, sizeof(labelBuf), "%s: ", statLines[sl].label);
                     GameDrawText(labelBuf, lx, lineY, S(12), (Color){180,180,200,255});
                     lx += GameMeasureText(labelBuf, S(12));
-                    for (int lv = 0; lv < ABILITY_MAX_LEVELS; lv++) {
+                    for (int lv = winStart; lv < winEnd; lv++) {
                         float v = tipDef->values[lv][statLines[sl].valueIndex];
                         const char *val;
                         if (statLines[sl].isPercent)
@@ -5679,7 +5690,7 @@ int main(void)
                         Color vc = (lv == hoverAbilityLevel) ? WHITE : dimStatColor;
                         GameDrawText(val, lx, lineY, S(12), vc);
                         lx += GameMeasureText(val, S(12));
-                        if (lv < ABILITY_MAX_LEVELS - 1) {
+                        if (lv < winEnd - 1) {
                             GameDrawText(" / ", lx, lineY, S(12), dimStatColor);
                             lx += GameMeasureText(" / ", S(12));
                         }
