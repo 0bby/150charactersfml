@@ -224,14 +224,7 @@ int main(void)
     unitTypes[2].modelPath = "assets/classes/devil/DevilIdle.glb";
     unitTypes[2].scale = 9.0f;
     unitTypes[2].yOffset = 0.0f;
-    unitTypes[3].name = "Puppycat";
-    unitTypes[3].modelPath = "MUSHROOMmixamotest.obj";
-    unitTypes[3].scale = 0.07f;
-    unitTypes[3].yOffset = 0.0f;
-    unitTypes[4].name = "Siren";
-    unitTypes[4].modelPath = "MUSHROOMmixamotest.obj";
-    unitTypes[4].scale = 0.07f;
-    unitTypes[4].yOffset = 0.0f;
+    // slots 3 and 4 (Puppycat, Siren) descoped
     unitTypes[5].name = "Reptile";
     unitTypes[5].modelPath = "assets/classes/reptile/ReptileIdle.glb";
     unitTypes[5].scale = 9.0f;

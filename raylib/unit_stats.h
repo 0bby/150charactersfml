@@ -30,7 +30,7 @@ static inline const char *GetUnitTypeName(int idx) {
 #endif
 
 // Valid (non-empty) unit type indices for random selection
-static const int VALID_UNIT_TYPES[] = { 0, 1, 2, 3, 4, 5 };
+static const int VALID_UNIT_TYPES[] = { 0, 1, 2, 5 };
 #define VALID_UNIT_TYPE_COUNT (int)(sizeof(VALID_UNIT_TYPES) / sizeof(VALID_UNIT_TYPES[0]))
 
 static const UnitStats UNIT_STATS[] = {
