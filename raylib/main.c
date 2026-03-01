@@ -6241,7 +6241,11 @@ int main(void)
                 if (textT > 1.0f) textT = 1.0f;
                 textSlide = 1.0f - (1.0f - textT) * (1.0f - textT);
             }
-            const char *introName = unitTypes[intro.typeIndex].name;
+            // Determine display name: custom name if set, class name as fallback
+            const char *className = unitTypes[intro.typeIndex].name;
+            bool hasCustomName = (intro.unitIndex >= 0 && intro.unitIndex < unitCount &&
+                                  units[intro.unitIndex].nfcName[0] != '\0');
+            const char *introName = hasCustomName ? units[intro.unitIndex].nfcName : className;
             int nameFontSize = ish / 8;
             int nameW = GameMeasureText(introName, nameFontSize);
             float nameFinalX = isw * 0.08f;
@@ -6257,10 +6261,12 @@ int main(void)
             nameColor.a = alpha;
             GameDrawText(introName, (int)nameX, (int)nameY, nameFontSize, nameColor);
 
-            // Subtitle
+            // Subtitle: class name if custom named, otherwise "joins the battle!"
             int subSize = nameFontSize / 3;
             if (subSize < 12) subSize = 12;
-            const char *subText = "joins the battle!";
+            const char *subText = hasCustomName
+                ? TextFormat("%s joins the battle!", className)
+                : "joins the battle!";
             GameDrawText(subText, (int)nameX + 4, (int)nameY + nameFontSize + 4, subSize,
                 (Color){ 200, 200, 220, (unsigned char)(alpha * 0.8f) });
 
@@ -6341,13 +6347,18 @@ int main(void)
                 namingBuf[--namingPos] = '\0';
             }
             if (IsKeyPressed(KEY_ENTER) && namingPos > 0) {
-                // Save name to server and unit
-                strncpy(units[namingUnitIndex].nfcName, namingBuf, sizeof(units[namingUnitIndex].nfcName) - 1);
-                if (units[namingUnitIndex].nfcUidLen > 0) {
-                    net_nfc_set_name(serverHost, NET_PORT,
-                        units[namingUnitIndex].nfcUid, units[namingUnitIndex].nfcUidLen, namingBuf);
+                // Save name to unit (explicit copy + null terminate)
+                int ni = namingUnitIndex;
+                if (ni >= 0 && ni < unitCount) {
+                    memcpy(units[ni].nfcName, namingBuf, namingPos);
+                    units[ni].nfcName[namingPos] = '\0';
+                    printf("[NFC] Named unit %d: \"%s\" (nfcName set to \"%s\")\n", ni, namingBuf, units[ni].nfcName);
+                    // Persist to server
+                    if (units[ni].nfcUidLen > 0) {
+                        net_nfc_set_name(serverHost, NET_PORT,
+                            units[ni].nfcUid, units[ni].nfcUidLen, namingBuf);
+                    }
                 }
-                printf("[NFC] Named unit %d: \"%s\"\n", namingUnitIndex, namingBuf);
                 namingUnitIndex = -1;
             }
             // Draw overlay
