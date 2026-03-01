@@ -720,36 +720,27 @@ void CompactBlueUnits(Unit units[], int *unitCount)
 
 // Static wave definitions for rounds 1-5
 static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
-    // Round 1: "Skirmish" — no abilities
-    { .count = 3, .entries = {
-        { .unitType = 0, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+    // Round 1: 1 enemy, no abilities
+    { .count = 1, .entries = {
+        { .unitType = -1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+    }},
+    // Round 2: 2 enemies, no abilities
+    { .count = 2, .entries = {
         { .unitType = 0, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
         { .unitType = 1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
-    // Round 2: "Scouts" — 1 ability each (level 0)
-    { .count = 4, .entries = {
+    // Round 3: 2 enemies with 1 ability each
+    { .count = 2, .entries = {
         { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
         { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
-    // Round 3: "Veterans" — 2 abilities level 0 each
-    { .count = 5, .entries = {
+    // Round 4: 3 enemies, 1-2 abilities level 0-1
+    { .count = 3, .entries = {
         { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 0, .numAbilities = 1, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
         { .unitType = 1, .numAbilities = 1, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
-    // Round 4: "Elite Squad" — 2 abilities level 1 each
-    { .count = 5, .entries = {
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-    }},
-    // Round 5: "BOSS" — single massive unit, 4 abilities all level 2
+    // Round 5: BOSS — single massive unit, 4 abilities all level 2
     { .count = 1, .entries = {
         { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 8.0f, .dmgMult = 3.0f, .scaleMult = 2.5f },
     }},
