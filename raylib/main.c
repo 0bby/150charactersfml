@@ -22,6 +22,17 @@
 
 #define GLSL_VERSION 330
 
+// --- Color grading tweakable defaults (bright & bubbly) ---
+static float cgExposure      = 0.89f;
+static float cgContrast      = 1.20f;
+static float cgSaturation    = 0.85f;
+static float cgTemperature   = 0.10f;
+static float cgVignetteStr   = 0.46f;
+static float cgVignetteSoft  = 0.94f;
+static float cgLift[3]       = { 0.05f, 0.04f, 0.02f };
+static float cgGain[3]       = { 1.08f, 1.06f, 1.02f };
+static bool  cgDebugOverlay  = false;
+
 #include "game.h"
 #include "synergies.h"
 #include "helpers.h"
@@ -390,6 +401,19 @@ int main(void)
     int fxaaRTHeight = sceneRTHeight;
     RenderTexture2D fxaaRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
 
+    // --- Color grading post-process ---
+    Shader colorGradeShader = LoadShader(NULL,
+        TextFormat("resources/shaders/glsl%i/color_grade.fs", GLSL_VERSION));
+    int cgExposureLoc   = GetShaderLocation(colorGradeShader, "exposure");
+    int cgContrastLoc   = GetShaderLocation(colorGradeShader, "contrast");
+    int cgSaturationLoc = GetShaderLocation(colorGradeShader, "saturation");
+    int cgTemperatureLoc= GetShaderLocation(colorGradeShader, "temperature");
+    int cgVigStrLoc     = GetShaderLocation(colorGradeShader, "vignetteStrength");
+    int cgVigSoftLoc    = GetShaderLocation(colorGradeShader, "vignetteSoftness");
+    int cgLiftLoc       = GetShaderLocation(colorGradeShader, "lift");
+    int cgGainLoc       = GetShaderLocation(colorGradeShader, "gain");
+    RenderTexture2D colorGradeRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
+
     // --- Shadow map setup (color+depth FBO for guaranteed completeness) ---
     #define SHADOW_MAP_SIZE 2048
     RenderTexture2D shadowRT = { 0 };
@@ -449,9 +473,11 @@ int main(void)
     };
     Texture2D tileDiffuse = LoadTexture("assets/goblin/environment/tiles/T_Tiles_BC.png");
     Texture2D tileORM = LoadTexture("assets/goblin/environment/tiles/T_Tiles_ORM.png");
+    Texture2D tileNormal = LoadTexture("assets/goblin/environment/tiles/T_Tiles_N.png");
 
     for (int i = 0; i < TILE_VARIANTS; i++) {
         tileModels[i] = LoadModel(tilePaths[i]);
+        for (int mi = 0; mi < tileModels[i].meshCount; mi++) GenMeshTangents(&tileModels[i].meshes[mi]);
         // Compute OBJ-space center from bounding box
         BoundingBox bb = GetMeshBoundingBox(tileModels[i].meshes[0]);
         tileCenters[i] = (Vector3){
@@ -665,7 +691,9 @@ int main(void)
     // --- Environment models: ground (replaces old platform), stairs, circle ---
     Texture2D groundDiffuse = LoadTexture("assets/goblin/environment/ground/T_Ground_BC.png");
     Texture2D groundORM = LoadTexture("assets/goblin/environment/ground/T_Ground_ORM.png");
+    Texture2D groundNormal = LoadTexture("assets/goblin/environment/ground/T_Ground_N.png");
     Model platformModel = LoadModel("assets/goblin/environment/ground/ground.obj");
+    for (int mi = 0; mi < platformModel.meshCount; mi++) GenMeshTangents(&platformModel.meshes[mi]);
     for (int m = 0; m < platformModel.materialCount; m++) {
         platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = groundDiffuse;
         platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -686,7 +714,9 @@ int main(void)
 
     Texture2D stairsDiffuse = LoadTexture("assets/goblin/environment/stairs/T_Stairs_BC.png");
     Texture2D stairsORM = LoadTexture("assets/goblin/environment/stairs/T_Stairs_ORM.png");
+    Texture2D stairsNormal = LoadTexture("assets/goblin/environment/stairs/T_Stairs_N.png");
     Model stairsModel = LoadModel("assets/goblin/environment/stairs/Stairs_LP.obj");
+    for (int mi = 0; mi < stairsModel.meshCount; mi++) GenMeshTangents(&stairsModel.meshes[mi]);
     for (int m = 0; m < stairsModel.materialCount; m++) {
         stairsModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = stairsDiffuse;
         stairsModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -707,7 +737,9 @@ int main(void)
 
     Texture2D circleDiffuse = LoadTexture("assets/goblin/environment/circle/T_Circle_BC.png");
     Texture2D circleORM = LoadTexture("assets/goblin/environment/circle/T_Circle_ORM.png");
+    Texture2D circleNormal = LoadTexture("assets/goblin/environment/circle/T_Circle_N.png");
     Model circleModel = LoadModel("assets/goblin/environment/circle/circle.obj");
+    for (int mi = 0; mi < circleModel.meshCount; mi++) GenMeshTangents(&circleModel.meshes[mi]);
     for (int m = 0; m < circleModel.materialCount; m++) {
         circleModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = circleDiffuse;
         circleModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -810,6 +842,7 @@ int main(void)
         em->texturePath = NULL;
         em->model = stairsModel;  // reuse — do NOT unload separately
         em->texture = (Texture2D){0};
+        em->normalTexture = stairsNormal;
         em->loaded = true;
         envModelCount++;
     }
@@ -821,6 +854,7 @@ int main(void)
         em->texturePath = NULL;
         em->model = circleModel;  // reuse — do NOT unload separately
         em->texture = (Texture2D){0};
+        em->normalTexture = circleNormal;
         em->loaded = true;
         envModelCount++;
     }
@@ -831,7 +865,9 @@ int main(void)
         em->modelPath = "assets/goblin/environment/floor_tiles/FloorTiles_LP.obj";
         em->texturePath = NULL;
         em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
         em->texture = (Texture2D){0};
+        em->normalTexture = tileNormal;
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = tileDiffuse;
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -859,6 +895,7 @@ int main(void)
         em->texturePath = NULL;
         em->model = platformModel;  // reuse — do NOT unload separately
         em->texture = (Texture2D){0};
+        em->normalTexture = groundNormal;
         em->loaded = true;
         envModelCount++;
     }
@@ -1101,6 +1138,22 @@ int main(void)
         GamePhase prevPhase = phase;
         UpdateShake(&shake, dt);
         if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
+        if (IsKeyPressed(KEY_F6)) cgDebugOverlay = !cgDebugOverlay;
+        if (cgDebugOverlay) {
+            float step = 0.01f;
+            if (IsKeyDown(KEY_ONE))   cgExposure    += step;
+            if (IsKeyDown(KEY_TWO))   cgExposure    -= step;
+            if (IsKeyDown(KEY_THREE)) cgContrast    += step;
+            if (IsKeyDown(KEY_FOUR))  cgContrast    -= step;
+            if (IsKeyDown(KEY_FIVE))  cgSaturation  += step;
+            if (IsKeyDown(KEY_SIX))   cgSaturation  -= step;
+            if (IsKeyDown(KEY_SEVEN)) cgTemperature += step;
+            if (IsKeyDown(KEY_EIGHT)) cgTemperature -= step;
+            if (IsKeyDown(KEY_NINE))  cgVignetteStr += step;
+            if (IsKeyDown(KEY_ZERO))  cgVignetteStr -= step;
+            if (IsKeyDown(KEY_MINUS)) cgVignetteSoft += step;
+            if (IsKeyDown(KEY_EQUAL)) cgVignetteSoft -= step;
+        }
         if (IsKeyPressed(KEY_F10)) {
             shadowDebugMode = (shadowDebugMode + 1) % 5;
             SetShaderValue(lightShader, shadowDebugLoc, &shadowDebugMode, SHADER_UNIFORM_INT);
@@ -3774,6 +3827,9 @@ int main(void)
                 fxaaRTWidth = curW;
                 fxaaRTHeight = curH;
                 fxaaRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
+
+                UnloadRenderTexture(colorGradeRT);
+                colorGradeRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
             }
         }
 
@@ -3893,7 +3949,11 @@ int main(void)
         BeginTextureMode(sceneRT);
         ClearBackground((Color){ 45, 40, 35, 255 });
         BeginMode3D(camera);
-            // Draw tiled floor
+            // Draw tiled floor (bind normal map for tiles)
+            rlActiveTextureSlot(3);
+            rlEnableTexture(tileNormal.id);
+            SetShaderValue(lightShader, normalMapLoc, (int[]){3}, SHADER_UNIFORM_INT);
+            SetShaderValue(lightShader, useNormalMapLoc, (int[]){1}, SHADER_UNIFORM_INT);
             {
                 float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
                 for (int r = 0; r < TILE_GRID_SIZE; r++) {
@@ -3948,6 +4008,7 @@ int main(void)
                     }
                 }
             }
+            SetShaderValue(lightShader, useNormalMapLoc, (int[]){0}, SHADER_UNIFORM_INT);
 
             // Draw env pieces (main render pass — includes ground, stairs, circle)
             for (int ep = 0; ep < envPieceCount; ep++) {
@@ -4306,11 +4367,33 @@ int main(void)
         // End fxaaRT here so 3D scene gets FXAA but HUD text does not.
         // (FXAA smears text glyphs, making them blurry/jagged)
         EndTextureMode();
+
+        // FXAA pass → colorGradeRT
+        BeginTextureMode(colorGradeRT);
+        ClearBackground(BLACK);
         {
             float fxaaRes[2] = { (float)fxaaRTWidth, (float)fxaaRTHeight };
             SetShaderValue(fxaaShader, fxaaResLoc, fxaaRes, SHADER_UNIFORM_VEC2);
             BeginShaderMode(fxaaShader);
             DrawTextureRec(fxaaRT.texture,
+                (Rectangle){ 0, 0, (float)fxaaRTWidth, -(float)fxaaRTHeight },
+                (Vector2){ 0, 0 }, WHITE);
+            EndShaderMode();
+        }
+        EndTextureMode();
+
+        // Color grading pass → screen
+        {
+            SetShaderValue(colorGradeShader, cgExposureLoc,   &cgExposure,    SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgContrastLoc,   &cgContrast,    SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgSaturationLoc, &cgSaturation,  SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgTemperatureLoc,&cgTemperature, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgVigStrLoc,     &cgVignetteStr, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgVigSoftLoc,    &cgVignetteSoft,SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgLiftLoc,        cgLift,        SHADER_UNIFORM_VEC3);
+            SetShaderValue(colorGradeShader, cgGainLoc,        cgGain,        SHADER_UNIFORM_VEC3);
+            BeginShaderMode(colorGradeShader);
+            DrawTextureRec(colorGradeRT.texture,
                 (Rectangle){ 0, 0, (float)fxaaRTWidth, -(float)fxaaRTHeight },
                 (Vector2){ 0, 0 }, WHITE);
             EndShaderMode();
@@ -4772,11 +4855,13 @@ int main(void)
                     rtColor.g = (unsigned char)(200 + pulse * 55);
                 }
                 int rtw = GameMeasureText(roundResultText, rtFontSize);
-                GameDrawText(roundResultText, sw/2 - rtw/2, sh/2 - 40, rtFontSize, rtColor);
+                int rtY = sh/2 - rtFontSize - S(5);
+                GameDrawText(roundResultText, sw/2 - rtw/2, rtY, rtFontSize, rtColor);
 
                 const char *scoreText = TextFormat("Score: %d - %d", blueWins, redWins);
-                int stw = GameMeasureText(scoreText, S(22));
-                GameDrawText(scoreText, sw/2 - stw/2, sh/2 - 10, S(22), WHITE);
+                int stFontSize = S(22);
+                int stw = GameMeasureText(scoreText, stFontSize);
+                GameDrawText(scoreText, sw/2 - stw/2, rtY + rtFontSize + S(8), stFontSize, WHITE);
             }
 
             // Battle Log panel (during combat, round over, and next prep)
@@ -4792,11 +4877,11 @@ int main(void)
                 // Title
                 const char *blogTitle = "BATTLE LOG";
                 int btw = GameMeasureText(blogTitle, S(14));
-                GameDrawText(blogTitle, blogX + blogW/2 - btw/2, blogY + 4, S(14), (Color){200, 200, 220, 255});
+                GameDrawText(blogTitle, blogX + blogW/2 - btw/2, blogY + S(4), S(14), (Color){200, 200, 220, 255});
                 // Entry area
-                int entryY = blogY + 20;
-                int entryH = blogH - 24;
-                int lineH = S(16);
+                int entryY = blogY + S(20);
+                int entryH = blogH - S(24);
+                int lineH = S(18);
                 int maxVisible = entryH / lineH;
                 // Mouse wheel scroll when not in active combat
                 if (phase != PHASE_COMBAT) {
@@ -4822,13 +4907,13 @@ int main(void)
                     int drawY = entryY + (ei - startIdx) * lineH;
                     // Timestamp
                     const char *ts = TextFormat("%d:%02d", (int)e->timestamp / 60, (int)e->timestamp % 60);
-                    GameDrawText(ts, blogX + 4, drawY, S(12), (Color){140, 140, 140, 200});
+                    GameDrawText(ts, blogX + S(4), drawY, S(12), (Color){140, 140, 140, 200});
                     // Icon
                     const char *icon = (e->type == BLOG_KILL) ? "X" : "*";
                     Color iconColor = (e->type == BLOG_KILL) ? (Color){255, 80, 80, 255} : (Color){80, 200, 255, 255};
-                    GameDrawText(icon, blogX + 32, drawY, S(12), iconColor);
+                    GameDrawText(icon, blogX + S(34), drawY, S(12), iconColor);
                     // Text (truncated to fit)
-                    GameDrawText(e->text, blogX + 42, drawY, S(12), e->color);
+                    GameDrawText(e->text, blogX + S(44), drawY, S(12), e->color);
                 }
                 EndScissorMode();
             }
@@ -5157,8 +5242,9 @@ int main(void)
             // --- Inventory (left of unit cards) ---
             {
                 int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
-                int invStartY = cardsY + 15;
-                GameDrawText("INV", invStartX, invStartY - S(16), S(14), (Color){160,160,180,255});
+                int invLabelY = cardsY + S(2);
+                GameDrawText("INV", invStartX, invLabelY, S(14), (Color){160,160,180,255});
+                int invStartY = invLabelY + S(16);
                 for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
                     int icol = inv % HUD_INVENTORY_COLS;
                     int irow = inv / HUD_INVENTORY_COLS;
@@ -5247,12 +5333,14 @@ int main(void)
                 }
 
                 // Draw synergy panel rows (right of the cards)
-                int synPanelX = cardsStartX + totalCardsW + 12;
-                int synPanelY = cardsY + 2;
-                int synRowH = S(22);
+                int synPanelX = cardsStartX + totalCardsW + S(12);
+                int synPanelY = cardsY + S(2);
+                int synRowH = S(20);
+                int maxSynRows = hudCardH / synRowH;
                 int activeSynCount = 0;
                 for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
                     if (synTier[s] < 0) continue;
+                    if (activeSynCount >= maxSynRows) break;
                     const SynergyDef *syn = &SYNERGY_DEFS[s];
                     int rowY = synPanelY + activeSynCount * synRowH;
 
@@ -5262,46 +5350,49 @@ int main(void)
                     if (synHovered) hoverSynergyIdx = s;
 
                     // Colored dot
-                    DrawCircle(synPanelX + 5, rowY + synRowH / 2, S(5), syn->color);
+                    DrawCircle(synPanelX + S(5), rowY + synRowH / 2, S(4), syn->color);
                     // Synergy name
-                    GameDrawText(syn->name, synPanelX + 14, rowY + 2, S(12), WHITE);
+                    GameDrawText(syn->name, synPanelX + S(14), rowY + S(2), S(11), WHITE);
                     // Tier pips
-                    int pipX = synPanelX + 14 + GameMeasureText(syn->name, S(12)) + 6;
+                    int pipX = synPanelX + S(14) + GameMeasureText(syn->name, S(11)) + S(6);
                     for (int t = 0; t < syn->tierCount; t++) {
                         Color pipColor = (t <= synTier[s])
                             ? syn->color
                             : (Color){ 60, 60, 80, 255 };
-                        DrawCircle(pipX + t * 10, rowY + synRowH / 2, 3, pipColor);
+                        DrawCircle(pipX + t * S(10), rowY + synRowH / 2, S(3), pipColor);
                     }
                     // Buff text
                     if (syn->buffDesc[synTier[s]]) {
-                        int buffX = pipX + syn->tierCount * 10 + 6;
-                        GameDrawText(syn->buffDesc[synTier[s]], buffX, rowY + 4, S(12),
+                        int buffX = pipX + syn->tierCount * S(10) + S(6);
+                        GameDrawText(syn->buffDesc[synTier[s]], buffX, rowY + S(3), S(11),
                                  (Color){ 160, 160, 180, 200 });
                     }
                     activeSynCount++;
                 }
 
-                // Per-card synergy badges (below each unit card)
+                // Per-card synergy badges (inside card, at bottom)
+                int badgeFsz = S(9);
+                int badgeH = badgeFsz + S(4);
                 for (int sl = 0; sl < blueHudCount; sl++) {
                     int cardX = cardsStartX + sl * (hudCardW + hudCardSpacing);
-                    int badgeY = cardsY + hudCardH + 2;
-                    int badgeX = cardX + 2;
+                    int badgeY = cardsY + hudCardH - badgeH - S(2);
+                    int badgeX = cardX + S(2);
                     for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
                         if (!unitSyn[sl][s]) continue;
                         const SynergyDef *syn = &SYNERGY_DEFS[s];
-                        int abbrW = GameMeasureText(syn->abbrev, 9) + 6;
+                        int abbrW = GameMeasureText(syn->abbrev, badgeFsz) + S(6);
+                        if (badgeX + abbrW > cardX + hudCardW - S(2)) break;
                         // Pill background
-                        DrawRectangle(badgeX, badgeY, abbrW, 14,
+                        DrawRectangle(badgeX, badgeY, abbrW, badgeH,
                                       (Color){ syn->color.r, syn->color.g, syn->color.b, 180 });
-                        DrawRectangleLines(badgeX, badgeY, abbrW, 14,
+                        DrawRectangleLines(badgeX, badgeY, abbrW, badgeH,
                                            (Color){ syn->color.r, syn->color.g, syn->color.b, 255 });
-                        GameDrawText(syn->abbrev, badgeX + 3, badgeY + 2, 9, WHITE);
+                        GameDrawText(syn->abbrev, badgeX + S(3), badgeY + S(2), badgeFsz, WHITE);
                         // Badge hover detection
-                        Rectangle badgeRect = { (float)badgeX, (float)badgeY, (float)abbrW, 14.0f };
+                        Rectangle badgeRect = { (float)badgeX, (float)badgeY, (float)abbrW, (float)badgeH };
                         if (CheckCollisionPointRec(GetMousePosition(), badgeRect))
                             hoverSynergyIdx = s;
-                        badgeX += abbrW + 3;
+                        badgeX += abbrW + S(3);
                     }
                 }
             }
@@ -6241,7 +6332,11 @@ int main(void)
                 if (textT > 1.0f) textT = 1.0f;
                 textSlide = 1.0f - (1.0f - textT) * (1.0f - textT);
             }
-            const char *introName = unitTypes[intro.typeIndex].name;
+            // Determine display name: custom name if set, class name as fallback
+            const char *className = unitTypes[intro.typeIndex].name;
+            bool hasCustomName = (intro.unitIndex >= 0 && intro.unitIndex < unitCount &&
+                                  units[intro.unitIndex].nfcName[0] != '\0');
+            const char *introName = hasCustomName ? units[intro.unitIndex].nfcName : className;
             int nameFontSize = ish / 8;
             int nameW = GameMeasureText(introName, nameFontSize);
             float nameFinalX = isw * 0.08f;
@@ -6257,10 +6352,12 @@ int main(void)
             nameColor.a = alpha;
             GameDrawText(introName, (int)nameX, (int)nameY, nameFontSize, nameColor);
 
-            // Subtitle
+            // Subtitle: class name if custom named, otherwise "joins the battle!"
             int subSize = nameFontSize / 3;
             if (subSize < 12) subSize = 12;
-            const char *subText = "joins the battle!";
+            const char *subText = hasCustomName
+                ? TextFormat("%s joins the battle!", className)
+                : "joins the battle!";
             GameDrawText(subText, (int)nameX + 4, (int)nameY + nameFontSize + 4, subSize,
                 (Color){ 200, 200, 220, (unsigned char)(alpha * 0.8f) });
 
@@ -6341,13 +6438,18 @@ int main(void)
                 namingBuf[--namingPos] = '\0';
             }
             if (IsKeyPressed(KEY_ENTER) && namingPos > 0) {
-                // Save name to server and unit
-                strncpy(units[namingUnitIndex].nfcName, namingBuf, sizeof(units[namingUnitIndex].nfcName) - 1);
-                if (units[namingUnitIndex].nfcUidLen > 0) {
-                    net_nfc_set_name(serverHost, NET_PORT,
-                        units[namingUnitIndex].nfcUid, units[namingUnitIndex].nfcUidLen, namingBuf);
+                // Save name to unit (explicit copy + null terminate)
+                int ni = namingUnitIndex;
+                if (ni >= 0 && ni < unitCount) {
+                    memcpy(units[ni].nfcName, namingBuf, namingPos);
+                    units[ni].nfcName[namingPos] = '\0';
+                    printf("[NFC] Named unit %d: \"%s\" (nfcName set to \"%s\")\n", ni, namingBuf, units[ni].nfcName);
+                    // Persist to server
+                    if (units[ni].nfcUidLen > 0) {
+                        net_nfc_set_name(serverHost, NET_PORT,
+                            units[ni].nfcUid, units[ni].nfcUidLen, namingBuf);
+                    }
                 }
-                printf("[NFC] Named unit %d: \"%s\"\n", namingUnitIndex, namingBuf);
                 namingUnitIndex = -1;
             }
             // Draw overlay
@@ -6389,6 +6491,23 @@ int main(void)
             GameDrawText(msg, x, y, fontSize, Fade(GOLD, alpha));
         }
 
+        // Color grading debug overlay
+        if (cgDebugOverlay) {
+            int oy = 30;
+            DrawRectangle(5, oy - 2, 320, 200, Fade(BLACK, 0.7f));
+            DrawText(TextFormat("Color Grade [F6]  1/2:exp 3/4:con 5/6:sat 7/8:temp 9/0:vig"), 10, oy, 10, GREEN);
+            oy += 16;
+            DrawText(TextFormat("exposure:    %.3f", cgExposure),    10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("contrast:    %.3f", cgContrast),    10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("saturation:  %.3f", cgSaturation),  10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("temperature: %.3f", cgTemperature), 10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("vignetteStr: %.3f", cgVignetteStr), 10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("vignetteSft: %.3f", cgVignetteSoft),10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("lift: %.2f %.2f %.2f", cgLift[0], cgLift[1], cgLift[2]), 10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("gain: %.2f %.2f %.2f", cgGain[0], cgGain[1], cgGain[2]), 10, oy, 10, WHITE); oy += 14;
+            DrawText("-/=: vignetteSoftness", 10, oy, 10, GRAY);
+        }
+
         DrawFPS(10, 10);
         EndDrawing();
     }
@@ -6402,11 +6521,13 @@ int main(void)
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     UnloadRenderTexture(introModelRT);
     UnloadRenderTexture(fxaaRT);
+    UnloadRenderTexture(colorGradeRT);
     rlUnloadFramebuffer(sceneRT.id);
     rlUnloadTexture(sceneRT.texture.id);
     rlUnloadTexture(sceneRT.depth.id);
     UnloadShader(ssaoShader);
     UnloadShader(fxaaShader);
+    UnloadShader(colorGradeShader);
     rlUnloadFramebuffer(shadowRT.id);
     rlUnloadTexture(shadowRT.texture.id);
     rlUnloadTexture(shadowRT.depth.id);
@@ -6431,23 +6552,27 @@ int main(void)
     for (int i = 0; i < TILE_VARIANTS; i++) UnloadModel(tileModels[i]);
     UnloadTexture(tileDiffuse);
     UnloadTexture(tileORM);
+    UnloadTexture(tileNormal);
     UnloadModel(doorModel);
     UnloadModel(trophyModel);
     UnloadModel(platformModel);
     UnloadTexture(groundDiffuse);
     UnloadTexture(groundORM);
+    UnloadTexture(groundNormal);
     UnloadModel(stairsModel);
     UnloadTexture(stairsDiffuse);
     UnloadTexture(stairsORM);
+    UnloadTexture(stairsNormal);
     UnloadModel(circleModel);
     UnloadTexture(circleDiffuse);
     UnloadTexture(circleORM);
+    UnloadTexture(circleNormal);
     // Unload env models (skip 2=stairs, 3=circle, 5=ground which alias stairsModel/circleModel/platformModel)
     // Skip textures for 7=PillarSmall which shares textures with 6=PillarBig
     for (int i = 0; i < envModelCount; i++) {
         if (i == 2 || i == 3 || i == 5) continue;  // reused models, already unloaded above
         if (envModels[i].loaded) UnloadModel(envModels[i].model);
-        if (i == 7) continue;  // PillarSmall shares textures with PillarBig
+        if (i == 4 || i == 7) continue;  // shared textures (FloorTiles=tiles, PillarSmall=PillarBig)
         if (envModels[i].texture.id > 0) UnloadTexture(envModels[i].texture);
         if (envModels[i].ormTexture.id > 0) UnloadTexture(envModels[i].ormTexture);
         if (envModels[i].normalTexture.id > 0) UnloadTexture(envModels[i].normalTexture);
