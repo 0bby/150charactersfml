@@ -624,6 +624,7 @@ int main(void)
     int hoverAbilityLevel = 0;
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
+    bool usedShopHotkey = false;  // hides hotkey hint after first use
 
     // Synergy hover tooltip state
     int hoverSynergyIdx = -1;
@@ -2042,6 +2043,7 @@ int main(void)
                 int quickBuyKeys[3] = { KEY_ONE, KEY_TWO, KEY_THREE };
                 for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
                     if (IsKeyPressed(quickBuyKeys[s]) && shopSlots[s].abilityId >= 0) {
+                        usedShopHotkey = true;
                         if (isMultiplayer) {
                             net_client_send_buy(&netClient, s);
                             // Also process locally so ability appears immediately
@@ -5653,6 +5655,22 @@ int main(void)
                 const char *goldText = TextFormat("Gold: %d", playerGold);
                 int gw = GameMeasureText(goldText, S(20));
                 GameDrawText(goldText, hudSw - gw - 20, shopY + 16, S(20), (Color){ 240, 200, 60, 255 });
+
+                // Hotkey hint (first round only, until player uses a hotkey)
+                if (currentRound == 0 && !usedShopHotkey) {
+                    const char *hint = "Press [1] [2] [3] to quick-buy!";
+                    int hintSz = S(14);
+                    int hintW = GameMeasureText(hint, hintSz);
+                    int hintX = (hudSw - hintW) / 2;
+                    int hintY = shopY - hintSz - S(8);
+                    // Pulsing glow
+                    float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 3.0f);
+                    unsigned char hintAlpha = (unsigned char)(160 + (int)(pulse * 95));
+                    DrawRectangle(hintX - 8, hintY - 4, hintW + 16, hintSz + 8, (Color){20, 20, 35, (unsigned char)(hintAlpha * 0.7f)});
+                    DrawRectangleLinesEx((Rectangle){(float)(hintX - 8), (float)(hintY - 4),
+                        (float)(hintW + 16), (float)(hintSz + 8)}, 1, (Color){255, 220, 100, hintAlpha});
+                    GameDrawText(hint, hintX, hintY, hintSz, (Color){255, 230, 120, hintAlpha});
+                }
             }
         }
 
