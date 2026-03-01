@@ -81,8 +81,8 @@ BoundingBox GetUnitBounds(Unit *unit, UnitType *type)
 
 Color GetTeamTint(Team team)
 {
-    if (team == TEAM_BLUE) return (Color){ 150, 180, 255, 255 };
-    else                   return (Color){ 255, 150, 150, 255 };
+    if (team == TEAM_BLUE) return (Color){ 100, 140, 255, 255 };
+    else                   return (Color){ 255, 110, 110, 255 };
 }
 
 // Distance on the XZ plane
