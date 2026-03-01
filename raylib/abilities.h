@@ -56,6 +56,7 @@ typedef enum {
     PROJ_CHAIN_FROST,
     PROJ_HOOK,
     PROJ_MAELSTROM,
+    PROJ_DEVIL_BOLT,
 } ProjectileType;
 
 // Named value indices into AbilityDef.values[level][]

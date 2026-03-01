@@ -17,6 +17,8 @@
 #define MAX_UNITS 64
 #define TOTAL_ROUNDS 5
 #define ATTACK_RANGE 12.0f      // how close a unit needs to be to attack
+#define DEVIL_RANGED_RANGE 45.0f // devils stop and shoot from this distance
+#define DEVIL_TYPE_INDEX 2       // unit type index for the Devil
 #define UNIT_COLLISION_RADIUS 3.0f  // circle-circle push radius for unit separation
 #define BLUE_TEAM_MAX_SIZE 4   // player team cap (change this to rebalance)
 #define ARENA_BOUNDARY_Z   5.0f // blue units can't be placed below this Z (into red territory)

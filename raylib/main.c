@@ -2868,6 +2868,51 @@ int main(void)
                             projectiles[p].active = false;
                         }
                     }
+                    // HIT — Devil Bolt: flat damage ranged auto-attack
+                    else if (projectiles[p].type == PROJ_DEVIL_BOLT) {
+                        int si = projectiles[p].sourceIndex;
+                        if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
+                            float hitDmg = projectiles[p].damage;
+                            float armor = GetModifierValue(modifiers, ti, MOD_ARMOR);
+                            hitDmg -= armor;
+                            if (hitDmg < 0) hitDmg = 0;
+                            if (units[ti].shieldHP > 0) {
+                                if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
+                                else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
+                            }
+                            units[ti].currentHealth -= hitDmg;
+                            PlaySound(sfxProjectileHit);
+                            units[ti].hitFlash = HIT_FLASH_DURATION;
+                            SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, false);
+                            // Lifesteal from devil bolt
+                            if (si >= 0 && si < unitCount && units[si].active) {
+                                float ls = GetModifierValue(modifiers, si, MOD_LIFESTEAL);
+                                if (ls > 0) {
+                                    float maxHP = UNIT_STATS[units[si].typeIndex].health * units[si].hpMultiplier;
+                                    units[si].currentHealth += hitDmg * ls;
+                                    if (units[si].currentHealth > maxHP) units[si].currentHealth = maxHP;
+                                }
+                            }
+                            if (units[ti].currentHealth <= 0) {
+                                PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
+                                TriggerShake(&shake, 4.0f, 0.2f);
+                                { Team killerTeam = (units[ti].team == TEAM_BLUE) ? TEAM_RED : TEAM_BLUE;
+                                if (killerTeam != lastKillTeam) multiKillCount = 0;
+                                lastKillTeam = killerTeam; }
+                                killCount++; multiKillCount++; multiKillTimer = 2.0f;
+                                if (killCount == 1) { snprintf(killFeedText, sizeof(killFeedText), "FIRST BLOOD!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount == 2) { snprintf(killFeedText, sizeof(killFeedText), "DOUBLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount == 3) { snprintf(killFeedText, sizeof(killFeedText), "TRIPLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
+                                int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
+                                if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                                BattleLogAddKill(&battleLog, combatElapsedTime, units[si].team, units[si].typeIndex, units[ti].team, units[ti].typeIndex, -1);
+                                units[ti].active = false;
+                            }
+                        }
+                        projectiles[p].active = false;
+                    }
                     // HIT — normal (Magic Missile / Chain Frost)
                     else {
                     if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
@@ -3182,8 +3227,11 @@ int main(void)
                 float speedMult = GetModifierValue(modifiers, i, MOD_SPEED_MULT);
                 if (speedMult > 0) moveSpeed *= speedMult;
 
+                bool isDevil = (units[i].typeIndex == DEVIL_TYPE_INDEX);
+                float unitAttackRange = isDevil ? DEVIL_RANGED_RANGE : ATTACK_RANGE;
+
                 float dist = DistXZ(units[i].position, units[target].position);
-                if (dist > ATTACK_RANGE)
+                if (dist > unitAttackRange)
                 {
                     Vector3 oldPos = units[i].position;
                     float dx = units[target].position.x - units[i].position.x;
@@ -3218,6 +3266,17 @@ int main(void)
                     units[i].attackCooldown -= dt;
                     if (units[i].attackCooldown <= 0.0f)
                     {
+                        if (isDevil) {
+                            // Devil ranged attack — spawn a bolt projectile
+                            float dmg = stats->attackDamage * units[i].dmgMultiplier;
+                            SpawnProjectile(projectiles, PROJ_DEVIL_BOLT,
+                                units[i].position, target, i, units[i].team, 0,
+                                50.0f, dmg, 0,
+                                (Color){200, 50, 50, 255});
+                            PlaySound(sfxProjectileWhoosh);
+                            units[i].attackCooldown = stats->attackSpeed;
+                            units[i].castPause = CAST_PAUSE_TIME;
+                        } else {
                         if (!UnitHasModifier(modifiers, target, MOD_INVULNERABLE)) {
                             float dmg = stats->attackDamage * units[i].dmgMultiplier;
                             float armor = GetModifierValue(modifiers, target, MOD_ARMOR);
@@ -3308,6 +3367,7 @@ int main(void)
                         }
                         units[i].attackCooldown = stats->attackSpeed;
                         units[i].attackAnimTimer = 0.4f;
+                        } // end else (non-devil melee)
                     }
                 }
             }
@@ -3762,8 +3822,9 @@ int main(void)
                 units[i].attackAnimTimer -= dt;
                 desired = ANIM_ATTACK;
             } else if (phase == PHASE_COMBAT && units[i].targetIndex >= 0) {
+                float animRange = (units[i].typeIndex == DEVIL_TYPE_INDEX) ? DEVIL_RANGED_RANGE : ATTACK_RANGE;
                 float dist = DistXZ(units[i].position, units[units[i].targetIndex].position);
-                if (dist > ATTACK_RANGE) desired = ANIM_WALK;
+                if (dist > animRange) desired = ANIM_WALK;
             } else if (phase == PHASE_PLAZA) {
                 desired = units[i].currentAnim;  // set by plaza roam/flee logic
             }

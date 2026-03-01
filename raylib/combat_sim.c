@@ -129,6 +129,32 @@ int CombatTick(Unit units[], int unitCount,
                     projectiles[p].active = false;
                 }
             }
+            // HIT — Devil Bolt: flat damage ranged auto-attack
+            else if (projectiles[p].type == PROJ_DEVIL_BOLT) {
+                int si = projectiles[p].sourceIndex;
+                if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
+                    float hitDmg = projectiles[p].damage;
+                    float armor = GetModifierValue(modifiers, ti, MOD_ARMOR);
+                    hitDmg -= armor;
+                    if (hitDmg < 0) hitDmg = 0;
+                    if (units[ti].shieldHP > 0) {
+                        if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
+                        else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
+                    }
+                    units[ti].currentHealth -= hitDmg;
+                    // Lifesteal from devil bolt
+                    if (si >= 0 && si < unitCount && units[si].active) {
+                        float ls = GetModifierValue(modifiers, si, MOD_LIFESTEAL);
+                        if (ls > 0) {
+                            float maxHP = UNIT_STATS[units[si].typeIndex].health * units[si].hpMultiplier;
+                            units[si].currentHealth += hitDmg * ls;
+                            if (units[si].currentHealth > maxHP) units[si].currentHealth = maxHP;
+                        }
+                    }
+                    if (units[ti].currentHealth <= 0) units[ti].active = false;
+                }
+                projectiles[p].active = false;
+            }
             // HIT — normal (Magic Missile / Chain Frost)
             else {
             if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
@@ -554,8 +580,11 @@ int CombatTick(Unit units[], int unitCount,
         float speedMult = GetModifierValue(modifiers, i, MOD_SPEED_MULT);
         if (speedMult > 0) moveSpeed *= speedMult;
 
+        bool isDevil = (units[i].typeIndex == DEVIL_TYPE_INDEX);
+        float attackRange = isDevil ? DEVIL_RANGED_RANGE : ATTACK_RANGE;
+
         float dist = DistXZ(units[i].position, units[target].position);
-        if (dist > ATTACK_RANGE)
+        if (dist > attackRange)
         {
             Vector3 oldPos = units[i].position;
             float dx = units[target].position.x - units[i].position.x;
@@ -592,6 +621,15 @@ int CombatTick(Unit units[], int unitCount,
             units[i].attackCooldown -= dt;
             if (units[i].attackCooldown <= 0.0f)
             {
+                if (isDevil) {
+                    // Devil ranged attack — spawn a bolt projectile
+                    float dmg = stats->attackDamage * units[i].dmgMultiplier;
+                    SpawnProjectile(projectiles, PROJ_DEVIL_BOLT,
+                        units[i].position, target, i, units[i].team, 0,
+                        50.0f, dmg, 0,
+                        (Color){200, 50, 50, 255});
+                    units[i].attackCooldown = stats->attackSpeed;
+                } else {
                 if (!UnitHasModifier(modifiers, target, MOD_INVULNERABLE)) {
                     float dmg = stats->attackDamage * units[i].dmgMultiplier;
                     float armor = GetModifierValue(modifiers, target, MOD_ARMOR);
@@ -651,6 +689,7 @@ int CombatTick(Unit units[], int unitCount,
                     if (units[target].currentHealth <= 0) units[target].active = false;
                 }
                 units[i].attackCooldown = stats->attackSpeed;
+                } // end else (non-devil melee)
             }
         }
     }
