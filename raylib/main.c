@@ -449,9 +449,11 @@ int main(void)
     };
     Texture2D tileDiffuse = LoadTexture("assets/goblin/environment/tiles/T_Tiles_BC.png");
     Texture2D tileORM = LoadTexture("assets/goblin/environment/tiles/T_Tiles_ORM.png");
+    Texture2D tileNormal = LoadTexture("assets/goblin/environment/tiles/T_Tiles_N.png");
 
     for (int i = 0; i < TILE_VARIANTS; i++) {
         tileModels[i] = LoadModel(tilePaths[i]);
+        for (int mi = 0; mi < tileModels[i].meshCount; mi++) GenMeshTangents(&tileModels[i].meshes[mi]);
         // Compute OBJ-space center from bounding box
         BoundingBox bb = GetMeshBoundingBox(tileModels[i].meshes[0]);
         tileCenters[i] = (Vector3){
@@ -665,7 +667,9 @@ int main(void)
     // --- Environment models: ground (replaces old platform), stairs, circle ---
     Texture2D groundDiffuse = LoadTexture("assets/goblin/environment/ground/T_Ground_BC.png");
     Texture2D groundORM = LoadTexture("assets/goblin/environment/ground/T_Ground_ORM.png");
+    Texture2D groundNormal = LoadTexture("assets/goblin/environment/ground/T_Ground_N.png");
     Model platformModel = LoadModel("assets/goblin/environment/ground/ground.obj");
+    for (int mi = 0; mi < platformModel.meshCount; mi++) GenMeshTangents(&platformModel.meshes[mi]);
     for (int m = 0; m < platformModel.materialCount; m++) {
         platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = groundDiffuse;
         platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -686,7 +690,9 @@ int main(void)
 
     Texture2D stairsDiffuse = LoadTexture("assets/goblin/environment/stairs/T_Stairs_BC.png");
     Texture2D stairsORM = LoadTexture("assets/goblin/environment/stairs/T_Stairs_ORM.png");
+    Texture2D stairsNormal = LoadTexture("assets/goblin/environment/stairs/T_Stairs_N.png");
     Model stairsModel = LoadModel("assets/goblin/environment/stairs/Stairs_LP.obj");
+    for (int mi = 0; mi < stairsModel.meshCount; mi++) GenMeshTangents(&stairsModel.meshes[mi]);
     for (int m = 0; m < stairsModel.materialCount; m++) {
         stairsModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = stairsDiffuse;
         stairsModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -707,7 +713,9 @@ int main(void)
 
     Texture2D circleDiffuse = LoadTexture("assets/goblin/environment/circle/T_Circle_BC.png");
     Texture2D circleORM = LoadTexture("assets/goblin/environment/circle/T_Circle_ORM.png");
+    Texture2D circleNormal = LoadTexture("assets/goblin/environment/circle/T_Circle_N.png");
     Model circleModel = LoadModel("assets/goblin/environment/circle/circle.obj");
+    for (int mi = 0; mi < circleModel.meshCount; mi++) GenMeshTangents(&circleModel.meshes[mi]);
     for (int m = 0; m < circleModel.materialCount; m++) {
         circleModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = circleDiffuse;
         circleModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -810,6 +818,7 @@ int main(void)
         em->texturePath = NULL;
         em->model = stairsModel;  // reuse — do NOT unload separately
         em->texture = (Texture2D){0};
+        em->normalTexture = stairsNormal;
         em->loaded = true;
         envModelCount++;
     }
@@ -821,6 +830,7 @@ int main(void)
         em->texturePath = NULL;
         em->model = circleModel;  // reuse — do NOT unload separately
         em->texture = (Texture2D){0};
+        em->normalTexture = circleNormal;
         em->loaded = true;
         envModelCount++;
     }
@@ -831,7 +841,9 @@ int main(void)
         em->modelPath = "assets/goblin/environment/floor_tiles/FloorTiles_LP.obj";
         em->texturePath = NULL;
         em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
         em->texture = (Texture2D){0};
+        em->normalTexture = tileNormal;
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = tileDiffuse;
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -859,6 +871,7 @@ int main(void)
         em->texturePath = NULL;
         em->model = platformModel;  // reuse — do NOT unload separately
         em->texture = (Texture2D){0};
+        em->normalTexture = groundNormal;
         em->loaded = true;
         envModelCount++;
     }
@@ -3893,7 +3906,11 @@ int main(void)
         BeginTextureMode(sceneRT);
         ClearBackground((Color){ 45, 40, 35, 255 });
         BeginMode3D(camera);
-            // Draw tiled floor
+            // Draw tiled floor (bind normal map for tiles)
+            rlActiveTextureSlot(3);
+            rlEnableTexture(tileNormal.id);
+            SetShaderValue(lightShader, normalMapLoc, (int[]){3}, SHADER_UNIFORM_INT);
+            SetShaderValue(lightShader, useNormalMapLoc, (int[]){1}, SHADER_UNIFORM_INT);
             {
                 float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
                 for (int r = 0; r < TILE_GRID_SIZE; r++) {
@@ -3948,6 +3965,7 @@ int main(void)
                     }
                 }
             }
+            SetShaderValue(lightShader, useNormalMapLoc, (int[]){0}, SHADER_UNIFORM_INT);
 
             // Draw env pieces (main render pass — includes ground, stairs, circle)
             for (int ep = 0; ep < envPieceCount; ep++) {
@@ -6431,23 +6449,27 @@ int main(void)
     for (int i = 0; i < TILE_VARIANTS; i++) UnloadModel(tileModels[i]);
     UnloadTexture(tileDiffuse);
     UnloadTexture(tileORM);
+    UnloadTexture(tileNormal);
     UnloadModel(doorModel);
     UnloadModel(trophyModel);
     UnloadModel(platformModel);
     UnloadTexture(groundDiffuse);
     UnloadTexture(groundORM);
+    UnloadTexture(groundNormal);
     UnloadModel(stairsModel);
     UnloadTexture(stairsDiffuse);
     UnloadTexture(stairsORM);
+    UnloadTexture(stairsNormal);
     UnloadModel(circleModel);
     UnloadTexture(circleDiffuse);
     UnloadTexture(circleORM);
+    UnloadTexture(circleNormal);
     // Unload env models (skip 2=stairs, 3=circle, 5=ground which alias stairsModel/circleModel/platformModel)
     // Skip textures for 7=PillarSmall which shares textures with 6=PillarBig
     for (int i = 0; i < envModelCount; i++) {
         if (i == 2 || i == 3 || i == 5) continue;  // reused models, already unloaded above
         if (envModels[i].loaded) UnloadModel(envModels[i].model);
-        if (i == 7) continue;  // PillarSmall shares textures with PillarBig
+        if (i == 4 || i == 7) continue;  // shared textures (FloorTiles=tiles, PillarSmall=PillarBig)
         if (envModels[i].texture.id > 0) UnloadTexture(envModels[i].texture);
         if (envModels[i].ormTexture.id > 0) UnloadTexture(envModels[i].ormTexture);
         if (envModels[i].normalTexture.id > 0) UnloadTexture(envModels[i].normalTexture);
