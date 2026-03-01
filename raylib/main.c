@@ -1920,6 +1920,20 @@ int main(void)
                 }
             }
 
+            // Quick-roll: R key
+            if (!(isMultiplayer && playerReady) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE && !nfcInputActive) {
+                if (IsKeyPressed(KEY_R) && playerGold >= rollCost) {
+                    PlaySound(sfxUiReroll);
+                    if (isMultiplayer) {
+                        net_client_send_roll(&netClient);
+                    } else {
+                        RollShop(shopSlots, &playerGold, rollCost);
+                    }
+                    rollCost += rollCostIncrement;
+                    TriggerShake(&shake, 2.0f, 0.15f);
+                }
+            }
+
             // Clicks (blocked during intro)
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE)
             {
@@ -5214,6 +5228,7 @@ int main(void)
                 int rollW = GameMeasureText(rollText, S(16));
                 GameDrawText(rollText, (int)(rollBtn.x + (S(90) - rollW) / 2),
                         (int)(rollBtn.y + (S(34) - S(16)) / 2), S(16), WHITE);
+                GameDrawText("[R]", (int)(rollBtn.x + 2), (int)(rollBtn.y + 2), S(10), (Color){255,255,255,160});
 
                 // Shop ability cards (3 slots, centered)
                 int shopCardW = S(130);
