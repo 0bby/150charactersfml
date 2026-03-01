@@ -115,6 +115,7 @@ int serialize_units(const Unit units[], int unitCount, NetUnit out[], int maxOut
         NetUnit *nu = &out[count];
         nu->typeIndex = (uint8_t)units[i].typeIndex;
         nu->team = (uint8_t)units[i].team;
+        nu->rarity = units[i].rarity;
         nu->posX = units[i].position.x;
         nu->posZ = units[i].position.z;
         nu->currentHealth = units[i].currentHealth;
@@ -137,6 +138,7 @@ int deserialize_units(const NetUnit in[], int inCount, Unit units[], int maxUnit
             .typeIndex = nu->typeIndex,
             .position = (Vector3){ nu->posX, 0.0f, nu->posZ },
             .team = (Team)nu->team,
+            .rarity = nu->rarity,
             .currentHealth = nu->currentHealth,
             .attackCooldown = 0.0f,
             .targetIndex = -1,

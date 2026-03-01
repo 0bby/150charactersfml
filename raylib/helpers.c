@@ -122,6 +122,10 @@ void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[], int *snapCo
             snaps[i].abilities[a] = units[i].abilities[a];
         memcpy(snaps[i].nfcUid, units[i].nfcUid, sizeof(units[i].nfcUid));
         snaps[i].nfcUidLen = units[i].nfcUidLen;
+        snaps[i].rarity = units[i].rarity;
+        snaps[i].hpMultiplier = units[i].hpMultiplier;
+        snaps[i].dmgMultiplier = units[i].dmgMultiplier;
+        snaps[i].speedMultiplier = units[i].speedMultiplier;
     }
 }
 
@@ -136,7 +140,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             .typeIndex      = snaps[i].typeIndex,
             .position       = snaps[i].position,
             .team           = snaps[i].team,
-            .currentHealth  = stats->health,
+            .currentHealth  = stats->health * snaps[i].hpMultiplier,
             .attackCooldown = 0.0f,
             .targetIndex    = -1,
             .active         = true,
@@ -146,9 +150,9 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             .currentAnim    = ANIM_IDLE,
             .animFrame      = GetRandomValue(0, 999),
             .scaleOverride  = 1.0f,
-            .hpMultiplier   = 1.0f,
-            .dmgMultiplier  = 1.0f,
-            .speedMultiplier = 1.0f,
+            .hpMultiplier   = snaps[i].hpMultiplier,
+            .dmgMultiplier  = snaps[i].dmgMultiplier,
+            .speedMultiplier = snaps[i].speedMultiplier,
             .shieldHP       = 0.0f,
             .abilityCastDelay = 0.0f,
             .chargeTarget   = -1,
@@ -157,6 +161,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             units[i].abilities[a] = snaps[i].abilities[a];
         memcpy(units[i].nfcUid, snaps[i].nfcUid, sizeof(units[i].nfcUid));
         units[i].nfcUidLen = snaps[i].nfcUidLen;
+        units[i].rarity = snaps[i].rarity;
     }
 }
 
@@ -786,6 +791,27 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
 //------------------------------------------------------------------------------------
 // Synergy System
 //------------------------------------------------------------------------------------
+void ApplyUnitRarity(Unit *unit)
+{
+    if (unit->rarity == RARITY_COMMON) return;
+    float mult = (unit->rarity == RARITY_LEGENDARY)
+               ? RARITY_MULT_LEGENDARY : RARITY_MULT_RARE;
+    float oldMax = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
+    unit->hpMultiplier *= mult;
+    unit->dmgMultiplier *= mult;
+    unit->speedMultiplier *= mult;
+    float newMax = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
+    if (oldMax > 0) unit->currentHealth *= (newMax / oldMax);
+}
+
+void ApplyRarityBuffs(Unit units[], int unitCount)
+{
+    for (int i = 0; i < unitCount; i++) {
+        if (!units[i].active) continue;
+        ApplyUnitRarity(&units[i]);
+    }
+}
+
 void ApplySynergies(Unit units[], int unitCount)
 {
     for (int team = 0; team < 2; team++) {

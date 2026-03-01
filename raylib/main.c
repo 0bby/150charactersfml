@@ -898,6 +898,8 @@ int main(void)
                                                     units[unitCount - 1].abilities[a] = nfcAbilities[a];
                                                 memcpy(units[unitCount - 1].nfcUid, nfcUid, nfcUidLen);
                                                 units[unitCount - 1].nfcUidLen = nfcUidLen;
+                                                units[unitCount - 1].rarity = nfcRarity;
+                                                ApplyUnitRarity(&units[unitCount - 1]);
                                                 printf("[NFC] Reader %d: UID %s -> Spawning %s (rarity=%d)\n",
                                                     nfcReader, nfcHex, unitTypes[nfcTypeIdx].name, nfcRarity);
                                                 intro = (UnitIntro){ .active = true, .timer = 0.0f,
@@ -1201,6 +1203,35 @@ int main(void)
                         break;
                     }
                 }
+                // Rarity debug buttons (rare + legendary mushroom)
+                {
+                    int rY = btnYStart + clickIdx * (btnHeight + btnMargin);
+                    Rectangle rr = { (float)btnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
+                    if (CheckCollisionPointRec(mouse, rr) && unitTypes[0].loaded) {
+                        if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE)) {
+                            PlaySound(sfxNewCharacter);
+                            units[unitCount-1].rarity = RARITY_RARE;
+                            ApplyUnitRarity(&units[unitCount-1]);
+                            units[unitCount-1].position.x = (float)GetRandomValue(-50, 50);
+                            units[unitCount-1].position.z = (float)GetRandomValue(10, 80);
+                            intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                .typeIndex = 0, .unitIndex = unitCount - 1, .animFrame = 0 };
+                        }
+                    }
+                    rY += btnHeight + btnMargin;
+                    Rectangle lr = { (float)btnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
+                    if (CheckCollisionPointRec(mouse, lr) && unitTypes[0].loaded) {
+                        if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE)) {
+                            PlaySound(sfxNewCharacter);
+                            units[unitCount-1].rarity = RARITY_LEGENDARY;
+                            ApplyUnitRarity(&units[unitCount-1]);
+                            units[unitCount-1].position.x = (float)GetRandomValue(-50, 50);
+                            units[unitCount-1].position.z = (float)GetRandomValue(10, 80);
+                            intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                .typeIndex = 0, .unitIndex = unitCount - 1, .animFrame = 0 };
+                        }
+                    }
+                }
             }
         }
         //------------------------------------------------------------------------------
@@ -1295,6 +1326,7 @@ int main(void)
                     netClient.combatStarted = false;
                     unitCount = deserialize_units(netClient.combatNetUnits,
                         netClient.combatNetUnitCount, units, MAX_UNITS);
+                    ApplyRarityBuffs(units, unitCount);
                     SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
                     // Sync NFC-tagged units' abilities to server before combat
                     for (int u2 = 0; u2 < unitCount; u2++) {
@@ -1599,6 +1631,33 @@ int main(void)
                                     .typeIndex = i, .unitIndex = unitCount - 1, .animFrame = 0 };
                             }
                             clickedButton = true; break;
+                        }
+                    }
+                    // Rarity debug buttons (rare + legendary mushroom)
+                    if (!clickedButton) {
+                        int rY = btnYStart + ci * (btnHeight + btnMargin);
+                        Rectangle rr = { (float)btnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
+                        if (CheckCollisionPointRec(mouse, rr) && unitTypes[0].loaded) {
+                            if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE)) {
+                                PlaySound(sfxNewCharacter);
+                                units[unitCount-1].rarity = RARITY_RARE;
+                                ApplyUnitRarity(&units[unitCount-1]);
+                                intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                    .typeIndex = 0, .unitIndex = unitCount - 1, .animFrame = 0 };
+                            }
+                            clickedButton = true;
+                        }
+                        rY += btnHeight + btnMargin;
+                        Rectangle lr = { (float)btnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
+                        if (!clickedButton && CheckCollisionPointRec(mouse, lr) && unitTypes[0].loaded) {
+                            if (SpawnUnit(units, &unitCount, 0, TEAM_BLUE)) {
+                                PlaySound(sfxNewCharacter);
+                                units[unitCount-1].rarity = RARITY_LEGENDARY;
+                                ApplyUnitRarity(&units[unitCount-1]);
+                                intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                    .typeIndex = 0, .unitIndex = unitCount - 1, .animFrame = 0 };
+                            }
+                            clickedButton = true;
                         }
                     }
                 }
@@ -3237,6 +3296,16 @@ int main(void)
                     tint.g = (unsigned char)(tint.g + (255 - tint.g) * f);
                     tint.b = (unsigned char)(tint.b + (255 - tint.b) * f);
                 }
+                if (units[i].rarity == RARITY_LEGENDARY) {
+                    float t = (float)GetTime() + (float)i * 1.7f;
+                    float shimmer = sinf(t * 4.0f);
+                    if (shimmer > 0.3f) {
+                        float f = (shimmer - 0.3f) / 0.7f * 0.5f;
+                        tint.r = (unsigned char)(tint.r + (255 - tint.r) * f);
+                        tint.g = (unsigned char)(tint.g + (255 - (int)tint.g) * f);
+                        tint.b = (unsigned char)(tint.b + (128 - (int)tint.b) * f);
+                    }
+                }
                 if (type->hasAnimations) {
                     int idx = type->animIndex[units[i].currentAnim];
                     if (idx >= 0) {
@@ -3570,6 +3639,15 @@ int main(void)
                            labelWorldPos.y + (type->baseBounds.max.y * type->scale) + 1.0f,
                            labelWorldPos.z }, camera);
 
+            if (units[i].rarity > 0) {
+                const char *stars = (units[i].rarity == RARITY_LEGENDARY) ? "* *" : "*";
+                int starsW = MeasureText(stars, 12);
+                Color starColor = (units[i].rarity == RARITY_LEGENDARY)
+                    ? (Color){ 255, 60, 60, 255 }
+                    : (Color){ 180, 100, 255, 255 };
+                DrawText(stars, (int)sp.x - starsW/2, (int)sp.y - 24, 12, starColor);
+            }
+
             const char *label = type->name;
             int tw = MeasureText(label, 14);
             DrawText(label, (int)sp.x - tw/2, (int)sp.y - 12, 14,
@@ -3729,6 +3807,29 @@ int main(void)
                     int lw = MeasureText(l, 14);
                     DrawText(l, r.x + (btnWidth-lw)/2, r.y + (btnHeight-14)/2, 14, WHITE);
                     drawIdx++;
+                }
+
+                // Rarity debug spawn buttons (below blue column)
+                {
+                    int rY = dBtnYStart + drawIdx * (btnHeight + btnMargin);
+                    Rectangle rr = { (float)dBtnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
+                    Color rc = (Color){100,160,255,255};
+                    if (CheckCollisionPointRec(GetMousePosition(), rr)) rc = (Color){130,180,255,255};
+                    DrawRectangleRec(rr, rc);
+                    DrawRectangleLinesEx(rr, 2, (Color){180,200,255,255});
+                    const char *rl = "RARE Mushroom";
+                    int rlw = MeasureText(rl, 14);
+                    DrawText(rl, rr.x + (btnWidth-rlw)/2, rr.y + (btnHeight-14)/2, 14, (Color){180,200,255,255});
+
+                    rY += btnHeight + btnMargin;
+                    Rectangle lr = { (float)dBtnXBlue, (float)rY, (float)btnWidth, (float)btnHeight };
+                    Color lc = (Color){200,170,50,255};
+                    if (CheckCollisionPointRec(GetMousePosition(), lr)) lc = (Color){230,200,80,255};
+                    DrawRectangleRec(lr, lc);
+                    DrawRectangleLinesEx(lr, 2, (Color){255,215,0,255});
+                    const char *ll = "LEGEND Mushroom";
+                    int llw = MeasureText(ll, 14);
+                    DrawText(ll, lr.x + (btnWidth-llw)/2, lr.y + (btnHeight-14)/2, 14, (Color){255,215,0,255});
                 }
 
                 DrawText("[F1] DEBUG MODE", dBtnXBlue, dBtnYStart - 20, 12, YELLOW);
@@ -4068,6 +4169,21 @@ int main(void)
                                         (float)(HUD_CARD_WIDTH + 2), (float)(HUD_CARD_HEIGHT + 2) },
                             2, (Color){ 100, 255, 100, 255 });
 
+                    // Rarity border glow
+                    if (units[ui].rarity == RARITY_LEGENDARY) {
+                        float pulse = (sinf((float)GetTime() * 2.5f + (float)slot * 1.7f) + 1.0f) * 0.5f;
+                        unsigned char alpha = (unsigned char)(120 + pulse * 80);
+                        DrawRectangleLinesEx(
+                            (Rectangle){ (float)(cardX-1), (float)(cardsY-1),
+                                        (float)(HUD_CARD_WIDTH+2), (float)(HUD_CARD_HEIGHT+2) },
+                            2, (Color){ 255, 60, 60, alpha });
+                    } else if (units[ui].rarity == RARITY_RARE) {
+                        DrawRectangleLinesEx(
+                            (Rectangle){ (float)(cardX-1), (float)(cardsY-1),
+                                        (float)(HUD_CARD_WIDTH+2), (float)(HUD_CARD_HEIGHT+2) },
+                            1, (Color){ 180, 100, 255, 160 });
+                    }
+
                     // X button (remove unit) — prep phase only
                     if (phase == PHASE_PREP) {
                         int xBtnSize = 16;
@@ -4100,6 +4216,16 @@ int main(void)
                             cardX + 4 + (HUD_PORTRAIT_SIZE - nameW) / 2,
                             cardsY + HUD_PORTRAIT_SIZE + 8,
                             12, (Color){ 200, 200, 220, 255 });
+
+                    if (units[ui].rarity > 0) {
+                        const char *stars = (units[ui].rarity == RARITY_LEGENDARY) ? "* *" : "*";
+                        int starsW = MeasureText(stars, 10);
+                        Color starColor = (units[ui].rarity == RARITY_LEGENDARY)
+                            ? (Color){ 255, 60, 60, 255 }
+                            : (Color){ 180, 100, 255, 255 };
+                        DrawText(stars, cardX + 4 + (HUD_PORTRAIT_SIZE - starsW)/2,
+                                 cardsY + HUD_PORTRAIT_SIZE + 1, 10, starColor);
+                    }
 
                     // Mini health bar
                     int hbX = cardX + 4;
