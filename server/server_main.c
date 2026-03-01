@@ -136,6 +136,26 @@ static void handle_new_client(int clientfd, struct sockaddr_in *addr)
     }
 
     // Handle NFC messages (stateless, short-lived connections)
+    if (msg.type == MSG_NFC_PREFETCH) {
+        // Send all known UIDs as hex strings: [count:2 LE][uids × (hexLen:1, hexChars:N)]
+        uint8_t resp[NET_MAX_PAYLOAD];
+        int count = nfcStore.tagCount;
+        resp[0] = (uint8_t)(count & 0xFF);
+        resp[1] = (uint8_t)((count >> 8) & 0xFF);
+        int off = 2;
+        for (int i = 0; i < count; i++) {
+            int hexLen = (int)strlen(nfcStore.tags[i].uidHex);
+            if (off + 1 + hexLen > NET_MAX_PAYLOAD) break;
+            resp[off++] = (uint8_t)hexLen;
+            memcpy(resp + off, nfcStore.tags[i].uidHex, hexLen);
+            off += hexLen;
+        }
+        net_send_msg(clientfd, MSG_NFC_PREFETCH_DATA, resp, off);
+        printf("[Server] NFC prefetch -> sent %d UIDs\n", count);
+        close(clientfd);
+        return;
+    }
+
     if (msg.type == MSG_NFC_LOOKUP) {
         if (msg.size >= 1) {
             uint8_t uidLen = msg.payload[0];

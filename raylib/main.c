@@ -667,6 +667,10 @@ int main(void)
 
     // NFC UID is now stored directly in Unit.nfcUid / Unit.nfcUidLen
 
+    // Prefetch known NFC UIDs from server (local authority for existence checks)
+    NfcUidCache nfcCache = {0};
+    net_nfc_prefetch(serverHost, NET_PORT, &nfcCache);
+
     //==================================================================================
     // MAIN LOOP
     //==================================================================================
@@ -883,6 +887,8 @@ int main(void)
                                     }
                                     if (uidAlreadySpawned) {
                                         // Tag still on scanner — ignore
+                                    } else if (!nfc_cache_contains(&nfcCache, nfcHex)) {
+                                        printf("[NFC] Reader %d: UID %s -> unknown (not in local cache)\n", nfcReader, nfcHex);
                                     } else if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
                                                        &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities) == 0) {
                                         if (nfcStatus == NFC_STATUS_OK && nfcTypeIdx < unitTypeCount) {

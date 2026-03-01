@@ -342,6 +342,60 @@ int net_leaderboard_fetch(const char *host, int port, Leaderboard *lb)
 }
 
 //------------------------------------------------------------------------------------
+// NFC UID cache — prefetch & local check
+//------------------------------------------------------------------------------------
+int net_nfc_prefetch(const char *host, int port, NfcUidCache *cache)
+{
+    memset(cache, 0, sizeof(*cache));
+
+    int sockfd = net_shortlived_connect(host, port);
+    if (sockfd < 0) {
+        printf("[NFC] Failed to connect for prefetch\n");
+        return -1;
+    }
+
+    if (net_send_msg(sockfd, MSG_NFC_PREFETCH, NULL, 0) < 0) {
+        printf("[NFC] Failed to send prefetch\n");
+        close(sockfd);
+        return -1;
+    }
+
+    NetMessage msg;
+    if (net_recv_msg(sockfd, &msg) < 0 || msg.type != MSG_NFC_PREFETCH_DATA) {
+        printf("[NFC] Failed to receive prefetch data\n");
+        close(sockfd);
+        return -1;
+    }
+    close(sockfd);
+
+    // Parse: [count:2 LE][uids × (hexLen:1, hexChars:N)]
+    if (msg.size < 2) return -1;
+    int count = msg.payload[0] | (msg.payload[1] << 8);
+    if (count > NFC_CACHE_MAX) count = NFC_CACHE_MAX;
+
+    int off = 2;
+    for (int i = 0; i < count && off < msg.size; i++) {
+        int hexLen = msg.payload[off++];
+        if (hexLen <= 0 || hexLen >= 15 || off + hexLen > msg.size) break;
+        memcpy(cache->uids[cache->count], msg.payload + off, hexLen);
+        cache->uids[cache->count][hexLen] = '\0';
+        cache->count++;
+        off += hexLen;
+    }
+
+    printf("[NFC] Prefetched %d known UIDs from server\n", cache->count);
+    return 0;
+}
+
+bool nfc_cache_contains(const NfcUidCache *cache, const char *uidHex)
+{
+    for (int i = 0; i < cache->count; i++) {
+        if (strcasecmp(cache->uids[i], uidHex) == 0) return true;
+    }
+    return false;
+}
+
+//------------------------------------------------------------------------------------
 // NFC tag lookup (short-lived blocking TCP)
 //------------------------------------------------------------------------------------
 int net_nfc_lookup(const char *host, int port, const uint8_t *uid, int uidLen,

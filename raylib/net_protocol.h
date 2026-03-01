@@ -35,6 +35,7 @@ typedef enum {
     MSG_NFC_LOOKUP          = 0x13, // payload: [uidLen:1][uid:4-7]
     MSG_NFC_ABILITY_UPDATE  = 0x14, // payload: [uidLen:1][uid:4-7][count:1][abilities × (id:1, level:1)]
     MSG_NFC_ABILITY_RESET   = 0x15, // payload: [uidLen:1][uid:4-7]
+    MSG_NFC_PREFETCH        = 0x16, // payload: none — request all known UIDs
 } ClientMsgType;
 
 //------------------------------------------------------------------------------------
@@ -53,6 +54,7 @@ typedef enum {
     MSG_GOLD_UPDATE      = 0x89,  // payload: current gold amount
     MSG_LEADERBOARD_DATA = 0x90,  // payload: entry count + serialized entries
     MSG_NFC_DATA         = 0x91,  // payload: [uidLen:1][uid:4-7][status:1][typeIndex:1][rarity:1][abilities × 4 × (id:1, level:1)]
+    MSG_NFC_PREFETCH_DATA = 0x92, // payload: [count:2][uids × (uidLen:1, uid:4-7)]
 } ServerMsgType;
 
 //------------------------------------------------------------------------------------

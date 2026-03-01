@@ -90,6 +90,19 @@ void net_client_disconnect(NetClient *nc);
 int net_leaderboard_submit(const char *host, int port, const LeaderboardEntry *entry);
 int net_leaderboard_fetch(const char *host, int port, Leaderboard *lb);
 
+// NFC UID cache — prefetched at startup, acts as local authority
+#define NFC_CACHE_MAX 256
+typedef struct {
+    int count;
+    char uids[NFC_CACHE_MAX][15]; // hex strings, uppercase (7 bytes = 14 hex chars + null)
+} NfcUidCache;
+
+// Prefetch all known NFC UIDs from server. Returns 0 on success, -1 on error.
+int net_nfc_prefetch(const char *host, int port, NfcUidCache *cache);
+
+// Check if a hex UID exists in the local cache. Returns true if known.
+bool nfc_cache_contains(const NfcUidCache *cache, const char *uidHex);
+
 // NFC tag operations (short-lived blocking TCP connections)
 // Lookup: returns 0 on success (check outStatus for NFC_STATUS_OK/NOT_FOUND), -1 on network error
 // outAbilities receives 4 ability slots from the server
