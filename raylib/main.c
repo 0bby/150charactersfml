@@ -422,6 +422,8 @@ int main(void)
     int shadowMapLoc = GetShaderLocation(lightShader, "shadowMap");
     int shadowDebugLoc = GetShaderLocation(lightShader, "shadowDebug");
     int noShadowLoc = GetShaderLocation(lightShader, "noShadow");
+    int normalMapLoc = GetShaderLocation(lightShader, "normalMap");
+    int useNormalMapLoc = GetShaderLocation(lightShader, "useNormalMap");
 
     // Assign lighting shader to all loaded models
     for (int i = 0; i < unitTypeCount; i++)
@@ -743,9 +745,12 @@ int main(void)
         em->modelPath = "assets/goblin/environment/arches/Arches.obj";
         em->texturePath = "assets/goblin/environment/arches/T_Arches_BC.png";
         em->ormTexturePath = "assets/goblin/environment/arches/T_Arches_ORM.png";
+        em->normalTexturePath = "assets/goblin/environment/arches/T_Arches_N.png";
         em->texture = LoadTexture(em->texturePath);
         em->ormTexture = LoadTexture(em->ormTexturePath);
+        em->normalTexture = LoadTexture(em->normalTexturePath);
         em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -772,9 +777,12 @@ int main(void)
         em->modelPath = "assets/goblin/environment/wall/Wall_LP.obj";
         em->texturePath = "assets/goblin/environment/wall/T_Wall_BC.png";
         em->ormTexturePath = "assets/goblin/environment/wall/T_Wall_ORM.png";
+        em->normalTexturePath = "assets/goblin/environment/wall/T_Wall_N.png";
         em->texture = LoadTexture(em->texturePath);
         em->ormTexture = LoadTexture(em->ormTexturePath);
+        em->normalTexture = LoadTexture(em->normalTexturePath);
         em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -851,6 +859,71 @@ int main(void)
         em->texturePath = NULL;
         em->model = platformModel;  // reuse — do NOT unload separately
         em->texture = (Texture2D){0};
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 6: PillarBig
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "PillarBig";
+        em->modelPath = "assets/goblin/environment/pillars/PillarBig_LP.obj";
+        em->texturePath = "assets/goblin/environment/pillars/T_Pillars_BC.png";
+        em->ormTexturePath = "assets/goblin/environment/pillars/T_Pillars_ORM.png";
+        em->normalTexturePath = "assets/goblin/environment/pillars/T_Pillars_N.png";
+        em->texture = LoadTexture(em->texturePath);
+        em->ormTexture = LoadTexture(em->ormTexturePath);
+        em->normalTexture = LoadTexture(em->normalTexturePath);
+        em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = em->ormTexture;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 15.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 7: PillarSmall (shares textures with PillarBig)
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        EnvModelDef *pillarBig = &envModels[envModelCount - 1];
+        em->name = "PillarSmall";
+        em->modelPath = "assets/goblin/environment/pillars/PillarSmall_LP.obj";
+        em->texturePath = pillarBig->texturePath;
+        em->ormTexturePath = pillarBig->ormTexturePath;
+        em->normalTexturePath = pillarBig->normalTexturePath;
+        em->texture = pillarBig->texture;         // shared — do NOT unload separately
+        em->ormTexture = pillarBig->ormTexture;   // shared
+        em->normalTexture = pillarBig->normalTexture; // shared
+        em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = em->ormTexture;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 15.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
         em->loaded = true;
         envModelCount++;
     }
@@ -975,6 +1048,11 @@ int main(void)
     }
 
     // NFC UID is now stored directly in Unit.nfcUid / Unit.nfcUidLen
+    // Naming state for first-time scans
+    int namingUnitIndex = -1;  // >= 0 = unit awaiting name input
+    char namingBuf[32] = {0};
+    int namingPos = 0;
+    char nfcNameBuf[32] = {0};  // temp buffer for lookup response
 
     // Prefetch known NFC UIDs from server (local authority for existence checks)
     NfcUidCache nfcCache = {0};
@@ -1259,8 +1337,9 @@ int main(void)
                                         easterEggTimer = 4.0f;
                                     } else if (!nfc_cache_contains(&nfcCache, nfcHex)) {
                                         printf("[NFC] Reader %d: UID %s -> unknown (not in local cache)\n", nfcReader, nfcHex);
-                                    } else if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
-                                                       &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities) == 0) {
+                                    } else if (namingUnitIndex < 0 && net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
+                                                       &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities,
+                                                       nfcNameBuf, sizeof(nfcNameBuf)) == 0) {
                                         if (nfcStatus == NFC_STATUS_OK && nfcTypeIdx < unitTypeCount) {
                                             if (SpawnUnit(units, &unitCount, nfcTypeIdx, TEAM_BLUE)) {
                                                 PlaySound(sfxNewCharacter);
@@ -1269,9 +1348,16 @@ int main(void)
                                                 memcpy(units[unitCount - 1].nfcUid, nfcUid, nfcUidLen);
                                                 units[unitCount - 1].nfcUidLen = nfcUidLen;
                                                 units[unitCount - 1].rarity = nfcRarity;
+                                                strncpy(units[unitCount - 1].nfcName, nfcNameBuf, sizeof(units[unitCount - 1].nfcName) - 1);
                                                 ApplyUnitRarity(&units[unitCount - 1]);
-                                                printf("[NFC] Reader %d: UID %s -> Spawning %s (rarity=%d)\n",
-                                                    nfcReader, nfcHex, unitTypes[nfcTypeIdx].name, nfcRarity);
+                                                printf("[NFC] Reader %d: UID %s -> Spawning %s name=\"%s\" (rarity=%d)\n",
+                                                    nfcReader, nfcHex, unitTypes[nfcTypeIdx].name, nfcNameBuf, nfcRarity);
+                                                // If unnamed, prompt for name
+                                                if (nfcNameBuf[0] == '\0') {
+                                                    namingUnitIndex = unitCount - 1;
+                                                    namingBuf[0] = '\0';
+                                                    namingPos = 0;
+                                                }
                                                 intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                                     .typeIndex = nfcTypeIdx, .unitIndex = unitCount - 1, .animFrame = 0 };
                                             } else {
@@ -3871,9 +3957,19 @@ int main(void)
                 float es = envPieces[ep].scale;
                 Color eTint = WHITE;
                 if (debugMode && ep == envSelectedPiece) eTint = (Color){150, 255, 150, 255};
+                if (emd->normalTexture.id > 0) {
+                    rlActiveTextureSlot(3);
+                    rlEnableTexture(emd->normalTexture.id);
+                    SetShaderValue(lightShader, normalMapLoc, (int[]){3}, SHADER_UNIFORM_INT);
+                    SetShaderValue(lightShader, useNormalMapLoc, (int[]){1}, SHADER_UNIFORM_INT);
+                } else {
+                    SetShaderValue(lightShader, useNormalMapLoc, (int[]){0}, SHADER_UNIFORM_INT);
+                }
                 DrawModelEx(emd->model, envPieces[ep].position, (Vector3){0,1,0},
                             envPieces[ep].rotationY, (Vector3){es,es,es}, eTint);
             }
+            // Reset normal map after env pieces so other models don't use it
+            SetShaderValue(lightShader, useNormalMapLoc, (int[]){0}, SHADER_UNIFORM_INT);
 
             // Draw units
             for (int i = 0; i < unitCount; i++)
@@ -4255,7 +4351,8 @@ int main(void)
                 GameDrawText(stars, (int)sp.x - starsW/2, (int)sp.y - S(26), S(14), starColor);
             }
 
-            const char *label = type->name;
+            const char *label = (units[i].nfcUidLen > 0 && units[i].nfcName[0])
+                ? units[i].nfcName : type->name;
             int nameFontSize = S(16);
             int tw = GameMeasureText(label, nameFontSize);
             // Drop shadow for readability
@@ -6229,6 +6326,56 @@ int main(void)
             GameDrawText("Shadow Color RT", (int)dstRec.x, (int)dstRec.y + (int)previewSize + 4, 16, YELLOW);
         }
 
+        // Naming prompt overlay
+        if (namingUnitIndex >= 0) {
+            // Handle text input
+            int key = GetCharPressed();
+            while (key > 0) {
+                if (key >= 32 && key <= 126 && namingPos < 30) {
+                    namingBuf[namingPos++] = (char)key;
+                    namingBuf[namingPos] = '\0';
+                }
+                key = GetCharPressed();
+            }
+            if (IsKeyPressed(KEY_BACKSPACE) && namingPos > 0) {
+                namingBuf[--namingPos] = '\0';
+            }
+            if (IsKeyPressed(KEY_ENTER) && namingPos > 0) {
+                // Save name to server and unit
+                strncpy(units[namingUnitIndex].nfcName, namingBuf, sizeof(units[namingUnitIndex].nfcName) - 1);
+                if (units[namingUnitIndex].nfcUidLen > 0) {
+                    net_nfc_set_name(serverHost, NET_PORT,
+                        units[namingUnitIndex].nfcUid, units[namingUnitIndex].nfcUidLen, namingBuf);
+                }
+                printf("[NFC] Named unit %d: \"%s\"\n", namingUnitIndex, namingBuf);
+                namingUnitIndex = -1;
+            }
+            // Draw overlay
+            int sw = GetScreenWidth(), sh = GetScreenHeight();
+            DrawRectangle(0, 0, sw, sh, (Color){0, 0, 0, 120});
+            int boxW = S(400), boxH = S(80);
+            int boxX = (sw - boxW) / 2, boxY = (sh - boxH) / 2;
+            DrawRectangle(boxX, boxY, boxW, boxH, (Color){30, 30, 45, 240});
+            DrawRectangleLinesEx((Rectangle){(float)boxX, (float)boxY, (float)boxW, (float)boxH}, 2, (Color){100, 200, 100, 255});
+            const char *prompt = "Name your creature:";
+            int promptW = GameMeasureText(prompt, S(18));
+            GameDrawText(prompt, (sw - promptW) / 2, boxY + S(8), S(18), WHITE);
+            // Input field
+            int fieldW = boxW - S(40), fieldH = S(28);
+            int fieldX = boxX + S(20), fieldY = boxY + S(38);
+            DrawRectangle(fieldX, fieldY, fieldW, fieldH, (Color){50, 50, 70, 255});
+            DrawRectangleLines(fieldX, fieldY, fieldW, fieldH, (Color){100, 200, 100, 255});
+            if (namingPos > 0) {
+                GameDrawText(namingBuf, fieldX + S(6), fieldY + S(4), S(18), WHITE);
+            }
+            // Blinking cursor
+            if ((int)(GetTime() * 2.0) % 2 == 0) {
+                int cursorX = fieldX + S(6) + GameMeasureText(namingBuf, S(18));
+                GameDrawText("|", cursorX, fieldY + S(4), S(18), (Color){200, 255, 200, 255});
+            }
+            GameDrawText("[Enter] Confirm", boxX + S(20), boxY + boxH + S(4), S(12), (Color){160, 160, 180, 200});
+        }
+
         // Easter egg overlay
         if (easterEggTimer > 0.0f) {
             easterEggTimer -= rawDt;
@@ -6296,11 +6443,14 @@ int main(void)
     UnloadTexture(circleDiffuse);
     UnloadTexture(circleORM);
     // Unload env models (skip 2=stairs, 3=circle, 5=ground which alias stairsModel/circleModel/platformModel)
+    // Skip textures for 7=PillarSmall which shares textures with 6=PillarBig
     for (int i = 0; i < envModelCount; i++) {
         if (i == 2 || i == 3 || i == 5) continue;  // reused models, already unloaded above
         if (envModels[i].loaded) UnloadModel(envModels[i].model);
+        if (i == 7) continue;  // PillarSmall shares textures with PillarBig
         if (envModels[i].texture.id > 0) UnloadTexture(envModels[i].texture);
         if (envModels[i].ormTexture.id > 0) UnloadTexture(envModels[i].ormTexture);
+        if (envModels[i].normalTexture.id > 0) UnloadTexture(envModels[i].normalTexture);
     }
     UnloadTexture(defaultORM);
     UnloadMusicStream(bgm);

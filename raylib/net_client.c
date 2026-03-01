@@ -400,9 +400,11 @@ bool nfc_cache_contains(const NfcUidCache *cache, const char *uidHex)
 //------------------------------------------------------------------------------------
 int net_nfc_lookup(const char *host, int port, const uint8_t *uid, int uidLen,
                    uint8_t *outStatus, uint8_t *outTypeIndex, uint8_t *outRarity,
-                   AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT])
+                   AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT],
+                   char *outName, int outNameSize)
 {
     if (uidLen < 4 || uidLen > NFC_UID_MAX_LEN) return -1;
+    if (outName && outNameSize > 0) outName[0] = '\0';
 
     int sockfd = net_shortlived_connect(host, port);
     if (sockfd < 0) {
@@ -428,13 +430,13 @@ int net_nfc_lookup(const char *host, int port, const uint8_t *uid, int uidLen,
     }
     close(sockfd);
 
-    // Parse response: [uidLen:1][uid:N][status:1][typeIndex:1][rarity:1][abilities × 4 × (id:1, level:1)]
+    // Parse response: [uidLen:1][uid:N][status:1][typeIndex:1][rarity:1][abilities × 4 × (id:1, level:1)][nameLen:1][name:nameLen]
     if (msg.size < 1 + uidLen + 3) return -1;
     *outStatus = msg.payload[1 + uidLen];
     *outTypeIndex = msg.payload[2 + uidLen];
     *outRarity = msg.payload[3 + uidLen];
 
-    // Parse abilities if present
+    // Parse abilities
     int abOff = 1 + uidLen + 3;
     for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
         if (abOff + 1 < msg.size) {
@@ -447,7 +449,42 @@ int net_nfc_lookup(const char *host, int port, const uint8_t *uid, int uidLen,
         outAbilities[a].cooldownRemaining = 0;
         outAbilities[a].triggered = false;
     }
+
+    // Parse name (optional, backwards compatible)
+    if (outName && outNameSize > 0 && abOff < msg.size) {
+        int nameLen = msg.payload[abOff++];
+        if (nameLen > outNameSize - 1) nameLen = outNameSize - 1;
+        if (nameLen > 0 && abOff + nameLen <= msg.size) {
+            memcpy(outName, msg.payload + abOff, nameLen);
+            outName[nameLen] = '\0';
+        }
+    }
     return 0;
+}
+
+//------------------------------------------------------------------------------------
+// NFC set creature name (short-lived blocking TCP)
+//------------------------------------------------------------------------------------
+int net_nfc_set_name(const char *host, int port, const uint8_t *uid, int uidLen,
+                     const char *name)
+{
+    if (uidLen < 4 || uidLen > NFC_UID_MAX_LEN) return -1;
+
+    int sockfd = net_shortlived_connect(host, port);
+    if (sockfd < 0) return -1;
+
+    int nameLen = (int)strlen(name);
+    if (nameLen > 31) nameLen = 31;
+
+    uint8_t payload[1 + NFC_UID_MAX_LEN + 1 + 32];
+    payload[0] = (uint8_t)uidLen;
+    memcpy(payload + 1, uid, uidLen);
+    payload[1 + uidLen] = (uint8_t)nameLen;
+    memcpy(payload + 2 + uidLen, name, nameLen);
+
+    int result = net_send_msg(sockfd, MSG_NFC_SET_NAME, payload, 2 + uidLen + nameLen);
+    close(sockfd);
+    return result;
 }
 
 //------------------------------------------------------------------------------------

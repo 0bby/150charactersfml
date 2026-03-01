@@ -166,8 +166,8 @@ static void handle_new_client(int clientfd, struct sockaddr_in *addr)
                     sprintf(uidHex + i * 2, "%02X", msg.payload[1 + i]);
 
                 NfcTagEntry *entry = NfcStoreLookup(&nfcStore, uidHex);
-                // Response: [uidLen:1][uid:N][status:1][typeIndex:1][rarity:1][abilities × 4 × (id:1, level:1)]
-                uint8_t resp[1 + NFC_UID_MAX_LEN + 3 + NFC_MAX_ABILITIES * 2];
+                // Response: [uidLen:1][uid:N][status:1][typeIndex:1][rarity:1][abilities × 4 × (id:1, level:1)][nameLen:1][name:nameLen]
+                uint8_t resp[1 + NFC_UID_MAX_LEN + 3 + NFC_MAX_ABILITIES * 2 + 1 + NFC_NAME_MAX];
                 resp[0] = uidLen;
                 memcpy(resp + 1, msg.payload + 1, uidLen);
                 int off = 1 + uidLen;
@@ -179,7 +179,11 @@ static void handle_new_client(int clientfd, struct sockaddr_in *addr)
                         resp[off++] = (uint8_t)(int8_t)entry->abilities[a].abilityId;
                         resp[off++] = entry->abilities[a].level;
                     }
-                    printf("[Server] NFC lookup %s -> type=%d rarity=%d\n", uidHex, entry->typeIndex, entry->rarity);
+                    // Append name
+                    int nameLen = (int)strlen(entry->name);
+                    resp[off++] = (uint8_t)nameLen;
+                    if (nameLen > 0) { memcpy(resp + off, entry->name, nameLen); off += nameLen; }
+                    printf("[Server] NFC lookup %s -> type=%d rarity=%d name=\"%s\"\n", uidHex, entry->typeIndex, entry->rarity, entry->name);
                 } else {
                     resp[off++] = NFC_STATUS_NOT_FOUND;
                     resp[off++] = 0;
@@ -188,6 +192,7 @@ static void handle_new_client(int clientfd, struct sockaddr_in *addr)
                         resp[off++] = 0xFF; // -1 as uint8_t
                         resp[off++] = 0;
                     }
+                    resp[off++] = 0; // no name
                     printf("[Server] NFC lookup %s -> not found\n", uidHex);
                 }
                 net_send_msg(clientfd, MSG_NFC_DATA, resp, off);
@@ -255,6 +260,32 @@ static void handle_new_client(int clientfd, struct sockaddr_in *addr)
                     printf("[Server] NFC ability update %s -> %d abilities\n", uidHex, abCount);
                 } else {
                     printf("[Server] NFC ability update %s -> tag not found\n", uidHex);
+                }
+            }
+        }
+        close(clientfd);
+        return;
+    }
+
+    if (msg.type == MSG_NFC_SET_NAME) {
+        if (msg.size >= 2) {
+            uint8_t uidLen = msg.payload[0];
+            if (uidLen >= 4 && uidLen <= NFC_UID_MAX_LEN && msg.size >= 1 + uidLen + 1) {
+                char uidHex[NFC_UID_HEX_MAX] = {0};
+                for (int i = 0; i < uidLen; i++)
+                    sprintf(uidHex + i * 2, "%02X", msg.payload[1 + i]);
+
+                uint8_t nameLen = msg.payload[1 + uidLen];
+                if (nameLen > NFC_NAME_MAX - 1) nameLen = NFC_NAME_MAX - 1;
+
+                NfcTagEntry *entry = NfcStoreLookup(&nfcStore, uidHex);
+                if (entry) {
+                    memcpy(entry->name, msg.payload + 2 + uidLen, nameLen);
+                    entry->name[nameLen] = '\0';
+                    NfcStoreSave(&nfcStore, NFC_TAGS_FILE);
+                    printf("[Server] NFC set name %s -> \"%s\"\n", uidHex, entry->name);
+                } else {
+                    printf("[Server] NFC set name %s -> tag not found\n", uidHex);
                 }
             }
         }

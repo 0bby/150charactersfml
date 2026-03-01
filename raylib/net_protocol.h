@@ -36,6 +36,7 @@ typedef enum {
     MSG_NFC_ABILITY_UPDATE  = 0x14, // payload: [uidLen:1][uid:4-7][count:1][abilities × (id:1, level:1)]
     MSG_NFC_ABILITY_RESET   = 0x15, // payload: [uidLen:1][uid:4-7]
     MSG_NFC_PREFETCH        = 0x16, // payload: none — request all known UIDs
+    MSG_NFC_SET_NAME        = 0x17, // payload: [uidLen:1][uid:4-7][nameLen:1][name:nameLen]
 } ClientMsgType;
 
 //------------------------------------------------------------------------------------

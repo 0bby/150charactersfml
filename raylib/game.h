@@ -204,6 +204,7 @@ typedef struct {
     unsigned char nfcUid[7];
     int nfcUidLen;         // 0 = not from NFC
     uint8_t rarity;        // 0=common, 1=rare, 2=legendary
+    char nfcName[32];      // custom creature name (empty = use class name)
 } Unit;
 
 //------------------------------------------------------------------------------------
@@ -217,6 +218,7 @@ typedef struct {
     unsigned char nfcUid[7];
     int nfcUidLen;
     uint8_t rarity;
+    char nfcName[32];
     float hpMultiplier;
     float dmgMultiplier;
     float speedMultiplier;
@@ -395,9 +397,11 @@ typedef struct {
     const char *modelPath;
     const char *texturePath;    // NULL if no separate BC texture
     const char *ormTexturePath; // NULL if no separate ORM texture
+    const char *normalTexturePath; // NULL if no normal map
     Model model;
     Texture2D texture;          // BC texture (id=0 if none)
     Texture2D ormTexture;       // ORM texture (id=0 if none)
+    Texture2D normalTexture;    // Normal map texture (id=0 if none)
     bool loaded;
 } EnvModelDef;
 
