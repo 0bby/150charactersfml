@@ -4565,6 +4565,57 @@ int main(void)
             GameDrawText(hpT, (int)sp.x - htw/2 + 1, by + bh + 2 + 1, S(12), (Color){0,0,0,180});
             GameDrawText(hpT, (int)sp.x - htw/2, by + bh + 2, S(12), WHITE);
 
+            // Enemy ability grid (prep phase only, red team)
+            if (phase == PHASE_PREP && units[i].team == TEAM_RED) {
+                int eSlotSz = S(22);
+                int eSlotGap = S(3);
+                int eGridW = 2 * eSlotSz + eSlotGap;
+                int eGridH = 2 * eSlotSz + eSlotGap;
+                int egx = (int)sp.x - eGridW / 2;
+                int egy = by + bh + S(18);
+                // Fade in as mouse approaches the grid
+                Vector2 mpos = GetMousePosition();
+                float eCenterX = egx + eGridW * 0.5f;
+                float eCenterY = egy + eGridH * 0.5f;
+                float eDx = mpos.x - eCenterX, eDy = mpos.y - eCenterY;
+                float eMouseDist = sqrtf(eDx * eDx + eDy * eDy);
+                float eFadeNear = 40.0f, eFadeFar = 160.0f;
+                float eAlphaFrac = 1.0f - (eMouseDist - eFadeNear) / (eFadeFar - eFadeNear);
+                if (eAlphaFrac < 0.25f) eAlphaFrac = 0.25f;
+                if (eAlphaFrac > 1.0f) eAlphaFrac = 1.0f;
+                unsigned char eAlpha = (unsigned char)(eAlphaFrac * 255);
+                unsigned char eAlphaLow = (unsigned char)(eAlphaFrac * 200);
+                // Background panel
+                DrawRectangle(egx - 3, egy - 3, eGridW + 6, eGridH + 6, (Color){20, 20, 30, eAlphaLow});
+                DrawRectangleLinesEx((Rectangle){(float)(egx - 3), (float)(egy - 3),
+                    (float)(eGridW + 6), (float)(eGridH + 6)}, 1, (Color){80, 60, 60, eAlphaLow});
+                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                    int col = a % 2, row = a / 2;
+                    int eax = egx + col * (eSlotSz + eSlotGap);
+                    int eay = egy + row * (eSlotSz + eSlotGap);
+                    AbilitySlot *eslot = &units[i].abilities[a];
+                    if (eslot->abilityId >= 0 && eslot->abilityId < ABILITY_COUNT) {
+                        Color slotCol = ABILITY_DEFS[eslot->abilityId].color;
+                        slotCol.a = eAlpha;
+                        DrawRectangle(eax, eay, eSlotSz, eSlotSz, slotCol);
+                        // Hover for tooltip
+                        bool eHovered = CheckCollisionPointRec(mpos,
+                            (Rectangle){(float)eax, (float)eay, (float)eSlotSz, (float)eSlotSz});
+                        if (eHovered) { hoverAbilityId = eslot->abilityId; hoverAbilityLevel = eslot->level; }
+                        const char *eabbr = ABILITY_DEFS[eslot->abilityId].abbrev;
+                        int eaw = GameMeasureText(eabbr, S(10));
+                        Color etxtCol = {255, 255, 255, eAlpha};
+                        GameDrawText(eabbr, eax + (eSlotSz - eaw) / 2,
+                                eay + (eSlotSz - S(10)) / 2, S(10), etxtCol);
+                        const char *elvl = TextFormat("L%d", eslot->level + 1);
+                        GameDrawText(elvl, eax + 2, eay + eSlotSz - S(8), S(8), etxtCol);
+                    } else {
+                        DrawRectangle(eax, eay, eSlotSz, eSlotSz, (Color){40, 40, 55, eAlphaLow});
+                    }
+                    DrawRectangleLines(eax, eay, eSlotSz, eSlotSz, (Color){80, 80, 100, eAlphaLow});
+                }
+            }
+
             // Modifier labels (deduplicated — only one per type due to AddModifier dedup)
             // Duration-colored text: active portion in modColor, expired portion in dim gray
             int modY = by + bh + 14;
@@ -5555,7 +5606,7 @@ int main(void)
                 int rollW = GameMeasureText(rollText, S(16));
                 GameDrawText(rollText, (int)(rollBtn.x + (S(90) - rollW) / 2),
                         (int)(rollBtn.y + (S(34) - S(16)) / 2), S(16), WHITE);
-                GameDrawText("[R]", (int)(rollBtn.x + 2), (int)(rollBtn.y + 2), S(10), (Color){255,255,255,160});
+                GameDrawText("[R]", (int)(rollBtn.x + 2), (int)(rollBtn.y + 2), S(10), (Color){255,255,200,240});
 
                 // Shop ability cards (3 slots, centered)
                 int shopCardW = S(160);
@@ -5595,7 +5646,7 @@ int main(void)
                     }
                     // Keybind indicator
                     const char *keyLabel = TextFormat("[%d]", s + 1);
-                    GameDrawText(keyLabel, scx + 2, scy + 2, S(12), (Color){180, 180, 200, 160});
+                    GameDrawText(keyLabel, scx + 2, scy + 2, S(12), (Color){255, 255, 220, 240});
                 }
 
                 // Gold display (right side)
