@@ -1927,8 +1927,37 @@ int main(void)
                 // Combat started — server sends serialized units
                 if (netClient.combatStarted) {
                     netClient.combatStarted = false;
+                    // Save NFC UID data from blue units before server overwrite
+                    // (NetUnit doesn't carry NFC fields, so deserialize loses them)
+                    struct { uint8_t uid[7]; int uidLen; char name[32]; float posX, posZ; } nfcSave[MAX_UNITS];
+                    int nfcSaveCount = 0;
+                    for (int i = 0; i < unitCount; i++) {
+                        if (units[i].team == TEAM_BLUE && units[i].nfcUidLen > 0) {
+                            memcpy(nfcSave[nfcSaveCount].uid, units[i].nfcUid, sizeof(units[i].nfcUid));
+                            nfcSave[nfcSaveCount].uidLen = units[i].nfcUidLen;
+                            memcpy(nfcSave[nfcSaveCount].name, units[i].nfcName, sizeof(units[i].nfcName));
+                            nfcSave[nfcSaveCount].posX = units[i].position.x;
+                            nfcSave[nfcSaveCount].posZ = units[i].position.z;
+                            nfcSaveCount++;
+                        }
+                    }
                     unitCount = deserialize_units(netClient.combatNetUnits,
                         netClient.combatNetUnitCount, units, MAX_UNITS);
+                    // Re-apply NFC UIDs to matching blue units (match by position)
+                    for (int i = 0; i < unitCount; i++) {
+                        if (units[i].team != TEAM_BLUE) continue;
+                        for (int j = 0; j < nfcSaveCount; j++) {
+                            if (nfcSave[j].uidLen > 0 &&
+                                fabsf(units[i].position.x - nfcSave[j].posX) < 0.1f &&
+                                fabsf(units[i].position.z - nfcSave[j].posZ) < 0.1f) {
+                                memcpy(units[i].nfcUid, nfcSave[j].uid, sizeof(units[i].nfcUid));
+                                units[i].nfcUidLen = nfcSave[j].uidLen;
+                                memcpy(units[i].nfcName, nfcSave[j].name, sizeof(units[i].nfcName));
+                                nfcSave[j].uidLen = 0; // mark as used
+                                break;
+                            }
+                        }
+                    }
                     ApplyRarityBuffs(units, unitCount);
                     SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
                     // Sync NFC-tagged units' abilities to server before combat
