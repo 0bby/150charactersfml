@@ -2214,7 +2214,7 @@ int main(void)
                 // --- Shop: Buy ability card click ---
                 if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
-                    int shopCardW = S(130), shopCardH = S(38), shopCardGap = 10;
+                    int shopCardW = S(160), shopCardH = S(38), shopCardGap = 10;
                     int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
                     int shopCardsX = (sw - totalShopW) / 2;
                     for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
@@ -5249,7 +5249,7 @@ int main(void)
                 GameDrawText("[R]", (int)(rollBtn.x + 2), (int)(rollBtn.y + 2), S(10), (Color){255,255,255,160});
 
                 // Shop ability cards (3 slots, centered)
-                int shopCardW = S(130);
+                int shopCardW = S(160);
                 int shopCardH = S(38);
                 int shopCardGap = 10;
                 int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
@@ -5421,7 +5421,7 @@ int main(void)
             int cdLineIdx = numStatLines; // special: cooldown uses cooldown[] not values[]
             numStatLines++; // reserve a line for cooldown
 
-            int tipW = S(240);
+            int tipW = S(300);
             int tipH = S(50) + numStatLines * S(18);
             int tipX = (int)mpos.x + 14;
             int tipY = (int)mpos.y - tipH - 4;

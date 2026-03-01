@@ -1,0 +1,6 @@
+newmtl lambert5SG
+Ka 0.2 0.2 0.2
+Kd 0.6 0.6 0.6
+Ks 0.3 0.3 0.3
+Ns 50.0
+d 1.0

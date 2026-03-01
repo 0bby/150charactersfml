@@ -1,0 +1,18 @@
+newmtl SM_Arena5thBlockout1SG
+Ka 0.2 0.2 0.2
+Kd 0.6 0.6 0.6
+Ks 0.3 0.3 0.3
+Ns 50.0
+d 1.0
+newmtl lambert7SG
+Ka 0.2 0.2 0.2
+Kd 0.6 0.6 0.6
+Ks 0.3 0.3 0.3
+Ns 50.0
+d 1.0
+newmtl lambert4SG
+Ka 0.2 0.2 0.2
+Kd 0.6 0.6 0.6
+Ks 0.3 0.3 0.3
+Ns 50.0
+d 1.0
