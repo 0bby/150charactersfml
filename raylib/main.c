@@ -158,10 +158,14 @@ int main(void)
     unitTypes[1].name = "Goblin";
     unitTypes[1].modelPath = "assets/goblin/animations/PluginGoblinWalk.glb";
     unitTypes[1].scale = 9.0f;
+    unitTypes[2].name = "Devil";
+    unitTypes[2].modelPath = "assets/classes/devil/DevilIdle.glb";
+    unitTypes[2].scale = 9.0f;
+    unitTypes[2].yOffset = 0.0f;
     unitTypes[5].name = "Reptile";
-    unitTypes[5].modelPath = "assets/classes/reptile/reptile.obj";
-    unitTypes[5].scale = 0.07f;
-    unitTypes[5].yOffset = 1.5f;
+    unitTypes[5].modelPath = "assets/classes/reptile/ReptileIdle.glb";
+    unitTypes[5].scale = 9.0f;
+    unitTypes[5].yOffset = 0.0f;
 
     for (int i = 0; i < unitTypeCount; i++)
     {
@@ -196,6 +200,64 @@ int main(void)
     unitTypes[1].scaredAnimCount = 0;
     if (walkAnimCount > 0) unitTypes[1].animIndex[ANIM_SCARED] = 0;  // fallback to walk
     unitTypes[1].hasAnimations = (walkAnimCount > 0 || idleAnimCount > 0);
+    unitTypes[1].attackAnims = NULL; unitTypes[1].attackAnimCount = 0;
+    unitTypes[1].castAnims = NULL;   unitTypes[1].castAnimCount = 0;
+
+    // Reptile animations
+    {
+        int cnt = 0;
+        ModelAnimation *walk = LoadModelAnimations("assets/classes/reptile/ReptileWalking.glb", &cnt);
+        unitTypes[5].anims = walk; unitTypes[5].animCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *idle = LoadModelAnimations("assets/classes/reptile/ReptileIdle.glb", &cnt);
+        unitTypes[5].idleAnims = idle; unitTypes[5].idleAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *atk = LoadModelAnimations("assets/classes/reptile/ReptileAttack.glb", &cnt);
+        unitTypes[5].attackAnims = atk; unitTypes[5].attackAnimCount = cnt;
+
+        unitTypes[5].scaredAnims = NULL; unitTypes[5].scaredAnimCount = 0;
+        unitTypes[5].castAnims = NULL;   unitTypes[5].castAnimCount = 0;
+
+        for (int s = 0; s < ANIM_COUNT; s++) unitTypes[5].animIndex[s] = -1;
+        if (unitTypes[5].idleAnimCount > 0)   unitTypes[5].animIndex[ANIM_IDLE] = 0;
+        if (unitTypes[5].animCount > 0)       unitTypes[5].animIndex[ANIM_WALK] = 0;
+        if (unitTypes[5].animCount > 0)       unitTypes[5].animIndex[ANIM_SCARED] = 0;
+        if (unitTypes[5].attackAnimCount > 0) unitTypes[5].animIndex[ANIM_ATTACK] = 0;
+        unitTypes[5].hasAnimations = true;
+    }
+
+    // Devil animations
+    {
+        int cnt = 0;
+        ModelAnimation *walk = LoadModelAnimations("assets/classes/devil/DevilWalk.glb", &cnt);
+        unitTypes[2].anims = walk; unitTypes[2].animCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *idle = LoadModelAnimations("assets/classes/devil/DevilIdle.glb", &cnt);
+        unitTypes[2].idleAnims = idle; unitTypes[2].idleAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *atk = LoadModelAnimations("assets/classes/devil/DevilPunch.glb", &cnt);
+        unitTypes[2].attackAnims = atk; unitTypes[2].attackAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *cast = LoadModelAnimations("assets/classes/devil/DevilMagic.glb", &cnt);
+        unitTypes[2].castAnims = cast; unitTypes[2].castAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *scared = LoadModelAnimations("assets/classes/devil/DevilScared.glb", &cnt);
+        unitTypes[2].scaredAnims = scared; unitTypes[2].scaredAnimCount = cnt;
+
+        for (int s = 0; s < ANIM_COUNT; s++) unitTypes[2].animIndex[s] = -1;
+        if (unitTypes[2].idleAnimCount > 0)    unitTypes[2].animIndex[ANIM_IDLE] = 0;
+        if (unitTypes[2].animCount > 0)        unitTypes[2].animIndex[ANIM_WALK] = 0;
+        if (unitTypes[2].scaredAnimCount > 0)  unitTypes[2].animIndex[ANIM_SCARED] = 0;
+        if (unitTypes[2].attackAnimCount > 0)  unitTypes[2].animIndex[ANIM_ATTACK] = 0;
+        if (unitTypes[2].castAnimCount > 0)    unitTypes[2].animIndex[ANIM_CAST] = 0;
+        unitTypes[2].hasAnimations = true;
+    }
 
     // Portrait render textures for HUD (one per max blue unit)
     RenderTexture2D portraits[BLUE_TEAM_MAX_SIZE];
@@ -2505,6 +2567,7 @@ int main(void)
                             }
                         }
                         units[i].attackCooldown = stats->attackSpeed;
+                        units[i].attackAnimTimer = 0.4f;
                     }
                 }
             }
@@ -2940,13 +3003,18 @@ int main(void)
             if (!units[i].active) continue;
             if (units[i].hitFlash > 0) units[i].hitFlash -= dt;
             if (IsUnitInStatueSpawn(&statueSpawn, i)) continue; // frozen as statue
-            if (units[i].castPause > 0) continue; // frozen during cast
             UnitType *type = &unitTypes[units[i].typeIndex];
             if (!type->hasAnimations) continue;
 
             // Determine desired anim state
             AnimState desired = ANIM_IDLE;
-            if (phase == PHASE_COMBAT && units[i].targetIndex >= 0) {
+
+            if (units[i].castPause > 0 && type->animIndex[ANIM_CAST] >= 0) {
+                desired = ANIM_CAST;
+            } else if (units[i].attackAnimTimer > 0 && type->animIndex[ANIM_ATTACK] >= 0) {
+                units[i].attackAnimTimer -= dt;
+                desired = ANIM_ATTACK;
+            } else if (phase == PHASE_COMBAT && units[i].targetIndex >= 0) {
                 float dist = DistXZ(units[i].position, units[units[i].targetIndex].position);
                 if (dist > ATTACK_RANGE) desired = ANIM_WALK;
             } else if (phase == PHASE_PLAZA) {
@@ -2962,16 +3030,12 @@ int main(void)
             // Advance frame — pick anim array based on current state
             int idx = type->animIndex[units[i].currentAnim];
             if (idx >= 0) {
-                ModelAnimation *arr;
-                if (units[i].currentAnim == ANIM_IDLE)
-                    arr = type->idleAnims;
-                else if (units[i].currentAnim == ANIM_SCARED && type->scaredAnims)
-                    arr = type->scaredAnims;
-                else
-                    arr = type->anims;
-                int frameCount = arr[idx].frameCount;
-                if (frameCount > 0)
-                    units[i].animFrame = (units[i].animFrame + 1) % frameCount;
+                ModelAnimation *arr = GetAnimArray(type, units[i].currentAnim);
+                if (arr) {
+                    int frameCount = arr[idx].frameCount;
+                    if (frameCount > 0)
+                        units[i].animFrame = (units[i].animFrame + 1) % frameCount;
+                }
             }
         }
 
@@ -3118,6 +3182,14 @@ int main(void)
                 if (!units[i].active) continue;
                 UnitType *type = &unitTypes[units[i].typeIndex];
                 if (!type->loaded) continue;
+                // Update animation pose so shadow matches current frame
+                if (type->hasAnimations) {
+                    int idx = type->animIndex[units[i].currentAnim];
+                    if (idx >= 0) {
+                        ModelAnimation *arr = GetAnimArray(type, units[i].currentAnim);
+                        if (arr) UpdateModelAnimation(type->model, arr[idx], units[i].animFrame);
+                    }
+                }
                 float s = type->scale * units[i].scaleOverride;
                 Vector3 drawPos = units[i].position;
                 drawPos.y += type->yOffset;
@@ -3241,8 +3313,8 @@ int main(void)
                 if (type->hasAnimations) {
                     int idx = type->animIndex[units[i].currentAnim];
                     if (idx >= 0) {
-                        ModelAnimation *arr = (units[i].currentAnim == ANIM_IDLE) ? type->idleAnims : type->anims;
-                        UpdateModelAnimation(type->model, arr[idx], units[i].animFrame);
+                        ModelAnimation *arr = GetAnimArray(type, units[i].currentAnim);
+                        if (arr) UpdateModelAnimation(type->model, arr[idx], units[i].animFrame);
                     }
                 }
                 float s = type->scale * units[i].scaleOverride;
@@ -5374,6 +5446,10 @@ int main(void)
             UnloadModelAnimations(unitTypes[i].idleAnims, unitTypes[i].idleAnimCount);
         if (unitTypes[i].scaredAnims)
             UnloadModelAnimations(unitTypes[i].scaredAnims, unitTypes[i].scaredAnimCount);
+        if (unitTypes[i].attackAnims)
+            UnloadModelAnimations(unitTypes[i].attackAnims, unitTypes[i].attackAnimCount);
+        if (unitTypes[i].castAnims)
+            UnloadModelAnimations(unitTypes[i].castAnims, unitTypes[i].castAnimCount);
         if (unitTypes[i].loaded) UnloadModel(unitTypes[i].model);
     }
     for (int i = 0; i < TILE_VARIANTS; i++) UnloadModel(tileModels[i]);
