@@ -74,6 +74,9 @@ bool IsUnitInStatueSpawn(const StatueSpawn *spawn, int unitIndex);
 // Plaza smoke poof
 void SpawnPoofBurst(Particle particles[], Vector3 pos, int count);
 
+// Animation helpers
+ModelAnimation *GetAnimArray(UnitType *type, AnimState state);
+
 // Drawing helpers
 void DrawArc3D(Vector3 center, float radius, float fraction, Color color);
 
