@@ -45,8 +45,14 @@ void AssignRandomAbilities(Unit *unit, int numAbilities);
 
 // Floating text helpers
 void SpawnFloatingText(FloatingText texts[], Vector3 pos, const char *str, Color color, float life);
+void SpawnFloatingTextEx(FloatingText texts[], Vector3 pos, const char *str, Color color, float life, int fontSize, float driftX);
 void UpdateFloatingTexts(FloatingText texts[], float dt);
 void ClearAllFloatingTexts(FloatingText texts[]);
+
+// Visual juice helpers
+void SpawnDeathExplosion(Particle particles[], Vector3 pos, Team team);
+void SpawnDamageNumber(FloatingText texts[], Vector3 pos, float damage, bool isAbility);
+void SpawnMeleeImpact(Particle particles[], Vector3 pos);
 
 // Screen shake helpers
 void TriggerShake(ScreenShake *shake, float intensity, float duration);

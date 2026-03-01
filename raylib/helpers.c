@@ -349,6 +349,11 @@ void AssignRandomAbilities(Unit *unit, int numAbilities)
 //------------------------------------------------------------------------------------
 void SpawnFloatingText(FloatingText texts[], Vector3 pos, const char *str, Color color, float life)
 {
+    SpawnFloatingTextEx(texts, pos, str, color, life, 0, 0.0f);
+}
+
+void SpawnFloatingTextEx(FloatingText texts[], Vector3 pos, const char *str, Color color, float life, int fontSize, float driftX)
+{
     for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
         if (!texts[i].active) {
             texts[i].position = pos;
@@ -358,6 +363,8 @@ void SpawnFloatingText(FloatingText texts[], Vector3 pos, const char *str, Color
             texts[i].color = color;
             texts[i].life = life;
             texts[i].maxLife = life;
+            texts[i].fontSize = fontSize;
+            texts[i].driftX = driftX;
             texts[i].active = true;
             return;
         }
@@ -837,6 +844,71 @@ void ApplySynergies(Unit units[], int unitCount)
                 }
             }
         }
+    }
+}
+
+//------------------------------------------------------------------------------------
+// Visual Juice Helpers
+//------------------------------------------------------------------------------------
+void SpawnDeathExplosion(Particle particles[], Vector3 pos, Team team)
+{
+    Color baseColor = (team == TEAM_BLUE) ? (Color){100, 150, 255, 255} : (Color){255, 100, 100, 255};
+    for (int i = 0; i < 20; i++) {
+        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+        float upAngle = (float)GetRandomValue(20, 70) * DEG2RAD;
+        float speed = (float)GetRandomValue(30, 80) / 10.0f;
+        Vector3 vel = {
+            cosf(angle) * cosf(upAngle) * speed,
+            sinf(upAngle) * speed,
+            sinf(angle) * cosf(upAngle) * speed
+        };
+        // Vary color slightly
+        Color c = baseColor;
+        c.r = (unsigned char)fminf(255, c.r + GetRandomValue(-30, 30));
+        c.g = (unsigned char)fminf(255, c.g + GetRandomValue(-30, 30));
+        c.b = (unsigned char)fminf(255, c.b + GetRandomValue(-30, 30));
+        float sz = (float)GetRandomValue(5, 15) / 10.0f;
+        SpawnParticle(particles, pos, vel, 0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, c);
+    }
+}
+
+void SpawnDamageNumber(FloatingText texts[], Vector3 pos, float damage, bool isAbility)
+{
+    int dmgInt = (int)(damage + 0.5f);
+    if (dmgInt <= 0) return;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", dmgInt);
+    // Color: red for big hits, orange for ability, yellow for normal
+    Color c;
+    int fontSize;
+    if (dmgInt >= 15) {
+        c = (Color){255, 60, 60, 255};
+        fontSize = 22;
+    } else if (isAbility) {
+        c = (Color){255, 160, 40, 255};
+        fontSize = 18;
+    } else {
+        c = (Color){255, 230, 50, 255};
+        fontSize = 14;
+    }
+    float driftX = (float)GetRandomValue(-40, 40);
+    SpawnFloatingTextEx(texts, pos, buf, c, 0.8f, fontSize, driftX);
+}
+
+void SpawnMeleeImpact(Particle particles[], Vector3 pos)
+{
+    for (int i = 0; i < 5; i++) {
+        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+        float speed = (float)GetRandomValue(10, 40) / 10.0f;
+        Vector3 vel = {
+            cosf(angle) * speed,
+            (float)GetRandomValue(10, 30) / 10.0f,
+            sinf(angle) * speed
+        };
+        int shade = GetRandomValue(140, 200);
+        Color c = { (unsigned char)shade, (unsigned char)(shade * 4/5), (unsigned char)(shade * 3/5), 255 };
+        float sz = (float)GetRandomValue(3, 7) / 10.0f;
+        SpawnParticle(particles, pos, vel, 0.3f, sz, c);
     }
 }
 

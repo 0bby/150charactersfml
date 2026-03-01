@@ -101,6 +101,30 @@ int main(void)
     SetSoundVolume(sfxUiDrop, UI_SFX_VOL);
     SetSoundVolume(sfxUiReroll, UI_SFX_VOL);
 
+    // Generate radial gradient texture for particle billboards (white center → transparent edge)
+    Texture2D particleTex;
+    #define PARTICLE_TEX_SIZE 32
+    {
+        Image img = GenImageColor(PARTICLE_TEX_SIZE, PARTICLE_TEX_SIZE, BLANK);
+        float half = PARTICLE_TEX_SIZE / 2.0f;
+        for (int y = 0; y < PARTICLE_TEX_SIZE; y++) {
+            for (int x = 0; x < PARTICLE_TEX_SIZE; x++) {
+                float dx = (x + 0.5f - half) / half;
+                float dy = (y + 0.5f - half) / half;
+                float dist = sqrtf(dx*dx + dy*dy);
+                if (dist > 1.0f) dist = 1.0f;
+                // Additive-friendly: full white center, smooth falloff to 0
+                // Brightness stays high so stacked particles blow out to white
+                float t = 1.0f - dist;
+                float intensity = t * t * t;  // cubic falloff - tight bright core
+                unsigned char v = (unsigned char)(255.0f * intensity);
+                ImageDrawPixel(&img, x, y, (Color){ 255, 255, 255, v });
+            }
+        }
+        particleTex = LoadTextureFromImage(img);
+        UnloadImage(img);
+    }
+
     // Background music
     Music bgm = LoadMusicStream("music/bgm.ogg");
     SetMusicVolume(bgm, BGM_VOL);
@@ -203,6 +227,29 @@ int main(void)
     Light lights[MAX_LIGHTS] = { 0 };
     lights[0] = CreateLight(LIGHT_DIRECTIONAL, (Vector3){ 40, 60, 30 }, Vector3Zero(), (Color){245, 230, 200, 255}, lightShader);
     lights[1] = CreateLight(LIGHT_POINT, (Vector3){ 0, 40, 0 }, Vector3Zero(), (Color){220, 200, 170, 255}, lightShader);
+
+    // --- SSAO post-process ---
+    Shader ssaoShader = LoadShader(NULL,
+        TextFormat("resources/shaders/glsl%i/ssao.fs", GLSL_VERSION));
+    int ssaoResLoc  = GetShaderLocation(ssaoShader, "resolution");
+    int ssaoNearLoc = GetShaderLocation(ssaoShader, "near");
+    int ssaoFarLoc  = GetShaderLocation(ssaoShader, "far");
+    int ssaoDepthLoc = GetShaderLocation(ssaoShader, "texture1");
+    // Scene render texture with samplable depth texture (not renderbuffer)
+    int sceneRTWidth = GetScreenWidth();
+    int sceneRTHeight = GetScreenHeight();
+    RenderTexture2D sceneRT = { 0 };
+    sceneRT.id = rlLoadFramebuffer();
+    sceneRT.texture.id = rlLoadTexture(NULL, sceneRTWidth, sceneRTHeight, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+    sceneRT.texture.width = sceneRTWidth;
+    sceneRT.texture.height = sceneRTHeight;
+    sceneRT.texture.format = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    sceneRT.texture.mipmaps = 1;
+    sceneRT.depth.id = rlLoadTextureDepth(sceneRTWidth, sceneRTHeight, false);
+    sceneRT.depth.width = sceneRTWidth;
+    sceneRT.depth.height = sceneRTHeight;
+    rlFramebufferAttach(sceneRT.id, sceneRT.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferAttach(sceneRT.id, sceneRT.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
 
     // Assign lighting shader to all loaded models
     for (int i = 0; i < unitTypeCount; i++)
@@ -373,6 +420,19 @@ int main(void)
     int hoverAbilityLevel = 0;
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
+
+    // --- Visual juice state ---
+    float fightBannerTimer = -1.0f;  // <0 = inactive
+    float slowmoTimer = 0.0f;        // >0 = slow motion active
+    float slowmoScale = 1.0f;
+    // Kill feed
+    int killCount = 0;               // total kills this round
+    int multiKillCount = 0;          // rapid consecutive kills by same team
+    float multiKillTimer = 0.0f;     // window for multi-kill
+    Team lastKillTeam = TEAM_BLUE;   // which team scored the last kill
+    float killFeedTimer = -1.0f;     // <0 = inactive
+    char killFeedText[32] = {0};
+    float killFeedScale = 1.0f;      // punch-in scale
 
     // Plaza state
     PlazaSubState plazaState = PLAZA_ROAMING;
@@ -558,9 +618,25 @@ int main(void)
     while (!WindowShouldClose())
     {
         float dt = GetFrameTime();
+        float rawDt = dt; // unscaled dt for UI timers
         UpdateMusicStream(bgm);
         if (IsMusicStreamPlaying(bgm) && GetMusicTimePlayed(bgm) >= GetMusicTimeLength(bgm) - 0.05f) {
             SeekMusicStream(bgm, 29.091f);
+        }
+        // Slow-motion time scaling
+        if (slowmoTimer > 0.0f) {
+            slowmoTimer -= rawDt;
+            if (slowmoTimer <= 0.0f) { slowmoTimer = 0.0f; slowmoScale = 1.0f; }
+            dt *= slowmoScale;
+        }
+        // Fight banner timer
+        if (fightBannerTimer >= 0.0f) fightBannerTimer += rawDt;
+        // Kill feed timer
+        if (killFeedTimer >= 0.0f) killFeedTimer += rawDt;
+        // Multi-kill window decay
+        if (multiKillTimer > 0.0f) {
+            multiKillTimer -= rawDt;
+            if (multiKillTimer <= 0.0f) multiKillCount = 0;
         }
         GamePhase prevPhase = phase;
         UpdateShake(&shake, dt);
@@ -1146,6 +1222,9 @@ int main(void)
                     }
                     ApplySynergies(units, unitCount);
                     phase = PHASE_COMBAT;
+                    fightBannerTimer = 0.0f;
+                    killCount = 0; multiKillCount = 0; multiKillTimer = 0.0f; killFeedTimer = -1.0f;
+                    slowmoTimer = 0.0f; slowmoScale = 1.0f;
                     ClearAllModifiers(modifiers);
                     ClearAllProjectiles(projectiles);
                     ClearAllParticles(particles);
@@ -1383,6 +1462,9 @@ int main(void)
                             }
                             ApplySynergies(units, unitCount);
                             phase = PHASE_COMBAT;
+                            fightBannerTimer = 0.0f;
+                            killCount = 0; multiKillCount = 0; multiKillTimer = 0.0f; killFeedTimer = -1.0f;
+                            slowmoTimer = 0.0f; slowmoScale = 1.0f;
                             ClearAllModifiers(modifiers);
                             ClearAllProjectiles(projectiles);
                             ClearAllParticles(particles);
@@ -1814,11 +1896,31 @@ int main(void)
                             }
                             units[ti].currentHealth -= hitDmg;
                             units[ti].hitFlash = HIT_FLASH_DURATION;
+                            SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
+
                             // Teleport target to caster
                             units[ti].position.x = units[projectiles[p].sourceIndex].position.x;
                             units[ti].position.z = units[projectiles[p].sourceIndex].position.z;
                             TriggerShake(&shake, 6.0f, 0.3f);
-                            if (units[ti].currentHealth <= 0) { PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[ti].active = false; }
+                            if (units[ti].currentHealth <= 0) {
+                                PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
+                                TriggerShake(&shake, 6.0f, 0.3f);
+
+                                // Kill feed
+                                { Team killerTeam = (units[ti].team == TEAM_BLUE) ? TEAM_RED : TEAM_BLUE;
+                                if (killerTeam != lastKillTeam) multiKillCount = 0;
+                                lastKillTeam = killerTeam; }
+                                killCount++; multiKillCount++; multiKillTimer = 2.0f;
+                                if (killCount == 1) { snprintf(killFeedText, sizeof(killFeedText), "FIRST BLOOD!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount == 2) { snprintf(killFeedText, sizeof(killFeedText), "DOUBLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount == 3) { snprintf(killFeedText, sizeof(killFeedText), "TRIPLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
+                                // Slow-mo check: is this the last unit on a team?
+                                int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
+                                if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                                units[ti].active = false;
+                            }
                         }
                         projectiles[p].active = false;
                     }
@@ -1832,7 +1934,25 @@ int main(void)
                             }
                             units[ti].currentHealth -= hitDmg;
                             units[ti].hitFlash = HIT_FLASH_DURATION;
-                            if (units[ti].currentHealth <= 0) { PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[ti].active = false; }
+                            SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
+
+                            if (units[ti].currentHealth <= 0) {
+                                PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
+                                TriggerShake(&shake, 6.0f, 0.3f);
+
+                                { Team killerTeam = (units[ti].team == TEAM_BLUE) ? TEAM_RED : TEAM_BLUE;
+                                if (killerTeam != lastKillTeam) multiKillCount = 0;
+                                lastKillTeam = killerTeam; }
+                                killCount++; multiKillCount++; multiKillTimer = 2.0f;
+                                if (killCount == 1) { snprintf(killFeedText, sizeof(killFeedText), "FIRST BLOOD!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount == 2) { snprintf(killFeedText, sizeof(killFeedText), "DOUBLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount == 3) { snprintf(killFeedText, sizeof(killFeedText), "TRIPLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
+                                int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
+                                if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                                units[ti].active = false;
+                            }
                         }
                         if (projectiles[p].bouncesRemaining > 0) {
                             projectiles[p].bouncesRemaining--;
@@ -1861,11 +1981,24 @@ int main(void)
                         }
                         units[ti].currentHealth -= hitDmg;
                         units[ti].hitFlash = HIT_FLASH_DURATION;
+                        SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
                         if (projectiles[p].stunDuration > 0) {
                             AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
                             TriggerShake(&shake, 5.0f, 0.25f);
                         }
-                        if (units[ti].currentHealth <= 0) { PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[ti].active = false; }
+                        if (units[ti].currentHealth <= 0) {
+                            PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                            SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
+                            TriggerShake(&shake, 6.0f, 0.3f);
+                            killCount++; multiKillCount++; multiKillTimer = 2.0f;
+                            if (killCount == 1) { snprintf(killFeedText, sizeof(killFeedText), "FIRST BLOOD!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                            else if (multiKillCount == 2) { snprintf(killFeedText, sizeof(killFeedText), "DOUBLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                            else if (multiKillCount == 3) { snprintf(killFeedText, sizeof(killFeedText), "TRIPLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                            else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
+                            int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
+                            if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                            units[ti].active = false;
+                        }
                     }
                     // Chain Frost bounce
                     if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
@@ -2084,7 +2217,25 @@ int main(void)
                                     }
                                     units[j].currentHealth -= dmgHit;
                                     units[j].hitFlash = HIT_FLASH_DURATION;
-                                    if (units[j].currentHealth <= 0) { PlaySound(units[j].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[j].active = false; }
+                                    SpawnDamageNumber(floatingTexts, units[j].position, dmgHit, true);
+        
+                                    if (units[j].currentHealth <= 0) {
+                                        PlaySound(units[j].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                        SpawnDeathExplosion(particles, units[j].position, units[j].team);
+                                        TriggerShake(&shake, 6.0f, 0.3f);
+        
+                                        { Team killerTeam = (units[j].team == TEAM_BLUE) ? TEAM_RED : TEAM_BLUE;
+                                if (killerTeam != lastKillTeam) multiKillCount = 0;
+                                lastKillTeam = killerTeam; }
+                                killCount++; multiKillCount++; multiKillTimer = 2.0f;
+                                        if (killCount == 1) { snprintf(killFeedText, sizeof(killFeedText), "FIRST BLOOD!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                        else if (multiKillCount == 2) { snprintf(killFeedText, sizeof(killFeedText), "DOUBLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                        else if (multiKillCount == 3) { snprintf(killFeedText, sizeof(killFeedText), "TRIPLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                        else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
+                                        int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
+                                        if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                                        units[j].active = false;
+                                    }
                                     // Knockback
                                     float kx = units[j].position.x - units[ct].position.x;
                                     float kz = units[j].position.z - units[ct].position.z;
@@ -2174,6 +2325,31 @@ int main(void)
                             units[target].currentHealth -= dmg;
                             PlaySound(sfxMeleeHit);
                             units[target].hitFlash = HIT_FLASH_DURATION;
+                            SpawnDamageNumber(floatingTexts, units[target].position, dmg, false);
+                            SpawnMeleeImpact(particles, units[target].position);
+                            // Minor tile wobble on melee hit
+                            {
+                                float gridOriginMH = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
+                                for (int tr = 0; tr < TILE_GRID_SIZE; tr++) {
+                                    for (int tc = 0; tc < TILE_GRID_SIZE; tc++) {
+                                        float cx = gridOriginMH + (tc + 0.5f) * TILE_WORLD_SIZE;
+                                        float cz = gridOriginMH + (tr + 0.5f) * TILE_WORLD_SIZE;
+                                        float dxw = cx - units[target].position.x, dzw = cz - units[target].position.z;
+                                        float dist = sqrtf(dxw*dxw + dzw*dzw);
+                                        float wobbleR = 25.0f;
+                                        if (dist < wobbleR) {
+                                            float strength = expf(-2.0f * dist / wobbleR) * 0.2f;
+                                            if (tileWobble[tr][tc] < TILE_WOBBLE_MAX * strength) {
+                                                tileWobble[tr][tc] = TILE_WOBBLE_MAX * strength;
+                                                tileWobbleTime[tr][tc] = -(dist * 0.008f);
+                                                float len = dist > 0.1f ? dist : 1.0f;
+                                                tileWobbleDirX[tr][tc] = dzw / len;
+                                                tileWobbleDirZ[tr][tc] = -dxw / len;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             // Lifesteal
                             float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
                             if (ls > 0) {
@@ -2205,7 +2381,23 @@ int main(void)
                                         mlDef->values[mlLvl][AV_ML_BOUNCE_RANGE]);
                                 }
                             }
-                            if (units[target].currentHealth <= 0) { PlaySound(units[target].typeIndex == 0 ? sfxToadDie : sfxGoblinDie); units[target].active = false; }
+                            if (units[target].currentHealth <= 0) {
+                                PlaySound(units[target].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                SpawnDeathExplosion(particles, units[target].position, units[target].team);
+                                TriggerShake(&shake, 6.0f, 0.3f);
+
+                                { Team killerTeam = (units[target].team == TEAM_BLUE) ? TEAM_RED : TEAM_BLUE;
+                                if (killerTeam != lastKillTeam) multiKillCount = 0;
+                                lastKillTeam = killerTeam; }
+                                killCount++; multiKillCount++; multiKillTimer = 2.0f;
+                                if (killCount == 1) { snprintf(killFeedText, sizeof(killFeedText), "FIRST BLOOD!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount == 2) { snprintf(killFeedText, sizeof(killFeedText), "DOUBLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount == 3) { snprintf(killFeedText, sizeof(killFeedText), "TRIPLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                                else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
+                                int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
+                                if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                                units[target].active = false;
+                            }
                         }
                         units[i].attackCooldown = stats->attackSpeed;
                     }
@@ -2288,9 +2480,20 @@ int main(void)
                     lastOutcomeWin = (netClient.roundWinner == 0);
                     phase = PHASE_ROUND_OVER;
                     roundOverTimer = 2.5f;
+                    fightBannerTimer = -1.0f;
                     ClearAllParticles(particles);
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
+                    // Victory celebration confetti
+                    if (lastOutcomeWin) {
+                        TriggerShake(&shake, 4.0f, 0.3f);
+                        for (int ci = 0; ci < 40; ci++) {
+                            Vector3 cpos = { (float)GetRandomValue(-80, 80), (float)GetRandomValue(30, 60), (float)GetRandomValue(-80, 80) };
+                            Vector3 cvel = { (float)GetRandomValue(-20, 20)/10.0f, (float)GetRandomValue(-10, -2)/10.0f, (float)GetRandomValue(-20, 20)/10.0f };
+                            Color cc = (Color){ (unsigned char)GetRandomValue(100, 255), (unsigned char)GetRandomValue(100, 255), (unsigned char)GetRandomValue(100, 255), 255 };
+                            SpawnParticle(particles, cpos, cvel, 2.0f + (float)GetRandomValue(0, 10)/10.0f, (float)GetRandomValue(3, 8)/10.0f, cc);
+                        }
+                    }
                 }
                 if (netClient.gameOver) {
                     netClient.gameOver = false;
@@ -2313,10 +2516,21 @@ int main(void)
                     lastOutcomeWin = (ba > 0);
                     phase = PHASE_ROUND_OVER;
                     roundOverTimer = 2.5f;
+                    fightBannerTimer = -1.0f;
                     ClearAllParticles(particles);
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
                     statueSpawn.phase = SSPAWN_INACTIVE;
+                    // Victory celebration confetti
+                    if (lastOutcomeWin) {
+                        TriggerShake(&shake, 4.0f, 0.3f);
+                        for (int ci = 0; ci < 40; ci++) {
+                            Vector3 cpos = { (float)GetRandomValue(-80, 80), (float)GetRandomValue(30, 60), (float)GetRandomValue(-80, 80) };
+                            Vector3 cvel = { (float)GetRandomValue(-20, 20)/10.0f, (float)GetRandomValue(-10, -2)/10.0f, (float)GetRandomValue(-20, 20)/10.0f };
+                            Color cc = (Color){ (unsigned char)GetRandomValue(100, 255), (unsigned char)GetRandomValue(100, 255), (unsigned char)GetRandomValue(100, 255), 255 };
+                            SpawnParticle(particles, cpos, cvel, 2.0f + (float)GetRandomValue(0, 10)/10.0f, (float)GetRandomValue(3, 8)/10.0f, cc);
+                        }
+                    }
                 }
             }
         }
@@ -2708,6 +2922,30 @@ int main(void)
         camera.position.x += shake.offset.x;
         camera.position.y += shake.offset.y;
 
+        // Recreate scene RT if window was resized
+        {
+            int curW = GetScreenWidth(), curH = GetScreenHeight();
+            if (curW != sceneRTWidth || curH != sceneRTHeight) {
+                rlUnloadFramebuffer(sceneRT.id);
+                rlUnloadTexture(sceneRT.texture.id);
+                rlUnloadTexture(sceneRT.depth.id);
+                sceneRTWidth = curW;
+                sceneRTHeight = curH;
+                sceneRT.id = rlLoadFramebuffer();
+                sceneRT.texture.id = rlLoadTexture(NULL, sceneRTWidth, sceneRTHeight, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+                sceneRT.texture.width = sceneRTWidth;
+                sceneRT.texture.height = sceneRTHeight;
+                sceneRT.depth.id = rlLoadTextureDepth(sceneRTWidth, sceneRTHeight, false);
+                sceneRT.depth.width = sceneRTWidth;
+                sceneRT.depth.height = sceneRTHeight;
+                rlFramebufferAttach(sceneRT.id, sceneRT.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+                rlFramebufferAttach(sceneRT.id, sceneRT.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+            }
+        }
+
+        // Render 3D scene into offscreen texture (for SSAO post-process)
+        BeginTextureMode(sceneRT);
+        ClearBackground((Color){ 45, 40, 35, 255 });
         BeginMode3D(camera);
             // Draw environment: platform (underneath tiles)
             DrawModel(platformModel, platformPos, 1.0f, WHITE);
@@ -2904,10 +3142,48 @@ int main(void)
                 DrawSphere(projectiles[p].position, pr, projectiles[p].color);
             }
 
-            // Draw particles
-            for (int p = 0; p < MAX_PARTICLES; p++) {
-                if (!particles[p].active) continue;
-                DrawSphere(particles[p].position, particles[p].size, particles[p].color);
+            // Draw particles as camera-facing billboards
+            {
+                // Compute camera right and up vectors for billboarding
+                Vector3 camFwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+                Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
+                Vector3 camUp = Vector3CrossProduct(camRight, camFwd);
+
+                rlDisableDepthMask();
+                rlDrawRenderBatchActive();
+                rlSetBlendFactors(RL_SRC_ALPHA, RL_ONE, RL_FUNC_ADD);  // additive blending
+                rlSetBlendMode(BLEND_CUSTOM);
+                rlSetTexture(particleTex.id);
+                rlBegin(RL_QUADS);
+                for (int p = 0; p < MAX_PARTICLES; p++) {
+                    if (!particles[p].active) continue;
+                    float sz = particles[p].size;
+                    Vector3 pos = particles[p].position;
+                    Color c = particles[p].color;
+
+                    // 4 corners: pos ± right*sz ± up*sz
+                    Vector3 r = { camRight.x * sz, camRight.y * sz, camRight.z * sz };
+                    Vector3 u = { camUp.x * sz, camUp.y * sz, camUp.z * sz };
+
+                    // Bottom-left
+                    rlColor4ub(c.r, c.g, c.b, c.a);
+                    rlTexCoord2f(0.0f, 1.0f);
+                    rlVertex3f(pos.x - r.x - u.x, pos.y - r.y - u.y, pos.z - r.z - u.z);
+                    // Bottom-right
+                    rlTexCoord2f(1.0f, 1.0f);
+                    rlVertex3f(pos.x + r.x - u.x, pos.y + r.y - u.y, pos.z + r.z - u.z);
+                    // Top-right
+                    rlTexCoord2f(1.0f, 0.0f);
+                    rlVertex3f(pos.x + r.x + u.x, pos.y + r.y + u.y, pos.z + r.z + u.z);
+                    // Top-left
+                    rlTexCoord2f(0.0f, 0.0f);
+                    rlVertex3f(pos.x - r.x + u.x, pos.y - r.y + u.y, pos.z - r.z + u.z);
+                }
+                rlEnd();
+                rlSetTexture(0);
+                rlDrawRenderBatchActive();
+                rlSetBlendMode(BLEND_ALPHA);  // restore normal blending
+                rlEnableDepthMask();
             }
 
             // Draw fissures (gray cubes along the line)
@@ -2967,6 +3243,56 @@ int main(void)
                 PlazaDrawObjects(doorModel, trophyModel, doorPos, trophyPos, camera,
                     plazaHoverObject == 2, plazaHoverObject == 1, plazaSparkleTimer);
             }
+        EndMode3D();
+        EndTextureMode();
+
+        // Draw scene with SSAO post-process
+        {
+            float res[2] = { (float)sceneRTWidth, (float)sceneRTHeight };
+            float nearPlane = 0.1f, farPlane = 1000.0f;
+            SetShaderValue(ssaoShader, ssaoResLoc, res, SHADER_UNIFORM_VEC2);
+            SetShaderValue(ssaoShader, ssaoNearLoc, &nearPlane, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(ssaoShader, ssaoFarLoc, &farPlane, SHADER_UNIFORM_FLOAT);
+            // Bind depth texture to texture unit 1
+            rlActiveTextureSlot(1);
+            rlEnableTexture(sceneRT.depth.id);
+            SetShaderValue(ssaoShader, ssaoDepthLoc, (int[]){1}, SHADER_UNIFORM_INT);
+            BeginShaderMode(ssaoShader);
+                DrawTextureRec(sceneRT.texture,
+                    (Rectangle){ 0, 0, (float)sceneRTWidth, -(float)sceneRTHeight },
+                    (Vector2){ 0, 0 }, WHITE);
+            EndShaderMode();
+            rlActiveTextureSlot(0);
+        }
+
+        // Draw blob shadows on top of SSAO (separate 3D pass, no depth)
+        BeginMode3D(camera);
+            rlDisableDepthMask();
+            rlDisableDepthTest();
+            for (int i = 0; i < unitCount; i++)
+            {
+                if (!units[i].active) continue;
+                if (IsUnitInStatueSpawn(&statueSpawn, i)) continue;
+                if (intro.active && intro.unitIndex == i) continue;
+                float shadowRadius = 3.0f * units[i].scaleOverride;
+                float shadowY = 0.5f;
+                float shadowAlpha = 1.0f - units[i].position.y * 0.02f;
+                if (shadowAlpha < 0.1f) shadowAlpha = 0.1f;
+                unsigned char alpha = (unsigned char)(60.0f * shadowAlpha);
+                Vector3 center = { units[i].position.x, shadowY, units[i].position.z };
+                int segments = 16;
+                for (int si = 0; si < segments; si++) {
+                    float a0 = (float)si / segments * 2.0f * PI;
+                    float a1 = (float)(si + 1) / segments * 2.0f * PI;
+                    DrawTriangle3D(
+                        center,
+                        (Vector3){ center.x + cosf(a1)*shadowRadius, shadowY, center.z + sinf(a1)*shadowRadius },
+                        (Vector3){ center.x + cosf(a0)*shadowRadius, shadowY, center.z + sinf(a0)*shadowRadius },
+                        (Color){ 0, 0, 0, alpha });
+                }
+            }
+            rlEnableDepthTest();
+            rlEnableDepthMask();
         EndMode3D();
 
         // Restore camera position after shake
@@ -3101,16 +3427,19 @@ int main(void)
             DrawRectangleLines(gx, gy, barW, barH, (Color){160,80,200,255});
         }
 
-        // 2D overlay: floating texts (spell shouts)
+        // 2D overlay: floating texts (spell shouts + damage numbers)
         for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
             if (!floatingTexts[i].active) continue;
             Vector2 fsp = GetWorldToScreen(floatingTexts[i].position, camera);
             float alpha = floatingTexts[i].life / floatingTexts[i].maxLife;
-            int fontSize = 16;
-            int ftw = MeasureText(floatingTexts[i].text, fontSize);
+            int fsize = floatingTexts[i].fontSize > 0 ? floatingTexts[i].fontSize : 16;
+            // Apply horizontal drift
+            float elapsed = floatingTexts[i].maxLife - floatingTexts[i].life;
+            float driftOffset = floatingTexts[i].driftX * elapsed;
+            int ftw = MeasureText(floatingTexts[i].text, fsize);
             Color ftc = floatingTexts[i].color;
             ftc.a = (unsigned char)(255.0f * alpha);
-            DrawText(floatingTexts[i].text, (int)fsp.x - ftw/2, (int)fsp.y, fontSize, ftc);
+            DrawText(floatingTexts[i].text, (int)(fsp.x + driftOffset) - ftw/2, (int)fsp.y, fsize, ftc);
         }
 
         // ── Spawn buttons + Play — during prep and plaza ──
@@ -3273,14 +3602,64 @@ int main(void)
             // Phase label
             if (phase == PHASE_COMBAT)
             {
-                const char *fightText = "FIGHT!";
-                int ftw = MeasureText(fightText, 28);
-                DrawText(fightText, sw/2 - ftw/2, sh/2 - 60, 28, RED);
+                // Animated "FIGHT!" banner
+                if (fightBannerTimer >= 0.0f && fightBannerTimer < 1.5f) {
+                    const char *fightText = "FIGHT!";
+                    int baseFontSize = 48;
+                    float t = fightBannerTimer;
+                    float scale;
+                    if (t < 0.15f) scale = t / 0.15f * 1.5f;           // 0→1.5
+                    else if (t < 0.5f) scale = 1.5f - (t - 0.15f) / 0.35f * 0.5f;  // 1.5→1.0
+                    else scale = 1.0f;
+                    float alpha = t < 1.0f ? 1.0f : 1.0f - (t - 1.0f) / 0.5f;
+                    if (alpha < 0) alpha = 0;
+                    int drawSize = (int)(baseFontSize * scale);
+                    if (drawSize < 1) drawSize = 1;
+                    int ftw = MeasureText(fightText, drawSize);
+                    // Shake during punch-in
+                    int shakeX = 0, shakeY = 0;
+                    if (t < 0.5f) { shakeX = GetRandomValue(-3, 3); shakeY = GetRandomValue(-2, 2); }
+                    Color fc = RED;
+                    fc.a = (unsigned char)(255.0f * alpha);
+                    DrawText(fightText, sw/2 - ftw/2 + shakeX, sh/2 - 60 + shakeY, drawSize, fc);
+                }
+                // Kill feed announcement
+                if (killFeedTimer >= 0.0f && killFeedTimer < 3.0f) {
+                    float kft = killFeedTimer;
+                    int kfFontSize = 36;
+                    float kfScale;
+                    if (kft < 0.15f) kfScale = killFeedScale * (kft / 0.15f);
+                    else if (kft < 0.4f) kfScale = killFeedScale - (killFeedScale - 1.0f) * ((kft - 0.15f) / 0.25f);
+                    else kfScale = 1.0f;
+                    float kfAlpha = kft < 2.0f ? 1.0f : 1.0f - (kft - 2.0f) / 1.0f;
+                    if (kfAlpha < 0) kfAlpha = 0;
+                    int kfDrawSize = (int)(kfFontSize * kfScale);
+                    if (kfDrawSize < 1) kfDrawSize = 1;
+                    int kfw = MeasureText(killFeedText, kfDrawSize);
+                    Color kfc = (Color){255, 200, 50, (unsigned char)(255.0f * kfAlpha)};
+                    DrawText(killFeedText, sw/2 - kfw/2, sh/2 - 20, kfDrawSize, kfc);
+                }
             }
             else if (phase == PHASE_ROUND_OVER)
             {
-                int rtw = MeasureText(roundResultText, 26);
-                DrawText(roundResultText, sw/2 - rtw/2, sh/2 - 40, 26, DARKPURPLE);
+                // Animated round result text with scale punch-in
+                float rot = roundOverTimer; // counts down from 2.5
+                float elapsed = 2.5f - rot;
+                float rtScale;
+                if (elapsed < 0.15f) rtScale = elapsed / 0.15f * 1.3f;
+                else if (elapsed < 0.4f) rtScale = 1.3f - (elapsed - 0.15f) / 0.25f * 0.3f;
+                else rtScale = 1.0f;
+                int rtFontSize = (int)(26 * rtScale);
+                if (rtFontSize < 1) rtFontSize = 1;
+                Color rtColor = lastOutcomeWin ? (Color){50, 200, 50, 255} : DARKPURPLE;
+                // Color pulse for win
+                if (lastOutcomeWin) {
+                    float pulse = 0.5f + 0.5f * sinf(elapsed * 6.0f);
+                    rtColor.r = (unsigned char)(50 + pulse * 100);
+                    rtColor.g = (unsigned char)(200 + pulse * 55);
+                }
+                int rtw = MeasureText(roundResultText, rtFontSize);
+                DrawText(roundResultText, sw/2 - rtw/2, sh/2 - 40, rtFontSize, rtColor);
 
                 const char *scoreText = TextFormat("Score: %d - %d", blueWins, redWins);
                 int stw = MeasureText(scoreText, 18);
@@ -3303,6 +3682,7 @@ int main(void)
                 }
                 // Non-death game over is drawn as a full overlay below
             }
+
         }
 
         // F1 debug hint (always visible, top-right)
@@ -4484,6 +4864,11 @@ int main(void)
     }
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     UnloadRenderTexture(introModelRT);
+    rlUnloadFramebuffer(sceneRT.id);
+    rlUnloadTexture(sceneRT.texture.id);
+    rlUnloadTexture(sceneRT.depth.id);
+    UnloadShader(ssaoShader);
+    UnloadTexture(particleTex);
     UnloadShader(lightShader);
     UnloadShader(borderShader);
     UnloadMesh(borderMesh);

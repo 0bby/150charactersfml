@@ -39,8 +39,8 @@ typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_SCARED, ANIM_COUNT } AnimState;
 #define MAX_SHOP_SLOTS 3
 #define MAX_MODIFIERS 128
 #define MAX_PROJECTILES 32
-#define MAX_PARTICLES 512
-#define MAX_FLOATING_TEXTS 16
+#define MAX_PARTICLES 1024
+#define MAX_FLOATING_TEXTS 32
 #define MAX_INVENTORY_SLOTS 6
 #define MAX_FISSURES 8
 
@@ -216,6 +216,8 @@ typedef struct {
     Color color;
     float life;
     float maxLife;
+    int fontSize;           // 0 = use default (16)
+    float driftX;           // horizontal drift speed (pixels/sec in screen space)
     bool active;
 } FloatingText;
 
