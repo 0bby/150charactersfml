@@ -370,3 +370,26 @@ typedef struct {
     int scroll;
 } BattleLog;
 #endif
+
+//------------------------------------------------------------------------------------
+// Environment Piece Editor
+//------------------------------------------------------------------------------------
+#define MAX_ENV_PIECES 32
+#define MAX_ENV_MODELS 8
+
+typedef struct {
+    const char *name;        // display name for UI
+    const char *modelPath;
+    const char *texturePath; // NULL if no separate texture
+    Model model;
+    Texture2D texture;       // separately loaded texture (id=0 if none)
+    bool loaded;
+} EnvModelDef;
+
+typedef struct {
+    int modelIndex;          // index into envModels[]
+    Vector3 position;
+    float rotationY;         // degrees around Y axis
+    float scale;             // uniform multiplier (1.0 = auto-computed default)
+    bool active;
+} EnvPiece;

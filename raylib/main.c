@@ -589,9 +589,11 @@ int main(void)
             MatrixTranslate(-tCenterX, -tBaseY, -tCenterZ),
             MatrixScale(tScale, tScale, tScale));
     }
-    // --- Environment models: platform, stairs, circle ---
-    Model platformModel = LoadModel("assets/goblin/environment/platform/platform.obj");
+    // --- Environment models: ground (replaces old platform), stairs, circle ---
+    Texture2D groundDiffuse = LoadTexture("assets/goblin/environment/ground/T_Ground_BC.png");
+    Model platformModel = LoadModel("assets/goblin/environment/ground/ground.obj");
     for (int m = 0; m < platformModel.materialCount; m++) {
+        platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = groundDiffuse;
         platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
         platformModel.materials[m].shader = lightShader;
     }
@@ -648,14 +650,173 @@ int main(void)
             MatrixRotateX(-90.0f * DEG2RAD));
     }
 
-    Vector3 platformPos  = { 0.0f, -10.0f, 0.0f };
-    Vector3 stairsFarPos = { 0.0f, -1.0f, -120.0f };
-    Vector3 stairsLPos   = { -120.0f, -1.0f, 0.0f };
-    Vector3 stairsRPos   = { 120.0f, -1.0f, 0.0f };
-    Vector3 circlePos    = { 0.0f, 0.0f, -140.0f };
+    // platformPos, stairsFarPos, stairsLPos, stairsRPos, circlePos now live in envPieces[]
 
     Vector3 doorPos = { 120.0f, 0.0f, 80.0f };
     Vector3 trophyPos = { -120.0f, 0.0f, 80.0f };
+
+    // --- Environment model catalog (for debug piece editor) ---
+    EnvModelDef envModels[MAX_ENV_MODELS] = {0};
+    int envModelCount = 0;
+
+    // 0: Arches
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Arches";
+        em->modelPath = "assets/goblin/environment/arches/Arches.obj";
+        em->texturePath = "assets/goblin/environment/arches/T_Arches_BC.png";
+        em->texture = LoadTexture(em->texturePath);
+        em->model = LoadModel(em->modelPath);
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 15.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 1: Wall
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Wall";
+        em->modelPath = "assets/goblin/environment/wall/Wall_LP.obj";
+        em->texturePath = "assets/goblin/environment/wall/T_Wall_BC.png";
+        em->texture = LoadTexture(em->texturePath);
+        em->model = LoadModel(em->modelPath);
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 15.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 2: Stairs (reuse already-loaded stairsModel)
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Stairs";
+        em->modelPath = "assets/goblin/environment/stairs/Stairs_LP.obj";
+        em->texturePath = NULL;
+        em->model = stairsModel;  // reuse — do NOT unload separately
+        em->texture = (Texture2D){0};
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 3: Circle (reuse already-loaded circleModel)
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Circle";
+        em->modelPath = "assets/goblin/environment/circle/circle.obj";
+        em->texturePath = NULL;
+        em->model = circleModel;  // reuse — do NOT unload separately
+        em->texture = (Texture2D){0};
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 4: FloorTiles
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "FloorTiles";
+        em->modelPath = "assets/goblin/environment/floor_tiles/FloorTiles_LP.obj";
+        em->texturePath = NULL;
+        em->model = LoadModel(em->modelPath);
+        em->texture = (Texture2D){0};
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 10.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 5: Ground (reuse already-loaded platformModel)
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Ground";
+        em->modelPath = "assets/goblin/environment/ground/ground.obj";
+        em->texturePath = NULL;
+        em->model = platformModel;  // reuse — do NOT unload separately
+        em->texture = (Texture2D){0};
+        em->loaded = true;
+        envModelCount++;
+    }
+
+    // --- Env pieces array (populated from save file) ---
+    EnvPiece envPieces[MAX_ENV_PIECES] = {0};
+    int envPieceCount = 0;
+    int envSelectedPiece = -1;
+    bool envDragging = false;
+    float envSaveFlashTimer = 0.0f;  // flash "SAVED" text
+
+    // Load env layout from file
+    {
+        FILE *fp = fopen("env_layout.txt", "r");
+        if (fp) {
+            char line[256];
+            while (fgets(line, sizeof(line), fp) && envPieceCount < MAX_ENV_PIECES) {
+                if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+                int mi;
+                float x, y, z, rot, sc;
+                if (sscanf(line, "%d %f %f %f %f %f", &mi, &x, &y, &z, &rot, &sc) == 6) {
+                    if (mi >= 0 && mi < envModelCount) {
+                        envPieces[envPieceCount] = (EnvPiece){
+                            .modelIndex = mi, .position = {x, y, z},
+                            .rotationY = rot, .scale = sc, .active = true
+                        };
+                        envPieceCount++;
+                    }
+                }
+            }
+            fclose(fp);
+        }
+    }
+    // Populate default env pieces if no layout was loaded
+    if (envPieceCount == 0) {
+        // Ground
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 5, .position = {0, -10, 0},
+            .rotationY = 0, .scale = 1.0f, .active = true };
+        // Stairs far
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 2, .position = {0, -1, -120},
+            .rotationY = 0, .scale = 1.0f, .active = true };
+        // Stairs left
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 2, .position = {-120, -1, 0},
+            .rotationY = 90, .scale = 1.0f, .active = true };
+        // Stairs right
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 2, .position = {120, -1, 0},
+            .rotationY = -90, .scale = 1.0f, .active = true };
+        // Circle
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 3, .position = {0, 0, -140},
+            .rotationY = 0, .scale = 1.0f, .active = true };
+    }
     int plazaHoverObject = 0;  // 0=none, 1=trophy, 2=door
     float plazaSparkleTimer = 0.0f;  // for sparkle effect on objects
 
@@ -778,6 +939,47 @@ int main(void)
                 tileLayout = (tileLayout - 1 + TILE_LAYOUT_COUNT) % TILE_LAYOUT_COUNT;
                 GENERATE_TILE_GRID();
             }
+
+            // Env piece keyboard controls (selected piece)
+            if (envSelectedPiece >= 0 && envSelectedPiece < envPieceCount && envPieces[envSelectedPiece].active) {
+                if (IsKeyPressed(KEY_Q)) envPieces[envSelectedPiece].rotationY -= 15.0f;
+                if (IsKeyPressed(KEY_E)) envPieces[envSelectedPiece].rotationY += 15.0f;
+                if (IsKeyPressed(KEY_R)) envPieces[envSelectedPiece].position.y += 1.0f;
+                if (IsKeyPressed(KEY_F)) envPieces[envSelectedPiece].position.y -= 1.0f;
+                if (IsKeyPressed(KEY_RIGHT_BRACKET)) envPieces[envSelectedPiece].scale += 0.1f;
+                if (IsKeyPressed(KEY_LEFT_BRACKET)) {
+                    envPieces[envSelectedPiece].scale -= 0.1f;
+                    if (envPieces[envSelectedPiece].scale < 0.1f) envPieces[envSelectedPiece].scale = 0.1f;
+                }
+                if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE)) {
+                    envPieces[envSelectedPiece].active = false;
+                    // Compact: shift remaining pieces down
+                    for (int j = envSelectedPiece; j < envPieceCount - 1; j++)
+                        envPieces[j] = envPieces[j + 1];
+                    envPieceCount--;
+                    envPieces[envPieceCount] = (EnvPiece){0};
+                    envSelectedPiece = -1;
+                    envDragging = false;
+                }
+            }
+
+            // Env piece dragging (XZ plane)
+            if (envDragging && envSelectedPiece >= 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                Ray ray = GetScreenToWorldRay(GetMousePosition(), camera);
+                RayCollision hit = GetRayCollisionQuad(ray,
+                    (Vector3){ -500, 0, -500 }, (Vector3){ -500, 0, 500 },
+                    (Vector3){  500, 0,  500 }, (Vector3){  500, 0, -500 });
+                if (hit.hit) {
+                    envPieces[envSelectedPiece].position.x = hit.point.x;
+                    envPieces[envSelectedPiece].position.z = hit.point.z;
+                }
+            }
+            if (envDragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                envDragging = false;
+            }
+
+            // Env save flash timer
+            if (envSaveFlashTimer > 0.0f) envSaveFlashTimer -= dt;
         }
 
         // Update unit intro animation
@@ -1249,6 +1451,7 @@ int main(void)
                     }
                 }
 
+                bool plazaClickedBtn = false;
                 int btnXBlue = btnMargin;
                 int clickIdx = 0;
                 for (int i = 0; i < unitTypeCount; i++) {
@@ -1264,7 +1467,99 @@ int main(void)
                             intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                 .typeIndex = i, .unitIndex = unitCount - 1, .animFrame = 0 };
                         }
+                        plazaClickedBtn = true;
                         break;
+                    }
+                }
+
+                // Env piece spawn + save buttons (plaza debug)
+                if (!plazaClickedBtn) {
+                    int envBtnW = 110, envBtnH = 24, envBtnGap = 4;
+                    int envColX = sw / 2 - envBtnW / 2;
+                    int envStartY = btnYStart;
+                    for (int ei = 0; ei < envModelCount; ei++) {
+                        if (!envModels[ei].loaded) continue;
+                        Rectangle er = { (float)envColX, (float)(envStartY + ei * (envBtnH + envBtnGap)),
+                                         (float)envBtnW, (float)envBtnH };
+                        if (CheckCollisionPointRec(mouse, er) && envPieceCount < MAX_ENV_PIECES) {
+                            envPieces[envPieceCount] = (EnvPiece){
+                                .modelIndex = ei, .position = {0, 0, 0},
+                                .rotationY = 0, .scale = 1.0f, .active = true
+                            };
+                            envSelectedPiece = envPieceCount;
+                            envPieceCount++;
+                            plazaClickedBtn = true;
+                            break;
+                        }
+                    }
+                    if (!plazaClickedBtn) {
+                        int saveY = envStartY + envModelCount * (envBtnH + envBtnGap) + 4;
+                        Rectangle saveBtn = { (float)envColX, (float)saveY, (float)envBtnW, (float)envBtnH };
+                        if (CheckCollisionPointRec(mouse, saveBtn)) {
+                            FILE *fp = fopen("env_layout.txt", "w");
+                            if (fp) {
+                                fprintf(fp, "# modelIndex x y z rotationY scale\n");
+                                for (int pi = 0; pi < envPieceCount; pi++) {
+                                    if (!envPieces[pi].active) continue;
+                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f\n",
+                                            envPieces[pi].modelIndex,
+                                            envPieces[pi].position.x, envPieces[pi].position.y,
+                                            envPieces[pi].position.z,
+                                            envPieces[pi].rotationY, envPieces[pi].scale);
+                                }
+                                fclose(fp);
+                                envSaveFlashTimer = 2.0f;
+                            }
+                        }
+                    }
+                }
+
+                // Env piece 3D picking (plaza, debug mode)
+                if (!plazaClickedBtn) {
+                    int dHudTop2 = sh - HUD_TOTAL_HEIGHT;
+                    if (mouse.y < dHudTop2) {
+                        Ray envRay = GetScreenToWorldRay(mouse, camera);
+                        float closestDist = 1e9f;
+                        int closestIdx = -1;
+                        for (int ep = 0; ep < envPieceCount; ep++) {
+                            if (!envPieces[ep].active) continue;
+                            EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+                            if (!emd->loaded || emd->model.meshCount == 0) continue;
+                            BoundingBox mbb = GetMeshBoundingBox(emd->model.meshes[0]);
+                            Matrix mt = emd->model.transform;
+                            Vector3 corners[8] = {
+                                {mbb.min.x, mbb.min.y, mbb.min.z}, {mbb.max.x, mbb.min.y, mbb.min.z},
+                                {mbb.min.x, mbb.max.y, mbb.min.z}, {mbb.max.x, mbb.max.y, mbb.min.z},
+                                {mbb.min.x, mbb.min.y, mbb.max.z}, {mbb.max.x, mbb.min.y, mbb.max.z},
+                                {mbb.min.x, mbb.max.y, mbb.max.z}, {mbb.max.x, mbb.max.y, mbb.max.z},
+                            };
+                            BoundingBox tbb = { .min = {1e9f, 1e9f, 1e9f}, .max = {-1e9f, -1e9f, -1e9f} };
+                            for (int ci = 0; ci < 8; ci++) {
+                                Vector3 tc = Vector3Transform(corners[ci], mt);
+                                if (tc.x < tbb.min.x) tbb.min.x = tc.x;
+                                if (tc.y < tbb.min.y) tbb.min.y = tc.y;
+                                if (tc.z < tbb.min.z) tbb.min.z = tc.z;
+                                if (tc.x > tbb.max.x) tbb.max.x = tc.x;
+                                if (tc.y > tbb.max.y) tbb.max.y = tc.y;
+                                if (tc.z > tbb.max.z) tbb.max.z = tc.z;
+                            }
+                            float ps = envPieces[ep].scale;
+                            BoundingBox wbb = {
+                                .min = { tbb.min.x * ps + envPieces[ep].position.x,
+                                         tbb.min.y * ps + envPieces[ep].position.y,
+                                         tbb.min.z * ps + envPieces[ep].position.z },
+                                .max = { tbb.max.x * ps + envPieces[ep].position.x,
+                                         tbb.max.y * ps + envPieces[ep].position.y,
+                                         tbb.max.z * ps + envPieces[ep].position.z }
+                            };
+                            RayCollision rc = GetRayCollisionBox(envRay, wbb);
+                            if (rc.hit && rc.distance < closestDist) {
+                                closestDist = rc.distance;
+                                closestIdx = ep;
+                            }
+                        }
+                        envSelectedPiece = closestIdx;
+                        envDragging = (closestIdx >= 0);
                     }
                 }
             }
@@ -1684,6 +1979,49 @@ int main(void)
                         }
                     }
                 }
+                // Env piece spawn + save buttons (debug only)
+                if (!clickedButton && debugMode)
+                {
+                    int envBtnW = 110, envBtnH = 24, envBtnGap = 4;
+                    int envColX = sw / 2 - envBtnW / 2;
+                    int envStartY = btnYStart;
+                    for (int ei = 0; ei < envModelCount; ei++) {
+                        if (!envModels[ei].loaded) continue;
+                        Rectangle er = { (float)envColX, (float)(envStartY + ei * (envBtnH + envBtnGap)),
+                                         (float)envBtnW, (float)envBtnH };
+                        if (CheckCollisionPointRec(mouse, er) && envPieceCount < MAX_ENV_PIECES) {
+                            envPieces[envPieceCount] = (EnvPiece){
+                                .modelIndex = ei, .position = {0, 0, 0},
+                                .rotationY = 0, .scale = 1.0f, .active = true
+                            };
+                            envSelectedPiece = envPieceCount;
+                            envPieceCount++;
+                            clickedButton = true;
+                            break;
+                        }
+                    }
+                    if (!clickedButton) {
+                        int saveY = envStartY + envModelCount * (envBtnH + envBtnGap) + 4;
+                        Rectangle saveBtn = { (float)envColX, (float)saveY, (float)envBtnW, (float)envBtnH };
+                        if (CheckCollisionPointRec(mouse, saveBtn)) {
+                            FILE *fp = fopen("env_layout.txt", "w");
+                            if (fp) {
+                                fprintf(fp, "# modelIndex x y z rotationY scale\n");
+                                for (int pi = 0; pi < envPieceCount; pi++) {
+                                    if (!envPieces[pi].active) continue;
+                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f\n",
+                                            envPieces[pi].modelIndex,
+                                            envPieces[pi].position.x, envPieces[pi].position.y,
+                                            envPieces[pi].position.z,
+                                            envPieces[pi].rotationY, envPieces[pi].scale);
+                                }
+                                fclose(fp);
+                                envSaveFlashTimer = 2.0f;
+                            }
+                            clickedButton = true;
+                        }
+                    }
+                }
                 // --- Shop: ROLL button click ---
                 if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
@@ -1816,6 +2154,53 @@ int main(void)
                         }
                     }
                     if (!hitAny) for (int j = 0; j < unitCount; j++) units[j].selected = false;
+
+                    // Env piece 3D picking (debug mode, only if no unit was hit)
+                    if (!hitAny && debugMode) {
+                        Ray envRay = GetScreenToWorldRay(mouse, camera);
+                        float closestDist = 1e9f;
+                        int closestIdx = -1;
+                        for (int ep = 0; ep < envPieceCount; ep++) {
+                            if (!envPieces[ep].active) continue;
+                            EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+                            if (!emd->loaded || emd->model.meshCount == 0) continue;
+                            // Compute AABB by transforming all 8 corners through model transform
+                            BoundingBox mbb = GetMeshBoundingBox(emd->model.meshes[0]);
+                            Matrix mt = emd->model.transform;
+                            Vector3 corners[8] = {
+                                {mbb.min.x, mbb.min.y, mbb.min.z}, {mbb.max.x, mbb.min.y, mbb.min.z},
+                                {mbb.min.x, mbb.max.y, mbb.min.z}, {mbb.max.x, mbb.max.y, mbb.min.z},
+                                {mbb.min.x, mbb.min.y, mbb.max.z}, {mbb.max.x, mbb.min.y, mbb.max.z},
+                                {mbb.min.x, mbb.max.y, mbb.max.z}, {mbb.max.x, mbb.max.y, mbb.max.z},
+                            };
+                            BoundingBox tbb = { .min = {1e9f, 1e9f, 1e9f}, .max = {-1e9f, -1e9f, -1e9f} };
+                            for (int ci = 0; ci < 8; ci++) {
+                                Vector3 tc = Vector3Transform(corners[ci], mt);
+                                if (tc.x < tbb.min.x) tbb.min.x = tc.x;
+                                if (tc.y < tbb.min.y) tbb.min.y = tc.y;
+                                if (tc.z < tbb.min.z) tbb.min.z = tc.z;
+                                if (tc.x > tbb.max.x) tbb.max.x = tc.x;
+                                if (tc.y > tbb.max.y) tbb.max.y = tc.y;
+                                if (tc.z > tbb.max.z) tbb.max.z = tc.z;
+                            }
+                            float ps = envPieces[ep].scale;
+                            BoundingBox wbb = {
+                                .min = { tbb.min.x * ps + envPieces[ep].position.x,
+                                         tbb.min.y * ps + envPieces[ep].position.y,
+                                         tbb.min.z * ps + envPieces[ep].position.z },
+                                .max = { tbb.max.x * ps + envPieces[ep].position.x,
+                                         tbb.max.y * ps + envPieces[ep].position.y,
+                                         tbb.max.z * ps + envPieces[ep].position.z }
+                            };
+                            RayCollision rc = GetRayCollisionBox(envRay, wbb);
+                            if (rc.hit && rc.distance < closestDist) {
+                                closestDist = rc.distance;
+                                closestIdx = ep;
+                            }
+                        }
+                        envSelectedPiece = closestIdx;
+                        envDragging = (closestIdx >= 0);
+                    }
                 }
             }
 
@@ -3142,15 +3527,14 @@ int main(void)
             for (int i = 0; i < TILE_VARIANTS; i++)
                 for (int m = 0; m < tileModels[i].materialCount; m++)
                     tileModels[i].materials[m].shader = shadowDepthShader;
-            for (int m = 0; m < platformModel.materialCount; m++)
-                platformModel.materials[m].shader = shadowDepthShader;
-            for (int m = 0; m < stairsModel.materialCount; m++)
-                stairsModel.materials[m].shader = shadowDepthShader;
-            for (int m = 0; m < circleModel.materialCount; m++)
-                circleModel.materials[m].shader = shadowDepthShader;
+            // Swap env model materials to shadow depth shader (covers ground, stairs, circle, etc.)
+            for (int ei = 0; ei < envModelCount; ei++) {
+                if (!envModels[ei].loaded) continue;
+                for (int m = 0; m < envModels[ei].model.materialCount; m++)
+                    envModels[ei].model.materials[m].shader = shadowDepthShader;
+            }
 
             // Draw shadow-casting geometry
-            DrawModel(platformModel, platformPos, 1.0f, WHITE);
             {
                 float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
                 for (int r = 0; r < TILE_GRID_SIZE; r++) {
@@ -3177,10 +3561,15 @@ int main(void)
                     }
                 }
             }
-            DrawModelEx(stairsModel, stairsFarPos, (Vector3){0,1,0},   0.0f, (Vector3){1,1,1}, WHITE);
-            DrawModelEx(stairsModel, stairsLPos,   (Vector3){0,1,0},  90.0f, (Vector3){1,1,1}, WHITE);
-            DrawModelEx(stairsModel, stairsRPos,   (Vector3){0,1,0}, -90.0f, (Vector3){1,1,1}, WHITE);
-            DrawModel(circleModel, circlePos, 1.0f, WHITE);
+            // Draw env pieces (shadow pass — includes ground, stairs, circle)
+            for (int ep = 0; ep < envPieceCount; ep++) {
+                if (!envPieces[ep].active) continue;
+                EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+                if (!emd->loaded) continue;
+                float es = envPieces[ep].scale;
+                DrawModelEx(emd->model, envPieces[ep].position, (Vector3){0,1,0},
+                            envPieces[ep].rotationY, (Vector3){es,es,es}, WHITE);
+            }
             for (int i = 0; i < unitCount; i++) {
                 if (!units[i].active) continue;
                 UnitType *type = &unitTypes[units[i].typeIndex];
@@ -3209,12 +3598,12 @@ int main(void)
             for (int i = 0; i < TILE_VARIANTS; i++)
                 for (int m = 0; m < tileModels[i].materialCount; m++)
                     tileModels[i].materials[m].shader = lightShader;
-            for (int m = 0; m < platformModel.materialCount; m++)
-                platformModel.materials[m].shader = lightShader;
-            for (int m = 0; m < stairsModel.materialCount; m++)
-                stairsModel.materials[m].shader = lightShader;
-            for (int m = 0; m < circleModel.materialCount; m++)
-                circleModel.materials[m].shader = lightShader;
+            // Restore lighting shader on env model materials
+            for (int ei = 0; ei < envModelCount; ei++) {
+                if (!envModels[ei].loaded) continue;
+                for (int m = 0; m < envModels[ei].model.materialCount; m++)
+                    envModels[ei].model.materials[m].shader = lightShader;
+            }
 
             rlDrawRenderBatchActive();
             rlEnableColorBlend();
@@ -3232,9 +3621,6 @@ int main(void)
         BeginTextureMode(sceneRT);
         ClearBackground((Color){ 45, 40, 35, 255 });
         BeginMode3D(camera);
-            // Draw environment: platform (underneath tiles)
-            DrawModel(platformModel, platformPos, 1.0f, WHITE);
-
             // Draw tiled floor
             {
                 float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
@@ -3291,11 +3677,17 @@ int main(void)
                 }
             }
 
-            // Draw environment: stairs (3 sides) and circle
-            DrawModelEx(stairsModel, stairsFarPos, (Vector3){0,1,0},   0.0f, (Vector3){1,1,1}, WHITE);
-            DrawModelEx(stairsModel, stairsLPos,   (Vector3){0,1,0},  90.0f, (Vector3){1,1,1}, WHITE);
-            DrawModelEx(stairsModel, stairsRPos,   (Vector3){0,1,0}, -90.0f, (Vector3){1,1,1}, WHITE);
-            DrawModel(circleModel, circlePos, 1.0f, WHITE);
+            // Draw env pieces (main render pass — includes ground, stairs, circle)
+            for (int ep = 0; ep < envPieceCount; ep++) {
+                if (!envPieces[ep].active) continue;
+                EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+                if (!emd->loaded) continue;
+                float es = envPieces[ep].scale;
+                Color eTint = WHITE;
+                if (debugMode && ep == envSelectedPiece) eTint = (Color){150, 255, 150, 255};
+                DrawModelEx(emd->model, envPieces[ep].position, (Vector3){0,1,0},
+                            envPieces[ep].rotationY, (Vector3){es,es,es}, eTint);
+            }
 
             // Draw units
             for (int i = 0; i < unitCount; i++)
@@ -3809,6 +4201,56 @@ int main(void)
 
                 DrawText("[F1] DEBUG MODE", dBtnXBlue, dBtnYStart - 20, 12, YELLOW);
                 DrawText(TextFormat("[</>] Tiles: %s", tileLayoutNames[tileLayout]), dBtnXBlue, dBtnYStart - 36, 12, YELLOW);
+
+                // --- ENV PIECE spawn buttons (centered column) ---
+                {
+                    int envBtnW = 110, envBtnH = 24, envBtnGap = 4;
+                    int envColX = sw / 2 - envBtnW / 2;
+                    int envStartY = dBtnYStart;
+                    DrawText("[ENV PIECES]", envColX, envStartY - 16, 12, YELLOW);
+                    for (int ei = 0; ei < envModelCount; ei++) {
+                        if (!envModels[ei].loaded) continue;
+                        Rectangle er = { (float)envColX, (float)(envStartY + ei * (envBtnH + envBtnGap)),
+                                         (float)envBtnW, (float)envBtnH };
+                        Color ec = (Color){80, 160, 80, 255};
+                        if (CheckCollisionPointRec(GetMousePosition(), er)) ec = GREEN;
+                        DrawRectangleRec(er, ec);
+                        DrawRectangleLinesEx(er, 1, DARKGREEN);
+                        const char *el = TextFormat("+ %s", envModels[ei].name);
+                        int elw = MeasureText(el, 12);
+                        DrawText(el, (int)(er.x + (envBtnW - elw) / 2), (int)(er.y + 6), 12, WHITE);
+                    }
+                    // SAVE LAYOUT button
+                    int saveY = envStartY + envModelCount * (envBtnH + envBtnGap) + 4;
+                    Rectangle saveBtn = { (float)envColX, (float)saveY, (float)envBtnW, (float)envBtnH };
+                    Color savCol = (Color){160, 120, 40, 255};
+                    if (CheckCollisionPointRec(GetMousePosition(), saveBtn)) savCol = GOLD;
+                    DrawRectangleRec(saveBtn, savCol);
+                    DrawRectangleLinesEx(saveBtn, 1, DARKBROWN);
+                    const char *savLbl = TextFormat("SAVE (%d pcs)", envPieceCount);
+                    int savLblW = MeasureText(savLbl, 12);
+                    DrawText(savLbl, (int)(saveBtn.x + (envBtnW - savLblW) / 2), (int)(saveBtn.y + 6), 12, WHITE);
+
+                    // Flash "SAVED!" text
+                    if (envSaveFlashTimer > 0.0f) {
+                        float alpha = envSaveFlashTimer > 1.0f ? 1.0f : envSaveFlashTimer;
+                        DrawText("SAVED!", envColX + envBtnW + 8, saveY + 4, 14,
+                                 (Color){50, 255, 50, (unsigned char)(255 * alpha)});
+                    }
+
+                    // Selected piece info overlay
+                    if (envSelectedPiece >= 0 && envSelectedPiece < envPieceCount && envPieces[envSelectedPiece].active) {
+                        EnvPiece *sp = &envPieces[envSelectedPiece];
+                        const char *infoName = envModels[sp->modelIndex].name;
+                        int infoY = saveY + envBtnH + 12;
+                        DrawText(TextFormat("%s  [X:%.1f Y:%.1f Z:%.1f]", infoName,
+                                 sp->position.x, sp->position.y, sp->position.z),
+                                 envColX, infoY, 12, WHITE);
+                        DrawText(TextFormat("Rot: %.0f deg  Scale: %.1fx", sp->rotationY, sp->scale),
+                                 envColX, infoY + 14, 12, WHITE);
+                        DrawText("[Q/E] Rot  [R/F] Y  [[ / ]] Scale  [DEL] Remove", envColX, infoY + 28, 10, (Color){180,180,180,200});
+                    }
+                }
             }
 
             // Round info label (prep phase only)
@@ -5473,10 +5915,17 @@ int main(void)
     UnloadModel(doorModel);
     UnloadModel(trophyModel);
     UnloadModel(platformModel);
+    UnloadTexture(groundDiffuse);
     UnloadModel(stairsModel);
     UnloadTexture(stairsDiffuse);
     UnloadModel(circleModel);
     UnloadTexture(circleDiffuse);
+    // Unload env models (skip 2=stairs, 3=circle, 5=ground which alias stairsModel/circleModel/platformModel)
+    for (int i = 0; i < envModelCount; i++) {
+        if (i == 2 || i == 3 || i == 5) continue;  // reused models, already unloaded above
+        if (envModels[i].loaded) UnloadModel(envModels[i].model);
+        if (envModels[i].texture.id > 0) UnloadTexture(envModels[i].texture);
+    }
     UnloadMusicStream(bgm);
     UnloadSound(sfxWin);
     UnloadSound(sfxLoss);
