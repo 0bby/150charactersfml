@@ -2628,6 +2628,22 @@ int main(void)
                         }
                     }
                 }
+                // Check drop on sell zone
+                if (!placed && dragState.abilityId >= 0 && dragState.abilityId < ABILITY_COUNT) {
+                    int invGridW = HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap);
+                    int sellInvX = cardsStartX - invGridW - 20;
+                    int szSize = 2 * hudAbilSlotSize + hudAbilSlotGap;
+                    int szX = sellInvX - szSize - S(10);
+                    int szY = cardsY + S(18);
+                    Rectangle sellRect = { (float)szX, (float)szY, (float)szSize, (float)szSize };
+                    if (CheckCollisionPointRec(mouse, sellRect)) {
+                        int sellValue = ABILITY_DEFS[dragState.abilityId].goldCost / 2;
+                        if (sellValue < 1) sellValue = 1;
+                        playerGold += sellValue;
+                        PlaySound(sfxUiBuy);
+                        placed = true;
+                    }
+                }
                 // Not placed — return to source
                 if (!placed) {
                     if (dragState.sourceType == 0) {
@@ -5265,6 +5281,37 @@ int main(void)
                             cardX + (hudCardW - ew) / 2,
                             cardsY + (hudCardH - emptyFsz) / 2,
                             emptyFsz, (Color){ 60, 60, 80, 255 });
+                }
+            }
+
+            // --- Sell zone (left of inventory) ---
+            int sellZoneSize, sellZoneX, sellZoneY;
+            {
+                int invGridW = HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap);
+                int invStartX = cardsStartX - invGridW - 20;
+                sellZoneSize = 2 * hudAbilSlotSize + hudAbilSlotGap;
+                sellZoneX = invStartX - sellZoneSize - S(10);
+                sellZoneY = cardsY + S(18);
+                bool hovering = dragState.dragging && CheckCollisionPointRec(GetMousePosition(),
+                    (Rectangle){(float)sellZoneX, (float)sellZoneY, (float)sellZoneSize, (float)sellZoneSize});
+                Color sellBg = hovering ? (Color){80, 30, 30, 255} : (Color){45, 35, 35, 255};
+                Color sellBorder = hovering ? (Color){255, 80, 80, 255} : (Color){120, 80, 80, 255};
+                DrawRectangle(sellZoneX, sellZoneY, sellZoneSize, sellZoneSize, sellBg);
+                DrawRectangleLines(sellZoneX, sellZoneY, sellZoneSize, sellZoneSize, sellBorder);
+                // Sell label
+                const char *sellLabel = "SELL";
+                int sellLabelW = GameMeasureText(sellLabel, S(14));
+                GameDrawText(sellLabel, sellZoneX + (sellZoneSize - sellLabelW) / 2,
+                    sellZoneY + sellZoneSize / 2 - S(16), S(14), sellBorder);
+                // Gold indicator
+                if (dragState.dragging && dragState.abilityId >= 0 && dragState.abilityId < ABILITY_COUNT) {
+                    int sellValue = ABILITY_DEFS[dragState.abilityId].goldCost / 2;
+                    if (sellValue < 1) sellValue = 1;
+                    const char *sellGold = TextFormat("+%dg", sellValue);
+                    int sgW = GameMeasureText(sellGold, S(12));
+                    GameDrawText(sellGold, sellZoneX + (sellZoneSize - sgW) / 2,
+                        sellZoneY + sellZoneSize / 2 + S(2), S(12),
+                        hovering ? (Color){240, 200, 60, 255} : (Color){160, 140, 50, 200});
                 }
             }
 
