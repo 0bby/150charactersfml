@@ -30,6 +30,7 @@
 
 // Global font — loaded in main(), used by GameDrawText/GameMeasureText
 static Font g_gameFont = { 0 };
+
 static inline void GameDrawText(const char *text, int x, int y, int fontSize, Color color)
 {
     if (g_gameFont.glyphCount > 0) {
@@ -47,6 +48,22 @@ static inline int GameMeasureText(const char *text, int fontSize)
         return (int)MeasureTextEx(g_gameFont, text, (float)fontSize, spacing).x;
     }
     return MeasureText(text, fontSize);
+}
+
+// Returns WHITE or BLACK depending on background luminance for readable text
+static inline Color TextColorForBg(Color bg)
+{
+    float lum = 0.299f * bg.r + 0.587f * bg.g + 0.114f * bg.b;
+    return (lum > 150.0f) ? BLACK : WHITE;
+}
+
+// Draw text with auto contrast + shadow on colored backgrounds
+static inline void GameDrawTextOnColor(const char *text, int x, int y, int fontSize, Color bg)
+{
+    Color fg = TextColorForBg(bg);
+    Color shadow = (fg.r == 0) ? (Color){255,255,255,80} : (Color){0,0,0,150};
+    GameDrawText(text, x + 1, y + 1, fontSize, shadow);
+    GameDrawText(text, x, y, fontSize, fg);
 }
 #include "pve_waves.h"
 #include "plaza.h"
@@ -4986,13 +5003,14 @@ int main(void)
                                 abbrSize = S(13) + (int)(3.0f * (hoverTimer / tooltipDelay));
                             const char *abbr = ABILITY_DEFS[aslot->abilityId].abbrev;
                             int aw2 = GameMeasureText(abbr, abbrSize);
-                            GameDrawText(abbr, ax + (hudAbilSlotSize - aw2) / 2,
-                                    ay + (hudAbilSlotSize - abbrSize) / 2, abbrSize, WHITE);
-                            // Level indicator (bottom-left) with shadow
+                            GameDrawTextOnColor(abbr, ax + (hudAbilSlotSize - aw2) / 2,
+                                    ay + (hudAbilSlotSize - abbrSize) / 2, abbrSize,
+                                    ABILITY_DEFS[aslot->abilityId].color);
+                            // Level indicator (bottom-left)
                             const char *lvl = TextFormat("L%d", aslot->level + 1);
                             int lvlFsz = S(11);
-                            GameDrawText(lvl, ax + S(2) + 1, ay + hudAbilSlotSize - lvlFsz + 1, lvlFsz, (Color){0,0,0,180});
-                            GameDrawText(lvl, ax + S(2), ay + hudAbilSlotSize - lvlFsz, lvlFsz, WHITE);
+                            GameDrawTextOnColor(lvl, ax + S(2), ay + hudAbilSlotSize - lvlFsz, lvlFsz,
+                                    ABILITY_DEFS[aslot->abilityId].color);
                             // Cooldown overlay (combat only)
                             if (aslot->cooldownRemaining > 0 && phase == PHASE_COMBAT) {
                                 const AbilityDef *adef = &ABILITY_DEFS[aslot->abilityId];
@@ -5067,14 +5085,14 @@ int main(void)
                         int invAbbrSize = S(13);
                         if (invHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
                             invAbbrSize = S(13) + (int)(3.0f * (hoverTimer / tooltipDelay));
+                        Color invAbilColor = ABILITY_DEFS[inventory[inv].abilityId].color;
                         const char *iabbr = ABILITY_DEFS[inventory[inv].abilityId].abbrev;
                         int iaw = GameMeasureText(iabbr, invAbbrSize);
-                        GameDrawText(iabbr, ix + (hudAbilSlotSize-iaw)/2,
-                                 iy + (hudAbilSlotSize-invAbbrSize)/2, invAbbrSize, WHITE);
+                        GameDrawTextOnColor(iabbr, ix + (hudAbilSlotSize-iaw)/2,
+                                 iy + (hudAbilSlotSize-invAbbrSize)/2, invAbbrSize, invAbilColor);
                         const char *ilvl = TextFormat("L%d", inventory[inv].level + 1);
                         int ilvlFsz = S(11);
-                        GameDrawText(ilvl, ix + S(2) + 1, iy + hudAbilSlotSize - ilvlFsz + 1, ilvlFsz, (Color){0,0,0,180});
-                        GameDrawText(ilvl, ix + S(2), iy + hudAbilSlotSize - ilvlFsz, ilvlFsz, WHITE);
+                        GameDrawTextOnColor(ilvl, ix + S(2), iy + hudAbilSlotSize - ilvlFsz, ilvlFsz, invAbilColor);
                     }
                 }
             }
@@ -5254,8 +5272,11 @@ int main(void)
                         const char *sname = TextFormat("%s %dg", sdef->name, sdef->goldCost);
                         int shopFontSz = S(14);
                         int snw = GameMeasureText(sname, shopFontSz);
-                        GameDrawText(sname, scx + (shopCardW - snw)/2, scy + (shopCardH - shopFontSz)/2, shopFontSz,
-                                canAfford ? WHITE : (Color){100,100,120,255});
+                        if (canAfford) {
+                            GameDrawTextOnColor(sname, scx + (shopCardW - snw)/2, scy + (shopCardH - shopFontSz)/2, shopFontSz, cardBg);
+                        } else {
+                            GameDrawText(sname, scx + (shopCardW - snw)/2, scy + (shopCardH - shopFontSz)/2, shopFontSz, (Color){100,100,120,255});
+                        }
                     } else {
                         int shopFontSz = S(14);
                         DrawRectangle(scx, scy, shopCardW, shopCardH, (Color){35,35,45,255});
@@ -5400,21 +5421,21 @@ int main(void)
             int cdLineIdx = numStatLines; // special: cooldown uses cooldown[] not values[]
             numStatLines++; // reserve a line for cooldown
 
-            int tipW = S(220);
-            int tipH = 44 + numStatLines * S(16);
+            int tipW = S(240);
+            int tipH = S(50) + numStatLines * S(18);
             int tipX = (int)mpos.x + 14;
             int tipY = (int)mpos.y - tipH - 4;
             if (tipX + tipW > GetScreenWidth()) tipX = (int)mpos.x - tipW - 4;
             if (tipY < 0) tipY = (int)mpos.y + 20;
             DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
             DrawRectangleLines(tipX, tipY, tipW, tipH, (Color){100, 100, 130, 255});
-            GameDrawText(tipDef->name, tipX + 6, tipY + 4, S(16), WHITE);
-            GameDrawText(tipDef->description, tipX + 6, tipY + 22, S(12), (Color){180, 180, 200, 255});
+            GameDrawText(tipDef->name, tipX + S(6), tipY + S(4), S(16), WHITE);
+            GameDrawText(tipDef->description, tipX + S(6), tipY + S(22), S(12), (Color){180, 180, 200, 255});
 
             Color dimStatColor = { 100, 100, 120, 255 };
-            int lineY = tipY + 38;
+            int lineY = tipY + S(40);
             for (int sl = 0; sl < numStatLines; sl++) {
-                int lx = tipX + 6;
+                int lx = tipX + S(6);
                 if (sl == cdLineIdx) {
                     // Cooldown line
                     const char *cdLabel = "CD: ";
@@ -5454,7 +5475,7 @@ int main(void)
                         }
                     }
                 }
-                lineY += S(16);
+                lineY += S(18);
             }
         }
 
