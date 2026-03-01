@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 #include "raylib.h"
 #include "unit_stats.h"
 #include "abilities.h"
@@ -6,6 +7,12 @@
 //------------------------------------------------------------------------------------
 // Data Structures & Constants
 //------------------------------------------------------------------------------------
+#define RARITY_COMMON 0
+#define RARITY_RARE 1
+#define RARITY_LEGENDARY 2
+#define RARITY_MULT_RARE 1.1f
+#define RARITY_MULT_LEGENDARY 1.3f
+
 #define MAX_UNIT_TYPES 8
 #define MAX_UNITS 64
 #define TOTAL_ROUNDS 5
@@ -195,6 +202,7 @@ typedef struct {
     // NFC tag UID (travels with unit during array compaction)
     unsigned char nfcUid[7];
     int nfcUidLen;         // 0 = not from NFC
+    uint8_t rarity;        // 0=common, 1=rare, 2=legendary
 } Unit;
 
 //------------------------------------------------------------------------------------
@@ -207,6 +215,10 @@ typedef struct {
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
     unsigned char nfcUid[7];
     int nfcUidLen;
+    uint8_t rarity;
+    float hpMultiplier;
+    float dmgMultiplier;
+    float speedMultiplier;
 } UnitSnapshot;
 
 //------------------------------------------------------------------------------------

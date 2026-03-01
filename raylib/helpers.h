@@ -108,6 +108,10 @@ int FindHighestHPAlly(Unit units[], int unitCount, int selfIndex);
 int FindFurthestEnemy(Unit units[], int unitCount, int selfIndex);
 int FindLowestHPAlly(Unit units[], int unitCount, int selfIndex);
 
+// Rarity buffs
+void ApplyUnitRarity(Unit *unit);
+void ApplyRarityBuffs(Unit units[], int unitCount);
+
 // Synergy system
 void ApplySynergies(Unit units[], int unitCount);
 

@@ -135,6 +135,10 @@ void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[], int *snapCo
             snaps[i].abilities[a] = units[i].abilities[a];
         memcpy(snaps[i].nfcUid, units[i].nfcUid, sizeof(units[i].nfcUid));
         snaps[i].nfcUidLen = units[i].nfcUidLen;
+        snaps[i].rarity = units[i].rarity;
+        snaps[i].hpMultiplier = units[i].hpMultiplier;
+        snaps[i].dmgMultiplier = units[i].dmgMultiplier;
+        snaps[i].speedMultiplier = units[i].speedMultiplier;
     }
 }
 
@@ -149,7 +153,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             .typeIndex      = snaps[i].typeIndex,
             .position       = snaps[i].position,
             .team           = snaps[i].team,
-            .currentHealth  = stats->health,
+            .currentHealth  = stats->health * snaps[i].hpMultiplier,
             .attackCooldown = 0.0f,
             .targetIndex    = -1,
             .active         = true,
@@ -159,9 +163,9 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             .currentAnim    = ANIM_IDLE,
             .animFrame      = GetRandomValue(0, 999),
             .scaleOverride  = 1.0f,
-            .hpMultiplier   = 1.0f,
-            .dmgMultiplier  = 1.0f,
-            .speedMultiplier = 1.0f,
+            .hpMultiplier   = snaps[i].hpMultiplier,
+            .dmgMultiplier  = snaps[i].dmgMultiplier,
+            .speedMultiplier = snaps[i].speedMultiplier,
             .shieldHP       = 0.0f,
             .abilityCastDelay = 0.0f,
             .chargeTarget   = -1,
@@ -170,6 +174,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             units[i].abilities[a] = snaps[i].abilities[a];
         memcpy(units[i].nfcUid, snaps[i].nfcUid, sizeof(units[i].nfcUid));
         units[i].nfcUidLen = snaps[i].nfcUidLen;
+        units[i].rarity = snaps[i].rarity;
     }
 }
 
@@ -715,36 +720,27 @@ void CompactBlueUnits(Unit units[], int *unitCount)
 
 // Static wave definitions for rounds 1-5
 static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
-    // Round 1: "Skirmish" — no abilities
-    { .count = 3, .entries = {
-        { .unitType = 0, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+    // Round 1: 1 enemy, no abilities
+    { .count = 1, .entries = {
+        { .unitType = -1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+    }},
+    // Round 2: 2 enemies, no abilities
+    { .count = 2, .entries = {
         { .unitType = 0, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
         { .unitType = 1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
-    // Round 2: "Scouts" — 1 ability each (level 0)
-    { .count = 4, .entries = {
+    // Round 3: 2 enemies with 1 ability each
+    { .count = 2, .entries = {
         { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
         { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
-    // Round 3: "Veterans" — 2 abilities level 0 each
-    { .count = 5, .entries = {
+    // Round 4: 3 enemies, 1-2 abilities level 0-1
+    { .count = 3, .entries = {
         { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 0, .numAbilities = 1, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
         { .unitType = 1, .numAbilities = 1, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
-    // Round 4: "Elite Squad" — 2 abilities level 1 each
-    { .count = 5, .entries = {
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-    }},
-    // Round 5: "BOSS" — single massive unit, 4 abilities all level 2
+    // Round 5: BOSS — single massive unit, 4 abilities all level 2
     { .count = 1, .entries = {
         { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 8.0f, .dmgMult = 3.0f, .scaleMult = 2.5f },
     }},
@@ -799,6 +795,27 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
 //------------------------------------------------------------------------------------
 // Synergy System
 //------------------------------------------------------------------------------------
+void ApplyUnitRarity(Unit *unit)
+{
+    if (unit->rarity == RARITY_COMMON) return;
+    float mult = (unit->rarity == RARITY_LEGENDARY)
+               ? RARITY_MULT_LEGENDARY : RARITY_MULT_RARE;
+    float oldMax = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
+    unit->hpMultiplier *= mult;
+    unit->dmgMultiplier *= mult;
+    unit->speedMultiplier *= mult;
+    float newMax = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
+    if (oldMax > 0) unit->currentHealth *= (newMax / oldMax);
+}
+
+void ApplyRarityBuffs(Unit units[], int unitCount)
+{
+    for (int i = 0; i < unitCount; i++) {
+        if (!units[i].active) continue;
+        ApplyUnitRarity(&units[i]);
+    }
+}
+
 void ApplySynergies(Unit units[], int unitCount)
 {
     for (int team = 0; team < 2; team++) {

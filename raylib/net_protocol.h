@@ -63,6 +63,7 @@ typedef enum {
 typedef struct __attribute__((packed)) {
     uint8_t typeIndex;
     uint8_t team;           // 0=blue, 1=red
+    uint8_t rarity;         // 0=common, 1=rare, 2=legendary
     float   posX, posZ;
     float   currentHealth;
     float   facingAngle;

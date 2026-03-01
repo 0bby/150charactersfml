@@ -200,6 +200,7 @@ void session_start_combat(GameSession *s)
     setup_pvp_combat(s->combatUnits, &s->combatUnitCount,
                      s->players[0].units, s->players[0].unitCount,
                      s->players[1].units, s->players[1].unitCount);
+    ApplyRarityBuffs(s->combatUnits, s->combatUnitCount);
     ApplySynergies(s->combatUnits, s->combatUnitCount);
 
     // Player 0 sees: their army (blue) vs p1 mirror (red)
@@ -211,6 +212,7 @@ void session_start_combat(GameSession *s)
     setup_pvp_combat(p1View, &p1ViewCount,
                      s->players[1].units, s->players[1].unitCount,
                      s->players[0].units, s->players[0].unitCount);
+    ApplyRarityBuffs(p1View, p1ViewCount);
     ApplySynergies(p1View, p1ViewCount);
     send_combat_start(s, 1, p1View, p1ViewCount);
 }
