@@ -85,8 +85,6 @@ int main(void)
     char buf[BUF_SIZE];
     int pos = 0;
 
-    fprintf(stderr, "Waiting for NFC cards...\n");
-
     while (1) {
         char c;
         int n = read(fd, &c, 1);
@@ -100,15 +98,32 @@ int main(void)
         if (c == '\n' || c == '\r') {
             if (pos > 0) {
                 buf[pos] = '\0';
-                if (strncmp(buf, PREFIX, PREFIX_LEN) == 0) {
-                    printf("%s\n", buf + PREFIX_LEN);
+                /* Strip OSC escape sequences (ESC ] ... ESC \) from CircuitPython */
+                char *line = buf;
+                for (char *p = buf; *p; p++) {
+                    if (p[0] == '\x1b' && p[1] == ']') {
+                        /* Skip until ESC \ (ST) */
+                        p += 2;
+                        while (*p && !(p[0] == '\x1b' && p[1] == '\\')) p++;
+                        if (*p) p++; /* skip past the backslash */
+                        line = p + 1;
+                    }
+                }
+                /* Strip leading and trailing whitespace */
+                while (*line == ' ' || *line == '\t' || *line == '\0' || *line == '\n' || *line == '\r') line++;
+                char *end = line + strlen(line) - 1;
+                while (end > line && (*end == ' ' || *end == '\t' || *end == '\0' || *end == '\n' || *end == '\r')) end--;
+                *(end + 1) = '\0';
+                if (strncmp(line, PREFIX, PREFIX_LEN) == 0) {
+                    printf("%s\n", line + PREFIX_LEN);
                     fflush(stdout);
                 }
-                if (strstr(buf, "Didn't find PN53x")) {
-                    fprintf(stderr, "WARNING: %s\n", buf);
+                if (strstr(line, "Didn't find PN53x")) {
+                    fprintf(stderr, "WARNING: %s\n", line);
                     /* Don't exit — with multiple readers, the other may still work */
                 }
-                fprintf(stderr, "[NFC] %s\n", buf);
+                int lineLen = (int)strlen(line);
+                fprintf(stderr, "[NFC] (%d) %s\n", lineLen, line);
                 pos = 0;
             }
         } else if (pos < BUF_SIZE - 1) {
