@@ -65,6 +65,8 @@ jobs:
             cd ~/server && \
             make clean && make && \
             pkill server || true && \
-            nohup ./server > /tmp/server.log 2>&1 &
+            sleep 1 && \
+            nohup ./server > /tmp/server.log 2>&1 < /dev/null &
+            disown && \
             sleep 1 && pgrep server && echo "Server started successfully" || echo "WARNING: Server may not have started"
           '
