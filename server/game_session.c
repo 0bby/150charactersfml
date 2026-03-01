@@ -69,13 +69,13 @@ static void setup_pvp_combat(Unit combatUnits[], int *combatUnitCount,
         count++;
     }
 
-    // Player 1's army as red (mirrored X position, reset health to max)
+    // Player 1's army as red (reflected about Z=0 halfway line, reset health to max)
     for (int i = 0; i < p1Count && count < MAX_UNITS; i++) {
         if (!p1Units[i].active) continue;
         combatUnits[count] = p1Units[i];
         combatUnits[count].team = TEAM_RED;
         combatUnits[count].currentHealth = UNIT_STATS[p1Units[i].typeIndex].health;
-        combatUnits[count].position.x = -combatUnits[count].position.x;
+        combatUnits[count].position.z = -combatUnits[count].position.z;
         combatUnits[count].facingAngle = 180.0f - combatUnits[count].facingAngle;
         combatUnits[count].targetIndex = -1;
         combatUnits[count].attackCooldown = 0;
@@ -171,7 +171,7 @@ void session_start_prep(GameSession *s)
         // Send prep start: round number, gold
         uint8_t payload[16];
         payload[0] = (uint8_t)s->currentRound;
-        payload[1] = (uint8_t)(IsPveRound(s->currentRound) ? 1 : 0); // isPve
+        payload[1] = 0; // always PVP in multiplayer
         // Gold as 16-bit
         payload[2] = (s->players[p].gold >> 8) & 0xFF;
         payload[3] = s->players[p].gold & 0xFF;
@@ -195,51 +195,24 @@ void session_start_combat(GameSession *s)
     memset(s->combatProjectiles, 0, sizeof(s->combatProjectiles));
     memset(s->combatFissures, 0, sizeof(s->combatFissures));
 
-    bool isPve = IsPveRound(s->currentRound);
+    // All multiplayer rounds are PVP
+    // Server simulates p0=blue vs p1=red
+    setup_pvp_combat(s->combatUnits, &s->combatUnitCount,
+                     s->players[0].units, s->players[0].unitCount,
+                     s->players[1].units, s->players[1].unitCount);
+    ApplySynergies(s->combatUnits, s->combatUnitCount);
 
-    if (isPve) {
-        int waveIdx = GetPveWaveIndex(s->currentRound);
+    // Player 0 sees: their army (blue) vs p1 mirror (red)
+    send_combat_start(s, 0, s->combatUnits, s->combatUnitCount);
 
-        // Each player fights the same wave independently.
-        // Server simulates player 0's combat to determine authoritative result.
-        // (For simplicity, both players get the same result based on p0.)
-        setup_pve_enemies(s->combatUnits, &s->combatUnitCount,
-                          s->players[0].units, s->players[0].unitCount,
-                          waveIdx);
-        ApplySynergies(s->combatUnits, s->combatUnitCount);
-
-        // Send combat start to both players with their own army + PVE wave
-        for (int p = 0; p < 2; p++) {
-            if (!s->players[p].connected) continue;
-            // Build combat units for this player specifically
-            Unit playerCombat[MAX_UNITS];
-            int playerCombatCount;
-            setup_pve_enemies(playerCombat, &playerCombatCount,
-                              s->players[p].units, s->players[p].unitCount,
-                              waveIdx);
-            ApplySynergies(playerCombat, playerCombatCount);
-            send_combat_start(s, p, playerCombat, playerCombatCount);
-        }
-    } else {
-        // PVP: server simulates p0=blue vs p1=red
-        setup_pvp_combat(s->combatUnits, &s->combatUnitCount,
-                         s->players[0].units, s->players[0].unitCount,
-                         s->players[1].units, s->players[1].unitCount);
-        ApplySynergies(s->combatUnits, s->combatUnitCount);
-
-        // Player 0 sees: their army (blue) vs p1 mirror (red)
-        send_combat_start(s, 0, s->combatUnits, s->combatUnitCount);
-
-        // Player 1 sees: their army (blue) vs p0 mirror (red)
-        // Rebuild with swapped perspective
-        Unit p1View[MAX_UNITS];
-        int p1ViewCount;
-        setup_pvp_combat(p1View, &p1ViewCount,
-                         s->players[1].units, s->players[1].unitCount,
-                         s->players[0].units, s->players[0].unitCount);
-        ApplySynergies(p1View, p1ViewCount);
-        send_combat_start(s, 1, p1View, p1ViewCount);
-    }
+    // Player 1 sees: their army (blue) vs p0 mirror (red)
+    Unit p1View[MAX_UNITS];
+    int p1ViewCount;
+    setup_pvp_combat(p1View, &p1ViewCount,
+                     s->players[1].units, s->players[1].unitCount,
+                     s->players[0].units, s->players[0].unitCount);
+    ApplySynergies(p1View, p1ViewCount);
+    send_combat_start(s, 1, p1View, p1ViewCount);
 }
 
 void session_handle_msg(GameSession *s, int playerIdx, const NetMessage *msg)
@@ -420,12 +393,11 @@ int session_tick(GameSession *s, float dt)
                                 s->combatModifiers, s->combatProjectiles,
                                 s->combatFissures, COMBAT_DT, NULL, NULL);
         if (result > 0) {
-            bool isPve = IsPveRound(s->currentRound);
             int winner = -1; // -1 = draw
             if (result == 1) winner = 0;       // blue wins = player 0
             else if (result == 2) winner = 1;  // red wins = player 1
 
-            if (!isPve && winner >= 0) {
+            if (winner >= 0) {
                 s->pvpWins[winner]++;
             }
 
@@ -435,17 +407,11 @@ int session_tick(GameSession *s, float dt)
             for (int p = 0; p < 2; p++) {
                 if (!s->players[p].connected) continue;
                 uint8_t payload[6];
-                // From each player's perspective (they're always blue)
-                if (isPve) {
-                    // PVE: result is the same for both
-                    payload[0] = (result == 1) ? 0 : ((result == 2) ? 1 : 2); // 0=win,1=lose,2=draw
-                } else {
-                    // PVP: player p is always "blue" from their view
-                    if (winner == p) payload[0] = 0;
-                    else if (winner == (1-p)) payload[0] = 1;
-                    else payload[0] = 2;
-                }
-                payload[1] = (uint8_t)isPve;
+                // PVP: player p is always "blue" from their view
+                if (winner == p) payload[0] = 0;
+                else if (winner == (1-p)) payload[0] = 1;
+                else payload[0] = 2;
+                payload[1] = 0; // always PVP
                 payload[2] = (uint8_t)s->pvpWins[0];
                 payload[3] = (uint8_t)s->pvpWins[1];
                 payload[4] = (uint8_t)s->currentRound;
@@ -469,7 +435,6 @@ int session_tick(GameSession *s, float dt)
 
             // Give gold and move to next prep
             int bonusGold = 5;
-            if (isPve && result == 1) bonusGold += 2; // PVE win bonus
             for (int p = 0; p < 2; p++) {
                 s->players[p].gold += bonusGold;
             }
