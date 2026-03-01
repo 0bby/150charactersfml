@@ -13,6 +13,9 @@
 #define PREFIX_LEN 4
 #define MAX_ACM 10
 
+/* Known NFC reader board identifiers (matched in /dev/serial/by-id/ names) */
+static const char *KNOWN_BOARDS[] = { "Pico", "Arduino", "Adafruit", NULL };
+
 static int try_open(const char *path)
 {
     int fd = open(path, O_RDONLY | O_NOCTTY);
@@ -24,15 +27,34 @@ static int try_open(const char *path)
 int main(void)
 {
     int fd = -1;
-    char port[64];
+    char port[256];
 
-    /* Try Linux-style /dev/ttyACM* first (Arduino) */
+    /* First: try /dev/serial/by-id/ to find known NFC reader boards (Linux).
+       This avoids grabbing unrelated ACM devices (e.g. Framework LED Matrix). */
+    {
+        DIR *byid = opendir("/dev/serial/by-id");
+        if (byid) {
+            struct dirent *ent;
+            while (fd < 0 && (ent = readdir(byid)) != NULL) {
+                for (const char **b = KNOWN_BOARDS; *b; b++) {
+                    if (strstr(ent->d_name, *b)) {
+                        snprintf(port, sizeof(port), "/dev/serial/by-id/%s", ent->d_name);
+                        fd = try_open(port);
+                        break;
+                    }
+                }
+            }
+            closedir(byid);
+        }
+    }
+
+    /* Fallback: try Linux-style /dev/ttyACM* (Arduino) */
     for (int i = 0; i < MAX_ACM && fd < 0; i++) {
         snprintf(port, sizeof(port), "/dev/ttyACM%d", i);
         fd = try_open(port);
     }
 
-    /* Try macOS-style /dev/cu.usbmodem* (Pico / CircuitPython) */
+    /* Fallback: try macOS-style /dev/cu.usbmodem* (Pico / CircuitPython) */
     if (fd < 0) {
         DIR *dev = opendir("/dev");
         if (dev) {
@@ -49,7 +71,7 @@ int main(void)
     }
 
     if (fd < 0) {
-        fprintf(stderr, "No serial port found (tried /dev/ttyACM* and /dev/cu.usbmodem*)\n");
+        fprintf(stderr, "No serial port found (tried /dev/serial/by-id/, /dev/ttyACM* and /dev/cu.usbmodem*)\n");
         return 1;
     }
 
