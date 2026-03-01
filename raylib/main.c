@@ -656,13 +656,6 @@ int main(void)
     int nfcFd = -1;
     char nfcLineBuf[128];
     int nfcLinePos = 0;
-    // Ring buffer of recently-seen UIDs — only do server lookup if seen twice
-    // (garbage reads are random one-offs, valid tags repeat constantly)
-    #define NFC_SEEN_SIZE 8
-    uint8_t nfcSeen[NFC_SEEN_SIZE][NFC_UID_MAX_LEN];
-    int     nfcSeenLen[NFC_SEEN_SIZE];
-    int     nfcSeenNext = 0;
-    memset(nfcSeenLen, 0, sizeof(nfcSeenLen));
     if (nfcPipe) {
         nfcFd = fileno(nfcPipe);
         int flags = fcntl(nfcFd, F_GETFL, 0);
@@ -888,27 +881,9 @@ int main(void)
                                             break;
                                         }
                                     }
-                                    // Check if we've seen this UID before (filters garbage one-off reads)
-                                    bool uidSeenBefore = false;
-                                    if (!uidAlreadySpawned) {
-                                        for (int si = 0; si < NFC_SEEN_SIZE; si++) {
-                                            if (nfcSeenLen[si] == nfcUidLen &&
-                                                memcmp(nfcSeen[si], nfcUid, nfcUidLen) == 0) {
-                                                uidSeenBefore = true;
-                                                break;
-                                            }
-                                        }
-                                        // Always record this UID in the seen buffer
-                                        memcpy(nfcSeen[nfcSeenNext], nfcUid, nfcUidLen);
-                                        nfcSeenLen[nfcSeenNext] = nfcUidLen;
-                                        nfcSeenNext = (nfcSeenNext + 1) % NFC_SEEN_SIZE;
-                                    }
                                     if (uidAlreadySpawned) {
                                         // Tag still on scanner — ignore
-                                    } else if (!uidSeenBefore) {
-                                        // First time seeing this UID — wait for confirmation
-                                    } else {
-                                        if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
+                                    } else if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
                                                        &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities) == 0) {
                                         if (nfcStatus == NFC_STATUS_OK && nfcTypeIdx < unitTypeCount) {
                                             if (SpawnUnit(units, &unitCount, nfcTypeIdx, TEAM_BLUE)) {
@@ -930,7 +905,6 @@ int main(void)
                                     } else {
                                         printf("[NFC] Reader %d: UID %s -> server connection failed\n", nfcReader, nfcHex);
                                     }
-                                    } // end else (cache + server lookup)
                                 } else {
                                     printf("[NFC] Invalid hex UID: '%s'\n", nfcLineBuf);
                                 }
