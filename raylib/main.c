@@ -605,7 +605,7 @@ int main(void)
     Projectile projectiles[MAX_PROJECTILES] = { 0 };
     Particle particles[MAX_PARTICLES] = { 0 };
     int playerGold = 25;
-    int goldPerRound = 10;
+    int goldPerRound = 15;
     int rollCost = 1;
     const int rollCostBase = 1;
     const int rollCostIncrement = 1;
@@ -3607,7 +3607,7 @@ int main(void)
             if (isMultiplayer && IsKeyPressed(KEY_R)) {
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
-                for (int u2 = 0; u2 < MAX_UNITS; u2++) units[u2].nfcUidLen = 0;
+                for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].nfcUidLen = 0; units[u2].active = false; }
                 unitCount = 0;
                 snapshotCount = 0;
                 currentRound = 0;
@@ -3668,14 +3668,17 @@ int main(void)
                     }
                 }
 
-                // RESET button
+                // RESET button (only clickable when no NFC units remain)
+                bool hasNfcUnits = false;
+                for (int h = 0; h < goCount; h++)
+                    if (units[goBlue[h]].nfcUidLen > 0) { hasNfcUnits = true; break; }
                 int resetBtnW = 180, resetBtnH = 44;
                 int resetBtnY = cardY + cardH + 30;
                 Rectangle resetBtn = { (float)(sw/2 - resetBtnW/2), (float)resetBtnY, (float)resetBtnW, (float)resetBtnH };
-                if (CheckCollisionPointRec(mouse, resetBtn)) {
+                if (!hasNfcUnits && CheckCollisionPointRec(mouse, resetBtn)) {
                     PlaySound(sfxUiClick);
                     // Full reset — go to menu
-                    for (int u2 = 0; u2 < MAX_UNITS; u2++) units[u2].nfcUidLen = 0;
+                    for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].nfcUidLen = 0; units[u2].active = false; }
                     unitCount = 0;
                     snapshotCount = 0;
                     currentRound = 0;
@@ -3711,23 +3714,9 @@ int main(void)
                         net_nfc_reset_abilities(serverHost, NET_PORT, units[u2].nfcUid, units[u2].nfcUidLen);
                     }
                 }
-                // Keep blue NFC units but wipe their abilities and revive them
-                int keptCount = 0;
-                for (int u2 = 0; u2 < unitCount; u2++) {
-                    if (units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
-                        units[keptCount] = units[u2];
-                        units[keptCount].active = true;
-                        units[keptCount].currentHealth = UNIT_STATS[units[keptCount].typeIndex].health * units[keptCount].hpMultiplier;
-                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                            units[keptCount].abilities[a].abilityId = -1;
-                            units[keptCount].abilities[a].level = 0;
-                            units[keptCount].abilities[a].cooldownRemaining = 0;
-                            units[keptCount].abilities[a].triggered = false;
-                        }
-                        keptCount++;
-                    }
-                }
-                unitCount = keptCount;
+                // Full reset — clear all units
+                for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].nfcUidLen = 0; units[u2].active = false; }
+                unitCount = 0;
                 snapshotCount = 0;
                 currentRound = 0;
                 blueWins = 0;
@@ -6210,9 +6199,18 @@ int main(void)
             for (int i = 0; i < unitCount && goCount < BLUE_TEAM_MAX_SIZE; i++)
                 if (units[i].active && units[i].team == TEAM_BLUE) goBlue[goCount++] = i;
 
+            // Check if any NFC units still need withdrawing
+            bool hasNfcUnits = false;
+            for (int i = 0; i < goCount; i++)
+                if (units[goBlue[i]].nfcUidLen > 0) { hasNfcUnits = true; break; }
+
             // Subtitle
-            if (goCount > 0) {
-                const char *goSub = "Withdraw units before resetting (placeholder for NFC export)";
+            if (hasNfcUnits) {
+                const char *goSub = "Remove all units from sensors before resetting";
+                int gosub = GameMeasureText(goSub, 14);
+                GameDrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){255,120,120,220});
+            } else if (goCount > 0) {
+                const char *goSub = "Withdraw your units or reset";
                 int gosub = GameMeasureText(goSub, 14);
                 GameDrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){180,180,200,180});
             } else {
@@ -6282,18 +6280,26 @@ int main(void)
                 GameDrawText(wdText, (int)(wdBtn.x + (goCardW - 20)/2 - wdw/2), (int)(wdBtn.y + 8), 12, WHITE);
             }
 
-            // RESET button
+            // RESET button (disabled while NFC units remain)
             int resetBtnW = 180, resetBtnH = 44;
             int resetBtnY = goCardY + goCardH + 30;
             Rectangle resetBtn = { (float)(gosw/2 - resetBtnW/2), (float)resetBtnY, (float)resetBtnW, (float)resetBtnH };
-            Color resetBg = (Color){180,50,50,255};
-            if (CheckCollisionPointRec(GetMousePosition(), resetBtn))
-                resetBg = (Color){220,70,70,255};
-            DrawRectangleRec(resetBtn, resetBg);
-            DrawRectangleLinesEx(resetBtn, 2, (Color){120,40,40,255});
-            const char *resetText = "RESET";
-            int rstw = GameMeasureText(resetText, 18);
-            GameDrawText(resetText, (int)(resetBtn.x + resetBtnW/2 - rstw/2), (int)(resetBtn.y + 13), 18, WHITE);
+            if (hasNfcUnits) {
+                DrawRectangleRec(resetBtn, (Color){60,50,50,255});
+                DrawRectangleLinesEx(resetBtn, 2, (Color){80,60,60,255});
+                const char *resetText = "RESET";
+                int rstw = GameMeasureText(resetText, 18);
+                GameDrawText(resetText, (int)(resetBtn.x + resetBtnW/2 - rstw/2), (int)(resetBtn.y + 13), 18, (Color){100,90,90,255});
+            } else {
+                Color resetBg = (Color){180,50,50,255};
+                if (CheckCollisionPointRec(GetMousePosition(), resetBtn))
+                    resetBg = (Color){220,70,70,255};
+                DrawRectangleRec(resetBtn, resetBg);
+                DrawRectangleLinesEx(resetBtn, 2, (Color){120,40,40,255});
+                const char *resetText = "RESET";
+                int rstw = GameMeasureText(resetText, 18);
+                GameDrawText(resetText, (int)(resetBtn.x + resetBtnW/2 - rstw/2), (int)(resetBtn.y + 13), 18, WHITE);
+            }
         }
 
         //==============================================================================
