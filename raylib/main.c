@@ -509,9 +509,11 @@ int main(void)
     Modifier modifiers[MAX_MODIFIERS] = { 0 };
     Projectile projectiles[MAX_PROJECTILES] = { 0 };
     Particle particles[MAX_PARTICLES] = { 0 };
-    int playerGold = 100; // DEBUG: was 10
+    int playerGold = 20; // DEBUG: was 10
     int goldPerRound = 5;
-    int rollCost = 2;
+    int rollCost = 1;
+    const int rollCostBase = 1;
+    const int rollCostIncrement = 1;
     ShopSlot shopSlots[MAX_SHOP_SLOTS];
     for (int i = 0; i < MAX_SHOP_SLOTS; i++) shopSlots[i].abilityId = -1;
     InventorySlot inventory[MAX_INVENTORY_SLOTS];
@@ -1279,9 +1281,10 @@ int main(void)
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
                     statueSpawn.phase = SSPAWN_INACTIVE;
-                    playerGold = 100;
+                    playerGold = 20;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     RollShop(shopSlots, &playerGold, 0);
+                    rollCost = rollCostBase;
                     dragState.dragging = false;
                     SpawnWave(units, &unitCount, 0, unitTypeCount);
                     phase = PHASE_PREP;
@@ -2026,13 +2029,14 @@ int main(void)
                 if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
                     Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
-                    if (CheckCollisionPointRec(mouse, rollBtn)) {
+                    if (CheckCollisionPointRec(mouse, rollBtn) && playerGold >= rollCost) {
                         PlaySound(sfxUiReroll);
                         if (isMultiplayer) {
                             net_client_send_roll(&netClient);
                         } else {
                             RollShop(shopSlots, &playerGold, rollCost);
                         }
+                        rollCost += rollCostIncrement;
                         TriggerShake(&shake, 2.0f, 0.15f);
                         clickedButton = true;
                     }
@@ -3170,6 +3174,7 @@ int main(void)
                     SpawnWave(units, &unitCount, currentRound, unitTypeCount);
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0);
+                    rollCost = rollCostBase;
                     phase = PHASE_PREP;
                 }
             }
@@ -3240,6 +3245,7 @@ int main(void)
                     SpawnWave(units, &unitCount, currentRound, unitTypeCount);
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0);
+                    rollCost = rollCostBase;
                     phase = PHASE_PREP;
                 }
             }
@@ -3265,7 +3271,7 @@ int main(void)
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
-                playerGold = 100;
+                playerGold = 20;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
                 joinCodeLen = 0;
@@ -3337,7 +3343,7 @@ int main(void)
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
                     statueSpawn.phase = SSPAWN_INACTIVE;
-                    playerGold = 100;
+                    playerGold = 20;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     dragState.dragging = false;
                     unitCount = 0;
@@ -3351,14 +3357,29 @@ int main(void)
 
             // Death penalty: just press R (no withdraw possible)
             if (deathPenalty && IsKeyPressed(KEY_R)) {
-                // Reset NFC-tagged units' abilities on server
+                // Reset NFC-tagged units' abilities on server (include dead units)
                 for (int u2 = 0; u2 < unitCount; u2++) {
-                    if (units[u2].active && units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
+                    if (units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
                         net_nfc_reset_abilities(serverHost, NET_PORT, units[u2].nfcUid, units[u2].nfcUidLen);
                     }
                 }
-                for (int u2 = 0; u2 < MAX_UNITS; u2++) units[u2].nfcUidLen = 0;
-                unitCount = 0;
+                // Keep blue NFC units but wipe their abilities and revive them
+                int keptCount = 0;
+                for (int u2 = 0; u2 < unitCount; u2++) {
+                    if (units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
+                        units[keptCount] = units[u2];
+                        units[keptCount].active = true;
+                        units[keptCount].currentHealth = UNIT_STATS[units[keptCount].typeIndex].health * units[keptCount].hpMultiplier;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            units[keptCount].abilities[a].abilityId = -1;
+                            units[keptCount].abilities[a].level = 0;
+                            units[keptCount].abilities[a].cooldownRemaining = 0;
+                            units[keptCount].abilities[a].triggered = false;
+                        }
+                        keptCount++;
+                    }
+                }
+                unitCount = keptCount;
                 snapshotCount = 0;
                 currentRound = 0;
                 blueWins = 0;
@@ -3372,8 +3393,9 @@ int main(void)
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
+                intro.active = false;
                 statueSpawn.phase = SSPAWN_INACTIVE;
-                playerGold = 100;
+                playerGold = 20;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
                 memset(plazaData, 0, sizeof(plazaData));
