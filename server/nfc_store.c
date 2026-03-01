@@ -116,6 +116,22 @@ void NfcStoreLoad(NfcStore *store, const char *filepath)
             }
         }
 
+        // Parse "name": "..." (optional, backwards compatible)
+        char *nameKey = strstr(objStart, "\"name\"");
+        if (nameKey && nameKey < objEnd) {
+            char *valStart = strchr(nameKey + 6, '"');
+            if (valStart) {
+                valStart++;
+                char *valEnd = strchr(valStart, '"');
+                if (valEnd) {
+                    int len = (int)(valEnd - valStart);
+                    if (len > NFC_NAME_MAX - 1) len = NFC_NAME_MAX - 1;
+                    memcpy(entry.name, valStart, len);
+                    entry.name[len] = '\0';
+                }
+            }
+        }
+
         if (entry.uidHex[0]) {
             store->tags[store->tagCount++] = entry;
         }
@@ -134,8 +150,8 @@ void NfcStoreSave(const NfcStore *store, const char *filepath)
     fprintf(f, "{\n  \"version\": 1,\n  \"tags\": [\n");
     for (int i = 0; i < store->tagCount; i++) {
         const NfcTagEntry *e = &store->tags[i];
-        fprintf(f, "    {\"uid\": \"%s\", \"type\": %d, \"rarity\": %d, \"abilities\": [",
-                e->uidHex, e->typeIndex, e->rarity);
+        fprintf(f, "    {\"uid\": \"%s\", \"type\": %d, \"rarity\": %d, \"name\": \"%s\", \"abilities\": [",
+                e->uidHex, e->typeIndex, e->rarity, e->name);
         for (int a = 0; a < NFC_MAX_ABILITIES; a++) {
             fprintf(f, "%s[%d, %d]", (a > 0) ? ", " : "",
                     e->abilities[a].abilityId, e->abilities[a].level);

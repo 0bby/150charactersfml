@@ -10,11 +10,14 @@ typedef struct {
     uint8_t level;
 } NfcAbility;
 
+#define NFC_NAME_MAX 32
+
 typedef struct {
     char uidHex[NFC_UID_HEX_MAX];
     uint8_t typeIndex;
     uint8_t rarity;  // 0=common, 1=rare, 2=legendary
     NfcAbility abilities[NFC_MAX_ABILITIES];
+    char name[NFC_NAME_MAX];  // custom creature name (empty = unnamed)
 } NfcTagEntry;
 
 typedef struct {
