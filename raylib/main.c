@@ -22,6 +22,17 @@
 
 #define GLSL_VERSION 330
 
+// --- Color grading tweakable defaults (bright & bubbly) ---
+static float cgExposure      = 0.89f;
+static float cgContrast      = 1.20f;
+static float cgSaturation    = 0.85f;
+static float cgTemperature   = 0.10f;
+static float cgVignetteStr   = 0.46f;
+static float cgVignetteSoft  = 0.94f;
+static float cgLift[3]       = { 0.05f, 0.04f, 0.02f };
+static float cgGain[3]       = { 1.08f, 1.06f, 1.02f };
+static bool  cgDebugOverlay  = false;
+
 #include "game.h"
 #include "synergies.h"
 #include "helpers.h"
@@ -389,6 +400,19 @@ int main(void)
     int fxaaRTWidth = sceneRTWidth;
     int fxaaRTHeight = sceneRTHeight;
     RenderTexture2D fxaaRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
+
+    // --- Color grading post-process ---
+    Shader colorGradeShader = LoadShader(NULL,
+        TextFormat("resources/shaders/glsl%i/color_grade.fs", GLSL_VERSION));
+    int cgExposureLoc   = GetShaderLocation(colorGradeShader, "exposure");
+    int cgContrastLoc   = GetShaderLocation(colorGradeShader, "contrast");
+    int cgSaturationLoc = GetShaderLocation(colorGradeShader, "saturation");
+    int cgTemperatureLoc= GetShaderLocation(colorGradeShader, "temperature");
+    int cgVigStrLoc     = GetShaderLocation(colorGradeShader, "vignetteStrength");
+    int cgVigSoftLoc    = GetShaderLocation(colorGradeShader, "vignetteSoftness");
+    int cgLiftLoc       = GetShaderLocation(colorGradeShader, "lift");
+    int cgGainLoc       = GetShaderLocation(colorGradeShader, "gain");
+    RenderTexture2D colorGradeRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
 
     // --- Shadow map setup (color+depth FBO for guaranteed completeness) ---
     #define SHADOW_MAP_SIZE 2048
@@ -1114,6 +1138,22 @@ int main(void)
         GamePhase prevPhase = phase;
         UpdateShake(&shake, dt);
         if (IsKeyPressed(KEY_F1)) debugMode = !debugMode;
+        if (IsKeyPressed(KEY_F6)) cgDebugOverlay = !cgDebugOverlay;
+        if (cgDebugOverlay) {
+            float step = 0.01f;
+            if (IsKeyDown(KEY_ONE))   cgExposure    += step;
+            if (IsKeyDown(KEY_TWO))   cgExposure    -= step;
+            if (IsKeyDown(KEY_THREE)) cgContrast    += step;
+            if (IsKeyDown(KEY_FOUR))  cgContrast    -= step;
+            if (IsKeyDown(KEY_FIVE))  cgSaturation  += step;
+            if (IsKeyDown(KEY_SIX))   cgSaturation  -= step;
+            if (IsKeyDown(KEY_SEVEN)) cgTemperature += step;
+            if (IsKeyDown(KEY_EIGHT)) cgTemperature -= step;
+            if (IsKeyDown(KEY_NINE))  cgVignetteStr += step;
+            if (IsKeyDown(KEY_ZERO))  cgVignetteStr -= step;
+            if (IsKeyDown(KEY_MINUS)) cgVignetteSoft += step;
+            if (IsKeyDown(KEY_EQUAL)) cgVignetteSoft -= step;
+        }
         if (IsKeyPressed(KEY_F10)) {
             shadowDebugMode = (shadowDebugMode + 1) % 5;
             SetShaderValue(lightShader, shadowDebugLoc, &shadowDebugMode, SHADER_UNIFORM_INT);
@@ -3787,6 +3827,9 @@ int main(void)
                 fxaaRTWidth = curW;
                 fxaaRTHeight = curH;
                 fxaaRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
+
+                UnloadRenderTexture(colorGradeRT);
+                colorGradeRT = LoadRenderTexture(fxaaRTWidth, fxaaRTHeight);
             }
         }
 
@@ -4324,11 +4367,33 @@ int main(void)
         // End fxaaRT here so 3D scene gets FXAA but HUD text does not.
         // (FXAA smears text glyphs, making them blurry/jagged)
         EndTextureMode();
+
+        // FXAA pass → colorGradeRT
+        BeginTextureMode(colorGradeRT);
+        ClearBackground(BLACK);
         {
             float fxaaRes[2] = { (float)fxaaRTWidth, (float)fxaaRTHeight };
             SetShaderValue(fxaaShader, fxaaResLoc, fxaaRes, SHADER_UNIFORM_VEC2);
             BeginShaderMode(fxaaShader);
             DrawTextureRec(fxaaRT.texture,
+                (Rectangle){ 0, 0, (float)fxaaRTWidth, -(float)fxaaRTHeight },
+                (Vector2){ 0, 0 }, WHITE);
+            EndShaderMode();
+        }
+        EndTextureMode();
+
+        // Color grading pass → screen
+        {
+            SetShaderValue(colorGradeShader, cgExposureLoc,   &cgExposure,    SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgContrastLoc,   &cgContrast,    SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgSaturationLoc, &cgSaturation,  SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgTemperatureLoc,&cgTemperature, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgVigStrLoc,     &cgVignetteStr, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgVigSoftLoc,    &cgVignetteSoft,SHADER_UNIFORM_FLOAT);
+            SetShaderValue(colorGradeShader, cgLiftLoc,        cgLift,        SHADER_UNIFORM_VEC3);
+            SetShaderValue(colorGradeShader, cgGainLoc,        cgGain,        SHADER_UNIFORM_VEC3);
+            BeginShaderMode(colorGradeShader);
+            DrawTextureRec(colorGradeRT.texture,
                 (Rectangle){ 0, 0, (float)fxaaRTWidth, -(float)fxaaRTHeight },
                 (Vector2){ 0, 0 }, WHITE);
             EndShaderMode();
@@ -6418,6 +6483,23 @@ int main(void)
             GameDrawText(msg, x, y, fontSize, Fade(GOLD, alpha));
         }
 
+        // Color grading debug overlay
+        if (cgDebugOverlay) {
+            int oy = 30;
+            DrawRectangle(5, oy - 2, 320, 200, Fade(BLACK, 0.7f));
+            DrawText(TextFormat("Color Grade [F6]  1/2:exp 3/4:con 5/6:sat 7/8:temp 9/0:vig"), 10, oy, 10, GREEN);
+            oy += 16;
+            DrawText(TextFormat("exposure:    %.3f", cgExposure),    10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("contrast:    %.3f", cgContrast),    10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("saturation:  %.3f", cgSaturation),  10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("temperature: %.3f", cgTemperature), 10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("vignetteStr: %.3f", cgVignetteStr), 10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("vignetteSft: %.3f", cgVignetteSoft),10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("lift: %.2f %.2f %.2f", cgLift[0], cgLift[1], cgLift[2]), 10, oy, 10, WHITE); oy += 14;
+            DrawText(TextFormat("gain: %.2f %.2f %.2f", cgGain[0], cgGain[1], cgGain[2]), 10, oy, 10, WHITE); oy += 14;
+            DrawText("-/=: vignetteSoftness", 10, oy, 10, GRAY);
+        }
+
         DrawFPS(10, 10);
         EndDrawing();
     }
@@ -6431,11 +6513,13 @@ int main(void)
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     UnloadRenderTexture(introModelRT);
     UnloadRenderTexture(fxaaRT);
+    UnloadRenderTexture(colorGradeRT);
     rlUnloadFramebuffer(sceneRT.id);
     rlUnloadTexture(sceneRT.texture.id);
     rlUnloadTexture(sceneRT.depth.id);
     UnloadShader(ssaoShader);
     UnloadShader(fxaaShader);
+    UnloadShader(colorGradeShader);
     rlUnloadFramebuffer(shadowRT.id);
     rlUnloadTexture(shadowRT.texture.id);
     rlUnloadTexture(shadowRT.depth.id);
