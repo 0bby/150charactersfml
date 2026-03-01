@@ -210,7 +210,17 @@ bool CastEarthquake(CombatState *state, int caster, AbilitySlot *slot)
         if (d <= radius) {
             state->units[j].currentHealth -= damage;
             state->units[j].hitFlash = 0.12f;
-            if (state->units[j].currentHealth <= 0) state->units[j].active = false;
+            if (state->units[j].currentHealth <= 0) {
+                state->units[j].active = false;
+#ifndef SERVER_BUILD
+                if (state->battleLog) {
+                    BattleLogAddKill((BattleLog*)state->battleLog, state->combatTime,
+                        state->units[caster].team, state->units[caster].typeIndex,
+                        state->units[j].team, state->units[j].typeIndex,
+                        ABILITY_EARTHQUAKE);
+                }
+#endif
+            }
         }
     }
     TriggerShake(state->shake, 10.0f, 0.5f);
@@ -297,7 +307,17 @@ bool CastFissure(CombatState *state, int caster, AbilitySlot *slot, int target)
         if (perpDist <= width + 3.0f) {
             state->units[j].currentHealth -= damage;
             state->units[j].hitFlash = 0.12f;
-            if (state->units[j].currentHealth <= 0) state->units[j].active = false;
+            if (state->units[j].currentHealth <= 0) {
+                state->units[j].active = false;
+#ifndef SERVER_BUILD
+                if (state->battleLog) {
+                    BattleLogAddKill((BattleLog*)state->battleLog, state->combatTime,
+                        state->units[caster].team, state->units[caster].typeIndex,
+                        state->units[j].team, state->units[j].typeIndex,
+                        ABILITY_FISSURE);
+                }
+#endif
+            }
         }
     }
     TriggerShake(state->shake, 6.0f, 0.3f);

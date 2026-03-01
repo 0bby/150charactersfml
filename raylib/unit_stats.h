@@ -12,6 +12,10 @@ typedef struct {
     float attackSpeed;          // seconds between attacks
 } UnitStats;
 
+#ifndef SERVER_BUILD
+static const char *UNIT_TYPE_NAMES[] = { "Mushroom", "Goblin", "Reptile" };
+#endif
+
 static const UnitStats UNIT_STATS[] = {
     /* 0  Mushroom */ { .health = 40.0f, .movementSpeed = 12.0f, .attackDamage = 3.0f, .attackSpeed = 1.2f },
     /* 1  Goblin   */ { .health = 20.0f, .movementSpeed = 20.0f, .attackDamage = 2.0f, .attackSpeed = 0.5f },

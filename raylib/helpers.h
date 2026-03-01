@@ -114,6 +114,13 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount);
 void ClearRedUnits(Unit units[], int *unitCount);
 void CompactBlueUnits(Unit units[], int *unitCount);
 
+// Battle log helpers (client-only)
+#ifndef SERVER_BUILD
+void BattleLogClear(BattleLog *log);
+void BattleLogAddCast(BattleLog *log, float time, Team casterTeam, int casterType, int abilityId);
+void BattleLogAddKill(BattleLog *log, float time, Team killerTeam, int killerType, Team victimTeam, int victimType, int abilityId);
+#endif
+
 // NFC unit code parse/format
 bool ParseUnitCode(const char *code, int *outTypeIndex, AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT]);
 int FormatUnitCode(int typeIndex, const AbilitySlot abilities[MAX_ABILITIES_PER_UNIT], char *buf, int bufSize);

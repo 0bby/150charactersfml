@@ -477,6 +477,10 @@ int main(void)
     char killFeedText[32] = {0};
     float killFeedScale = 1.0f;      // punch-in scale
 
+    // Battle log
+    BattleLog battleLog = {0};
+    float combatElapsedTime = 0.0f;
+
     // Plaza state
     PlazaSubState plazaState = PLAZA_ROAMING;
     float plazaTimer = 0.0f;
@@ -1285,6 +1289,7 @@ int main(void)
                     fightBannerTimer = 0.0f;
                     killCount = 0; multiKillCount = 0; multiKillTimer = 0.0f; killFeedTimer = -1.0f;
                     slowmoTimer = 0.0f; slowmoScale = 1.0f;
+                    BattleLogClear(&battleLog); combatElapsedTime = 0.0f;
                     ClearAllModifiers(modifiers);
                     ClearAllProjectiles(projectiles);
                     ClearAllParticles(particles);
@@ -1525,6 +1530,7 @@ int main(void)
                             fightBannerTimer = 0.0f;
                             killCount = 0; multiKillCount = 0; multiKillTimer = 0.0f; killFeedTimer = -1.0f;
                             slowmoTimer = 0.0f; slowmoScale = 1.0f;
+                            BattleLogClear(&battleLog); combatElapsedTime = 0.0f;
                             ClearAllModifiers(modifiers);
                             ClearAllProjectiles(projectiles);
                             ClearAllParticles(particles);
@@ -1825,6 +1831,8 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_COMBAT)
         {
+            combatElapsedTime += dt;
+
             // === STEP 1: Tick modifiers ===
             for (int m = 0; m < MAX_MODIFIERS; m++) {
                 if (!modifiers[m].active) continue;
@@ -1979,6 +1987,7 @@ int main(void)
                                 // Slow-mo check: is this the last unit on a team?
                                 int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
                                 if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                                BattleLogAddKill(&battleLog, combatElapsedTime, units[projectiles[p].sourceIndex].team, units[projectiles[p].sourceIndex].typeIndex, units[ti].team, units[ti].typeIndex, ABILITY_HOOK);
                                 units[ti].active = false;
                             }
                         }
@@ -2011,6 +2020,7 @@ int main(void)
                                 else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
                                 int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
                                 if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                                BattleLogAddKill(&battleLog, combatElapsedTime, units[projectiles[p].sourceIndex].team, units[projectiles[p].sourceIndex].typeIndex, units[ti].team, units[ti].typeIndex, ABILITY_MAELSTROM);
                                 units[ti].active = false;
                             }
                         }
@@ -2057,6 +2067,8 @@ int main(void)
                             else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
                             int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
                             if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                            { int abilId = (projectiles[p].type == PROJ_MAGIC_MISSILE) ? ABILITY_MAGIC_MISSILE : ABILITY_CHAIN_FROST;
+                            BattleLogAddKill(&battleLog, combatElapsedTime, units[projectiles[p].sourceIndex].team, units[projectiles[p].sourceIndex].typeIndex, units[ti].team, units[ti].typeIndex, abilId); }
                             units[ti].active = false;
                         }
                     }
@@ -2099,6 +2111,7 @@ int main(void)
                 .modifiers = modifiers, .projectiles = projectiles,
                 .particles = particles, .fissures = fissures,
                 .floatingTexts = floatingTexts, .shake = &shake,
+                .battleLog = &battleLog, .combatTime = combatElapsedTime,
             };
 
             // === STEP 3: Process each unit ===
@@ -2235,6 +2248,7 @@ int main(void)
                         PlaySound(units[i].typeIndex == 0 ? sfxToadShout : sfxGoblinShout);
                         SpawnFloatingText(floatingTexts, units[i].position,
                             def->name, def->color, 1.0f);
+                        BattleLogAddCast(&battleLog, combatElapsedTime, units[i].team, units[i].typeIndex, slot->abilityId);
                         units[i].abilityCastDelay = 0.75f;
                         // Pause caster briefly for projectile abilities
                         if (slot->abilityId == ABILITY_MAGIC_MISSILE ||
@@ -2294,6 +2308,7 @@ int main(void)
                                         else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
                                         int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
                                         if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                                        BattleLogAddKill(&battleLog, combatElapsedTime, units[i].team, units[i].typeIndex, units[j].team, units[j].typeIndex, ABILITY_PRIMAL_CHARGE);
                                         units[j].active = false;
                                     }
                                     // Knockback
@@ -2456,6 +2471,7 @@ int main(void)
                                 else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
                                 int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
                                 if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                                BattleLogAddKill(&battleLog, combatElapsedTime, units[i].team, units[i].typeIndex, units[target].team, units[target].typeIndex, -1);
                                 units[target].active = false;
                             }
                         }
@@ -3866,6 +3882,61 @@ int main(void)
                 int stw = MeasureText(scoreText, 18);
                 DrawText(scoreText, sw/2 - stw/2, sh/2 - 10, 18, WHITE);
             }
+
+            // Battle Log panel (during combat, round over, and next prep)
+            if ((phase == PHASE_COMBAT || phase == PHASE_ROUND_OVER || phase == PHASE_PREP) && battleLog.count > 0)
+            {
+                int blogW = 220;
+                int blogX = sw - blogW;
+                int blogY = 60;
+                int blogH = sh - HUD_TOTAL_HEIGHT - blogY;
+                // Background
+                DrawRectangle(blogX, blogY, blogW, blogH, (Color){16, 16, 24, 160});
+                DrawRectangleLines(blogX, blogY, blogW, blogH, (Color){80, 80, 100, 120});
+                // Title
+                const char *blogTitle = "BATTLE LOG";
+                int btw = MeasureText(blogTitle, 12);
+                DrawText(blogTitle, blogX + blogW/2 - btw/2, blogY + 4, 12, (Color){200, 200, 220, 255});
+                // Entry area
+                int entryY = blogY + 20;
+                int entryH = blogH - 24;
+                int lineH = 14;
+                int maxVisible = entryH / lineH;
+                // Mouse wheel scroll when not in active combat
+                if (phase != PHASE_COMBAT) {
+                    int wheel = (int)GetMouseWheelMove();
+                    if (wheel != 0) {
+                        battleLog.scroll -= wheel;
+                        if (battleLog.scroll < 0) battleLog.scroll = 0;
+                        int maxScroll = battleLog.count - maxVisible;
+                        if (maxScroll < 0) maxScroll = 0;
+                        if (battleLog.scroll > maxScroll) battleLog.scroll = maxScroll;
+                    }
+                } else {
+                    // Auto-scroll to bottom during combat
+                    int maxScroll = battleLog.count - maxVisible;
+                    if (maxScroll < 0) maxScroll = 0;
+                    battleLog.scroll = maxScroll;
+                }
+                // Scissor clip
+                BeginScissorMode(blogX, entryY, blogW, entryH);
+                int startIdx = battleLog.scroll;
+                for (int ei = startIdx; ei < battleLog.count && (ei - startIdx) < maxVisible; ei++) {
+                    BattleLogEntry *e = &battleLog.entries[ei];
+                    int drawY = entryY + (ei - startIdx) * lineH;
+                    // Timestamp
+                    const char *ts = TextFormat("%d:%02d", (int)e->timestamp / 60, (int)e->timestamp % 60);
+                    DrawText(ts, blogX + 4, drawY, 10, (Color){140, 140, 140, 200});
+                    // Icon
+                    const char *icon = (e->type == BLOG_KILL) ? "X" : "*";
+                    Color iconColor = (e->type == BLOG_KILL) ? (Color){255, 80, 80, 255} : (Color){80, 200, 255, 255};
+                    DrawText(icon, blogX + 32, drawY, 10, iconColor);
+                    // Text (truncated to fit)
+                    DrawText(e->text, blogX + 42, drawY, 10, e->color);
+                }
+                EndScissorMode();
+            }
+
             else if (phase == PHASE_GAME_OVER)
             {
                 if (deathPenalty) {

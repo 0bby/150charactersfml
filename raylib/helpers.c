@@ -1016,3 +1016,54 @@ int FormatUnitCode(int typeIndex, const AbilitySlot abilities[MAX_ABILITIES_PER_
     buf[pos] = '\0';
     return pos;
 }
+
+//------------------------------------------------------------------------------------
+// Battle Log Helpers (client-only)
+//------------------------------------------------------------------------------------
+#ifndef SERVER_BUILD
+void BattleLogClear(BattleLog *log)
+{
+    log->count = 0;
+    log->scroll = 0;
+}
+
+static void BattleLogAdd(BattleLog *log, BattleLogType type, float time, const char *text, Color color)
+{
+    if (log->count < MAX_BATTLE_LOG) {
+        BattleLogEntry *e = &log->entries[log->count++];
+        e->type = type;
+        e->timestamp = time;
+        strncpy(e->text, text, 79);
+        e->text[79] = '\0';
+        e->color = color;
+    }
+}
+
+void BattleLogAddCast(BattleLog *log, float time, Team casterTeam, int casterType, int abilityId)
+{
+    const char *teamName = (casterTeam == TEAM_BLUE) ? "Blue" : "Red";
+    const char *unitName = UNIT_TYPE_NAMES[casterType];
+    const char *abilName = ABILITY_DEFS[abilityId].name;
+    char buf[80];
+    snprintf(buf, sizeof(buf), "%s %s cast %s", teamName, unitName, abilName);
+    Color c = (casterTeam == TEAM_BLUE) ? (Color){130, 170, 255, 255} : (Color){255, 140, 140, 255};
+    BattleLogAdd(log, BLOG_CAST, time, buf, c);
+}
+
+void BattleLogAddKill(BattleLog *log, float time, Team killerTeam, int killerType, Team victimTeam, int victimType, int abilityId)
+{
+    const char *vTeamName = (victimTeam == TEAM_BLUE) ? "Blue" : "Red";
+    const char *vUnitName = UNIT_TYPE_NAMES[victimType];
+    char buf[80];
+    if (abilityId >= 0 && abilityId < ABILITY_COUNT) {
+        const char *abilName = ABILITY_DEFS[abilityId].name;
+        snprintf(buf, sizeof(buf), "%s killed %s %s", abilName, vTeamName, vUnitName);
+    } else {
+        const char *kTeamName = (killerTeam == TEAM_BLUE) ? "Blue" : "Red";
+        const char *kUnitName = UNIT_TYPE_NAMES[killerType];
+        snprintf(buf, sizeof(buf), "%s %s killed %s %s", kTeamName, kUnitName, vTeamName, vUnitName);
+    }
+    Color c = (killerTeam == TEAM_BLUE) ? (Color){100, 200, 255, 255} : (Color){255, 100, 100, 255};
+    BattleLogAdd(log, BLOG_KILL, time, buf, c);
+}
+#endif

@@ -304,6 +304,10 @@ typedef struct {
     Fissure *fissures;
     FloatingText *floatingTexts;
     ScreenShake *shake;
+#ifndef SERVER_BUILD
+    void *battleLog;    // BattleLog* (void* to avoid pulling BattleLog into server)
+    float combatTime;
+#endif
 } CombatState;
 
 //------------------------------------------------------------------------------------
@@ -340,3 +344,24 @@ typedef struct {
     float value1;              // intensity for SHAKE
     float value2;              // duration for SHAKE
 } CombatEvent;
+
+//------------------------------------------------------------------------------------
+// Battle Log (client-only persistent combat event log)
+//------------------------------------------------------------------------------------
+#ifndef SERVER_BUILD
+typedef enum { BLOG_CAST, BLOG_KILL } BattleLogType;
+
+typedef struct {
+    BattleLogType type;
+    float timestamp;
+    char text[80];
+    Color color;
+} BattleLogEntry;
+
+#define MAX_BATTLE_LOG 64
+typedef struct {
+    BattleLogEntry entries[MAX_BATTLE_LOG];
+    int count;
+    int scroll;
+} BattleLog;
+#endif
