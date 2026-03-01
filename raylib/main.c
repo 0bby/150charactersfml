@@ -51,6 +51,10 @@ static inline int GameMeasureText(const char *text, int fontSize)
 #include "pve_waves.h"
 #include "plaza.h"
 
+// --- UI Scale (720p base) ---
+static float uiScale = 1.0f;
+#define S(x) ((int)((x) * uiScale))
+
 // --- Hit flash ---
 #define HIT_FLASH_DURATION 0.12f
 
@@ -313,7 +317,7 @@ int main(void)
     // Portrait render textures for HUD (one per max blue unit)
     RenderTexture2D portraits[BLUE_TEAM_MAX_SIZE];
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++)
-        portraits[i] = LoadRenderTexture(HUD_PORTRAIT_SIZE, HUD_PORTRAIT_SIZE);
+        portraits[i] = LoadRenderTexture(HUD_PORTRAIT_SIZE_BASE, HUD_PORTRAIT_SIZE_BASE);
 
     // Intro screen render texture (larger for cinematic model display)
     RenderTexture2D introModelRT = LoadRenderTexture(512, 512);
@@ -936,8 +940,8 @@ int main(void)
     const int btnWidth = 150;
     const int btnHeight = 30;
     const int btnMargin = 10;
-    const int playBtnW = 120;
-    const int playBtnH = 40;
+    int playBtnW = 120;
+    int playBtnH = 40;
 
     // Spawn initial plaza enemies
     PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
@@ -972,6 +976,20 @@ int main(void)
     {
         float dt = GetFrameTime();
         float rawDt = dt; // unscaled dt for UI timers
+        uiScale = (float)GetScreenHeight() / 720.0f;
+        if (uiScale < 1.0f) uiScale = 1.0f;
+        // Scaled HUD dimensions
+        int hudBarH = S(HUD_UNIT_BAR_HEIGHT_BASE);
+        int hudShopH = S(HUD_SHOP_HEIGHT_BASE);
+        int hudTotalH = hudBarH + hudShopH;
+        int hudCardW = S(HUD_CARD_WIDTH_BASE);
+        int hudCardH = S(HUD_CARD_HEIGHT_BASE);
+        int hudCardSpacing = S(HUD_CARD_SPACING_BASE);
+        int hudPortraitSize = S(HUD_PORTRAIT_SIZE_BASE);
+        int hudAbilSlotSize = S(HUD_ABILITY_SLOT_SIZE_BASE);
+        int hudAbilSlotGap = S(HUD_ABILITY_SLOT_GAP_BASE);
+        playBtnW = S(160);
+        playBtnH = S(44);
         UpdateMusicStream(bgm);
         if (IsMusicStreamPlaying(bgm) && GetMusicTimePlayed(bgm) >= GetMusicTimeLength(bgm) - 0.05f) {
             SeekMusicStream(bgm, 29.091f);
@@ -1150,8 +1168,11 @@ int main(void)
         if (!camOverride) {
             bool combat = (phase == PHASE_COMBAT);
             bool plaza = (phase == PHASE_PLAZA);
-            float tgtH = plaza ? plazaHeight : (combat ? combatHeight : prepHeight);
-            float tgtD = plaza ? plazaDistance : (combat ? combatDistance : prepDistance);
+            // Scale camera to compensate for larger HUD at higher resolutions
+            float hudFrac = (float)hudTotalH / (float)GetScreenHeight();
+            float camScale = 1.0f / (1.0f - hudFrac * 0.5f);  // pull back more as HUD grows
+            float tgtH = (plaza ? plazaHeight : (combat ? combatHeight : prepHeight)) * camScale;
+            float tgtD = (plaza ? plazaDistance : (combat ? combatDistance : prepDistance)) * camScale;
             float tgtF = plaza ? plazaFOV : (combat ? combatFOV : prepFOV);
             float tgtX = plaza ? plazaX : (combat ? combatX : prepX);
             // Mirror camera for player 2 during PVP combat
@@ -1506,7 +1527,7 @@ int main(void)
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
-                int dHudTop = sh - HUD_TOTAL_HEIGHT;
+                int dHudTop = sh - hudTotalH;
                 int plazaValidCount = 0;
                 for (int i = 0; i < unitTypeCount; i++) if (unitTypes[i].name) plazaValidCount++;
                 int btnYStart = dHudTop - (plazaValidCount * (btnHeight + btnMargin)) - btnMargin;
@@ -1618,7 +1639,7 @@ int main(void)
 
                 // Env piece 3D picking (plaza, debug mode)
                 if (!plazaClickedBtn) {
-                    int dHudTop2 = sh - HUD_TOTAL_HEIGHT;
+                    int dHudTop2 = sh - hudTotalH;
                     if (mouse.y < dHudTop2) {
                         Ray envRay = GetScreenToWorldRay(mouse, camera);
                         float closestDist = 1e9f;
@@ -1905,7 +1926,7 @@ int main(void)
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
-                int hudTop = sh - HUD_TOTAL_HEIGHT;
+                int hudTop = sh - hudTotalH;
                 int btnXBlue = btnMargin;
                 int btnXRed  = sw - btnWidth - btnMargin;
                 int prepValidCount = 0;
@@ -1936,27 +1957,18 @@ int main(void)
                     Rectangle yesBtn = { (float)(popX + 20), (float)(popY + popH - 32), 80, 24 };
                     Rectangle noBtn  = { (float)(popX + popW - 100), (float)(popY + popH - 32), 80, 24 };
                     if (CheckCollisionPointRec(mouse, yesBtn)) {
-                        // Remove the unit: sync NFC abilities, return to inventory, deactivate
+                        // Remove the unit: sync NFC abilities to server, deactivate
+                        // Abilities stay on the figurine (server-side), NOT returned to inventory
+                        // (returning to inventory would be a duplication glitch)
                         int ri = removeConfirmUnit;
-                        // Sync abilities to server BEFORE stripping them
                         if (units[ri].nfcUidLen > 0) {
                             net_nfc_update_abilities(serverHost, NET_PORT,
                                 units[ri].nfcUid, units[ri].nfcUidLen,
                                 units[ri].abilities, MAX_ABILITIES_PER_UNIT);
                             units[ri].nfcUidLen = 0;
                         }
-                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                            if (units[ri].abilities[a].abilityId < 0) continue;
-                            // Find empty inventory slot
-                            for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
-                                if (inventory[inv].abilityId < 0) {
-                                    inventory[inv].abilityId = units[ri].abilities[a].abilityId;
-                                    inventory[inv].level = units[ri].abilities[a].level;
-                                    break;
-                                }
-                            }
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
                             units[ri].abilities[a].abilityId = -1;
-                        }
                         units[ri].active = false;
                         removeConfirmUnit = -1;
                         clickedButton = true;
@@ -2155,7 +2167,7 @@ int main(void)
                 // --- Shop: ROLL button click ---
                 if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
-                    Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
+                    Rectangle rollBtn = { 20, (float)(shopY + 10), S(90), S(34) };
                     if (CheckCollisionPointRec(mouse, rollBtn) && playerGold >= rollCost) {
                         PlaySound(sfxUiReroll);
                         if (isMultiplayer) {
@@ -2171,7 +2183,7 @@ int main(void)
                 // --- Shop: Buy ability card click ---
                 if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
-                    int shopCardW = 100, shopCardH = 34, shopCardGap = 10;
+                    int shopCardW = S(130), shopCardH = S(38), shopCardGap = 10;
                     int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
                     int shopCardsX = (sw - totalShopW) / 2;
                     for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
@@ -2193,16 +2205,16 @@ int main(void)
                 }
                 // --- Drag start: inventory slots ---
                 if (!clickedButton && !dragState.dragging) {
-                    int totalCardsW = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+                    int totalCardsW = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
                     int cardsStartX = (sw - totalCardsW) / 2;
-                    int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP)) - 20;
-                    int invStartY = hudTop + HUD_SHOP_HEIGHT + 15;
+                    int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
+                    int invStartY = hudTop + hudShopH + 15;
                     for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
                         int col = inv % HUD_INVENTORY_COLS;
                         int row = inv / HUD_INVENTORY_COLS;
-                        int ix = invStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                        int iy = invStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                        Rectangle r = { (float)ix, (float)iy, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
+                        int ix = invStartX + col * (hudAbilSlotSize + hudAbilSlotGap);
+                        int iy = invStartY + row * (hudAbilSlotSize + hudAbilSlotGap);
+                        Rectangle r = { (float)ix, (float)iy, (float)hudAbilSlotSize, (float)hudAbilSlotSize };
                         if (CheckCollisionPointRec(mouse, r) && inventory[inv].abilityId >= 0) {
                             PlaySound(sfxUiDrag);
                             dragState = (DragState){ .dragging = true, .sourceType = 0,
@@ -2220,18 +2232,18 @@ int main(void)
                     int tmpBlue[BLUE_TEAM_MAX_SIZE]; int tmpCount = 0;
                     for (int i2 = 0; i2 < unitCount && tmpCount < BLUE_TEAM_MAX_SIZE; i2++)
                         if (units[i2].active && units[i2].team == TEAM_BLUE) tmpBlue[tmpCount++] = i2;
-                    int totalCardsW = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+                    int totalCardsW = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
                     int cardsStartX = (sw - totalCardsW) / 2;
-                    int cardsY = hudTop + HUD_SHOP_HEIGHT + 5;
+                    int cardsY = hudTop + hudShopH + 5;
                     for (int h = 0; h < tmpCount && !clickedButton; h++) {
-                        int cardX = cardsStartX + h * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
-                        int abilStartX = cardX + HUD_PORTRAIT_SIZE + 12;
+                        int cardX = cardsStartX + h * (hudCardW + hudCardSpacing);
+                        int abilStartX = cardX + hudPortraitSize + 12;
                         int abilStartY = cardsY + 8;
                         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
                             int col = a % 2, row = a / 2;
-                            int ax = abilStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                            int ay = abilStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                            Rectangle r = { (float)ax, (float)ay, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
+                            int ax = abilStartX + col * (hudAbilSlotSize + hudAbilSlotGap);
+                            int ay = abilStartY + row * (hudAbilSlotSize + hudAbilSlotGap);
+                            Rectangle r = { (float)ax, (float)ay, (float)hudAbilSlotSize, (float)hudAbilSlotSize };
                             int ui = tmpBlue[h];
                             if (CheckCollisionPointRec(mouse, r) && units[ui].abilities[a].abilityId >= 0) {
                                 PlaySound(sfxUiDrag);
@@ -2251,13 +2263,13 @@ int main(void)
                     int tmpBlue2[BLUE_TEAM_MAX_SIZE]; int tmpCount2 = 0;
                     for (int i2 = 0; i2 < unitCount && tmpCount2 < BLUE_TEAM_MAX_SIZE; i2++)
                         if (units[i2].active && units[i2].team == TEAM_BLUE) tmpBlue2[tmpCount2++] = i2;
-                    int totalCardsW2 = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+                    int totalCardsW2 = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
                     int cardsStartX2 = (sw - totalCardsW2) / 2;
-                    int cardsY2 = hudTop + HUD_SHOP_HEIGHT + 5;
+                    int cardsY2 = hudTop + hudShopH + 5;
                     for (int h = 0; h < tmpCount2; h++) {
-                        int cardX = cardsStartX2 + h * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
-                        int xBtnSize = 16;
-                        Rectangle xBtn = { (float)(cardX + HUD_CARD_WIDTH - xBtnSize - 2),
+                        int cardX = cardsStartX2 + h * (hudCardW + hudCardSpacing);
+                        int xBtnSize = S(18);
+                        Rectangle xBtn = { (float)(cardX + hudCardW - xBtnSize - 2),
                                            (float)(cardsY2 + 2), (float)xBtnSize, (float)xBtnSize };
                         if (CheckCollisionPointRec(mouse, xBtn)) {
                             removeConfirmUnit = tmpBlue2[h];
@@ -2342,7 +2354,7 @@ int main(void)
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
-                int hudTop2 = sh - HUD_TOTAL_HEIGHT;
+                int hudTop2 = sh - hudTotalH;
                 bool placed = false;
 
                 // Collect blue units
@@ -2350,20 +2362,20 @@ int main(void)
                 for (int i2 = 0; i2 < unitCount && dropCount < BLUE_TEAM_MAX_SIZE; i2++)
                     if (units[i2].active && units[i2].team == TEAM_BLUE) dropBlue[dropCount++] = i2;
 
-                int totalCardsW = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+                int totalCardsW = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
                 int cardsStartX = (sw - totalCardsW) / 2;
-                int cardsY = hudTop2 + HUD_SHOP_HEIGHT + 5;
+                int cardsY = hudTop2 + hudShopH + 5;
 
                 // Check drop on unit ability slot
                 for (int h = 0; h < dropCount && !placed; h++) {
-                    int cardX = cardsStartX + h * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
-                    int abilStartX = cardX + HUD_PORTRAIT_SIZE + 12;
+                    int cardX = cardsStartX + h * (hudCardW + hudCardSpacing);
+                    int abilStartX = cardX + hudPortraitSize + 12;
                     int abilStartY = cardsY + 8;
                     for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
                         int col = a % 2, row = a / 2;
-                        int ax = abilStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                        int ay = abilStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                        Rectangle r = { (float)ax, (float)ay, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
+                        int ax = abilStartX + col * (hudAbilSlotSize + hudAbilSlotGap);
+                        int ay = abilStartY + row * (hudAbilSlotSize + hudAbilSlotGap);
+                        Rectangle r = { (float)ax, (float)ay, (float)hudAbilSlotSize, (float)hudAbilSlotSize };
                         if (CheckCollisionPointRec(mouse, r)) {
                             int ui = dropBlue[h];
                             // Dropping on the same slot we picked from — just restore it
@@ -2393,14 +2405,14 @@ int main(void)
                 }
                 // Check drop on inventory slot
                 if (!placed) {
-                    int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP)) - 20;
-                    int invStartY = hudTop2 + HUD_SHOP_HEIGHT + 15;
+                    int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
+                    int invStartY = hudTop2 + hudShopH + 15;
                     for (int inv = 0; inv < MAX_INVENTORY_SLOTS && !placed; inv++) {
                         int col = inv % HUD_INVENTORY_COLS;
                         int row = inv / HUD_INVENTORY_COLS;
-                        int ix = invStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                        int iy = invStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                        Rectangle r = { (float)ix, (float)iy, (float)HUD_ABILITY_SLOT_SIZE, (float)HUD_ABILITY_SLOT_SIZE };
+                        int ix = invStartX + col * (hudAbilSlotSize + hudAbilSlotGap);
+                        int iy = invStartY + row * (hudAbilSlotSize + hudAbilSlotGap);
+                        Rectangle r = { (float)ix, (float)iy, (float)hudAbilSlotSize, (float)hudAbilSlotSize };
                         if (CheckCollisionPointRec(mouse, r)) {
                             // Dropping on the same inventory slot we picked from — just restore it
                             if (dragState.sourceType == 0 && dragState.sourceIndex == inv) {
@@ -4211,24 +4223,27 @@ int main(void)
 
             if (units[i].rarity > 0) {
                 const char *stars = (units[i].rarity == RARITY_LEGENDARY) ? "* *" : "*";
-                int starsW = GameMeasureText(stars, 12);
+                int starsW = GameMeasureText(stars, S(14));
                 Color starColor = (units[i].rarity == RARITY_LEGENDARY)
                     ? (Color){ 255, 60, 60, 255 }
                     : (Color){ 180, 100, 255, 255 };
-                GameDrawText(stars, (int)sp.x - starsW/2, (int)sp.y - 24, 12, starColor);
+                GameDrawText(stars, (int)sp.x - starsW/2, (int)sp.y - S(26), S(14), starColor);
             }
 
             const char *label = type->name;
-            int tw = GameMeasureText(label, 14);
-            GameDrawText(label, (int)sp.x - tw/2, (int)sp.y - 12, 14,
-                     (units[i].team == TEAM_BLUE) ? DARKBLUE : MAROON);
+            int nameFontSize = S(16);
+            int tw = GameMeasureText(label, nameFontSize);
+            // Drop shadow for readability
+            GameDrawText(label, (int)sp.x - tw/2 + 1, (int)sp.y - S(14) + 1, nameFontSize, (Color){0,0,0,180});
+            GameDrawText(label, (int)sp.x - tw/2, (int)sp.y - S(14), nameFontSize,
+                     (units[i].team == TEAM_BLUE) ? WHITE : (Color){255, 200, 200, 255});
 
             // Health bar
             float maxHP = stats->health * units[i].hpMultiplier;
             float hpRatio = units[i].currentHealth / maxHP;
             if (hpRatio < 0) hpRatio = 0;
             if (hpRatio > 1) hpRatio = 1;
-            int bw = 40, bh = 5;
+            int bw = S(44), bh = S(6);
             int bx = (int)sp.x - bw/2, by = (int)sp.y + 4;
             DrawRectangle(bx, by, bw, bh, DARKGRAY);
             Color hpC = (hpRatio > 0.5f) ? GREEN : (hpRatio > 0.25f) ? ORANGE : RED;
@@ -4245,8 +4260,9 @@ int main(void)
             DrawRectangleLines(bx, by, bw, bh, BLACK);
 
             const char *hpT = TextFormat("%.0f/%.0f", units[i].currentHealth, maxHP);
-            int htw = GameMeasureText(hpT, 10);
-            GameDrawText(hpT, (int)sp.x - htw/2, by + bh + 2, 10, DARKGRAY);
+            int htw = GameMeasureText(hpT, S(12));
+            GameDrawText(hpT, (int)sp.x - htw/2 + 1, by + bh + 2 + 1, S(12), (Color){0,0,0,180});
+            GameDrawText(hpT, (int)sp.x - htw/2, by + bh + 2, S(12), WHITE);
 
             // Modifier labels (deduplicated — only one per type due to AddModifier dedup)
             // Duration-colored text: active portion in modColor, expired portion in dim gray
@@ -4272,7 +4288,7 @@ int main(void)
                 }
                 if (modLabel) {
                     int totalLen = (int)strlen(modLabel);
-                    int mlw = GameMeasureText(modLabel, 9);
+                    int mlw = GameMeasureText(modLabel, S(11));
                     int startX = (int)sp.x - mlw / 2;
                     float frac = (modifiers[m].maxDuration > 0.0f)
                         ? modifiers[m].duration / modifiers[m].maxDuration : 0.0f;
@@ -4285,8 +4301,8 @@ int main(void)
                     for (int k = 0; k < totalLen; k++) {
                         tmp[0] = modLabel[k];
                         Color charCol = (k < activeChars) ? modColor : dimGray;
-                        GameDrawText(tmp, cx, modY, 9, charCol);
-                        cx += GameMeasureText(tmp, 9);
+                        GameDrawText(tmp, cx, modY, S(11), charCol);
+                        cx += GameMeasureText(tmp, S(11));
                     }
                     modY += 10;
                 }
@@ -4340,7 +4356,7 @@ int main(void)
         {
             int sw = GetScreenWidth();
             int sh = GetScreenHeight();
-            int dHudTop = sh - HUD_TOTAL_HEIGHT;
+            int dHudTop = sh - hudTotalH;
             int dBtnXBlue = btnMargin;
             int dBtnXRed  = sw - btnWidth - btnMargin;
             int validTypeCount = 0;
@@ -4465,8 +4481,8 @@ int main(void)
                 } else {
                     waveLabel = TextFormat("Wave %d", currentRound + 1);
                 }
-                int wlw = GameMeasureText(waveLabel, 16);
-                GameDrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, 16, WHITE);
+                int wlw = GameMeasureText(waveLabel, S(20));
+                GameDrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, S(20), WHITE);
             }
 
             // NFC emulation input box (debug only)
@@ -4549,8 +4565,9 @@ int main(void)
                 } else {
                     pt = TextFormat("PLAY Round %d", currentRound + 1);
                 }
-                int ptw = GameMeasureText(pt, 18);
-                GameDrawText(pt, dPlayBtn.x + (playBtnW - ptw)/2, dPlayBtn.y + (playBtnH - 18)/2, 18, WHITE);
+                int playFontSz = S(20);
+                int ptw = GameMeasureText(pt, playFontSz);
+                GameDrawText(pt, dPlayBtn.x + (playBtnW - ptw)/2, dPlayBtn.y + (playBtnH - playFontSz)/2, playFontSz, WHITE);
             }
         }
 
@@ -4579,7 +4596,7 @@ int main(void)
                 // Animated "FIGHT!" banner
                 if (fightBannerTimer >= 0.0f && fightBannerTimer < 1.5f) {
                     const char *fightText = "FIGHT!";
-                    int baseFontSize = 48;
+                    int baseFontSize = S(56);
                     float t = fightBannerTimer;
                     float scale;
                     if (t < 0.15f) scale = t / 0.15f * 1.5f;           // 0→1.5
@@ -4623,7 +4640,7 @@ int main(void)
                 if (elapsed < 0.15f) rtScale = elapsed / 0.15f * 1.3f;
                 else if (elapsed < 0.4f) rtScale = 1.3f - (elapsed - 0.15f) / 0.25f * 0.3f;
                 else rtScale = 1.0f;
-                int rtFontSize = (int)(26 * rtScale);
+                int rtFontSize = (int)(S(30) * rtScale);
                 if (rtFontSize < 1) rtFontSize = 1;
                 Color rtColor = lastOutcomeWin ? (Color){50, 200, 50, 255} : DARKPURPLE;
                 // Color pulse for win
@@ -4636,28 +4653,28 @@ int main(void)
                 GameDrawText(roundResultText, sw/2 - rtw/2, sh/2 - 40, rtFontSize, rtColor);
 
                 const char *scoreText = TextFormat("Score: %d - %d", blueWins, redWins);
-                int stw = GameMeasureText(scoreText, 18);
-                GameDrawText(scoreText, sw/2 - stw/2, sh/2 - 10, 18, WHITE);
+                int stw = GameMeasureText(scoreText, S(22));
+                GameDrawText(scoreText, sw/2 - stw/2, sh/2 - 10, S(22), WHITE);
             }
 
             // Battle Log panel (during combat, round over, and next prep)
             if ((phase == PHASE_COMBAT || phase == PHASE_ROUND_OVER || phase == PHASE_PREP) && battleLog.count > 0)
             {
-                int blogW = 220;
+                int blogW = S(240);
                 int blogX = sw - blogW;
                 int blogY = 60;
-                int blogH = sh - HUD_TOTAL_HEIGHT - blogY;
+                int blogH = sh - hudTotalH - blogY;
                 // Background
                 DrawRectangle(blogX, blogY, blogW, blogH, (Color){16, 16, 24, 160});
                 DrawRectangleLines(blogX, blogY, blogW, blogH, (Color){80, 80, 100, 120});
                 // Title
                 const char *blogTitle = "BATTLE LOG";
-                int btw = GameMeasureText(blogTitle, 12);
-                GameDrawText(blogTitle, blogX + blogW/2 - btw/2, blogY + 4, 12, (Color){200, 200, 220, 255});
+                int btw = GameMeasureText(blogTitle, S(14));
+                GameDrawText(blogTitle, blogX + blogW/2 - btw/2, blogY + 4, S(14), (Color){200, 200, 220, 255});
                 // Entry area
                 int entryY = blogY + 20;
                 int entryH = blogH - 24;
-                int lineH = 14;
+                int lineH = S(16);
                 int maxVisible = entryH / lineH;
                 // Mouse wheel scroll when not in active combat
                 if (phase != PHASE_COMBAT) {
@@ -4683,13 +4700,13 @@ int main(void)
                     int drawY = entryY + (ei - startIdx) * lineH;
                     // Timestamp
                     const char *ts = TextFormat("%d:%02d", (int)e->timestamp / 60, (int)e->timestamp % 60);
-                    GameDrawText(ts, blogX + 4, drawY, 10, (Color){140, 140, 140, 200});
+                    GameDrawText(ts, blogX + 4, drawY, S(12), (Color){140, 140, 140, 200});
                     // Icon
                     const char *icon = (e->type == BLOG_KILL) ? "X" : "*";
                     Color iconColor = (e->type == BLOG_KILL) ? (Color){255, 80, 80, 255} : (Color){80, 200, 255, 255};
-                    GameDrawText(icon, blogX + 32, drawY, 10, iconColor);
+                    GameDrawText(icon, blogX + 32, drawY, S(12), iconColor);
                     // Text (truncated to fit)
-                    GameDrawText(e->text, blogX + 42, drawY, 10, e->color);
+                    GameDrawText(e->text, blogX + 42, drawY, S(12), e->color);
                 }
                 EndScissorMode();
             }
@@ -4698,16 +4715,16 @@ int main(void)
             {
                 if (deathPenalty) {
                     const char *deathMsg = TextFormat("YOUR UNITS HAVE FALLEN - Wave %d", currentRound);
-                    int dw = GameMeasureText(deathMsg, 30);
-                    GameDrawText(deathMsg, sw/2 - dw/2, sh/2 - 50, 30, RED);
+                    int dw = GameMeasureText(deathMsg, S(34));
+                    GameDrawText(deathMsg, sw/2 - dw/2, sh/2 - 50, S(34), RED);
 
                     const char *deathSub = "Defeated! Your units are lost forever!";
-                    int dsw2 = GameMeasureText(deathSub, 18);
-                    GameDrawText(deathSub, sw/2 - dsw2/2, sh/2 - 10, 18, (Color){255,100,100,255});
+                    int dsw2 = GameMeasureText(deathSub, S(22));
+                    GameDrawText(deathSub, sw/2 - dsw2/2, sh/2 - 10, S(22), (Color){255,100,100,255});
 
                     const char *restartMsg = "Press R to return to menu";
-                    int rw2 = GameMeasureText(restartMsg, 20);
-                    GameDrawText(restartMsg, sw/2 - rw2/2, sh/2 + 30, 20, GRAY);
+                    int rw2 = GameMeasureText(restartMsg, S(24));
+                    GameDrawText(restartMsg, sw/2 - rw2/2, sh/2 + 30, S(24), GRAY);
                 }
                 // Non-death game over is drawn as a full overlay below
             }
@@ -4822,26 +4839,26 @@ int main(void)
         {
             int hudSw = GetScreenWidth();
             int hudSh = GetScreenHeight();
-            int hudTop = hudSh - HUD_TOTAL_HEIGHT;
+            int hudTop = hudSh - hudTotalH;
 
             // --- Dark background panel (full width, bottom) ---
-            DrawRectangle(0, hudTop, hudSw, HUD_TOTAL_HEIGHT, (Color){ 24, 24, 32, 230 });
+            DrawRectangle(0, hudTop, hudSw, hudTotalH, (Color){ 24, 24, 32, 230 });
             DrawRectangle(0, hudTop, hudSw, 2, (Color){ 60, 60, 80, 255 });
 
             // --- Unit cards (centered horizontally in the unit bar) ---
-            int totalCardsW = BLUE_TEAM_MAX_SIZE * HUD_CARD_WIDTH
-                            + (BLUE_TEAM_MAX_SIZE - 1) * HUD_CARD_SPACING;
+            int totalCardsW = BLUE_TEAM_MAX_SIZE * hudCardW
+                            + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
             int cardsStartX = (hudSw - totalCardsW) / 2;
-            int cardsY = hudTop + HUD_SHOP_HEIGHT + 5;
+            int cardsY = hudTop + hudShopH + 5;
 
             for (int slot = 0; slot < BLUE_TEAM_MAX_SIZE; slot++)
             {
-                int cardX = cardsStartX + slot * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
+                int cardX = cardsStartX + slot * (hudCardW + hudCardSpacing);
 
                 // Card background
-                DrawRectangle(cardX, cardsY, HUD_CARD_WIDTH, HUD_CARD_HEIGHT,
+                DrawRectangle(cardX, cardsY, hudCardW, hudCardH,
                              (Color){ 35, 35, 50, 255 });
-                DrawRectangleLines(cardX, cardsY, HUD_CARD_WIDTH, HUD_CARD_HEIGHT,
+                DrawRectangleLines(cardX, cardsY, hudCardW, hudCardH,
                                   (Color){ 60, 60, 80, 255 });
 
                 if (slot < blueHudCount)
@@ -4854,7 +4871,7 @@ int main(void)
                     if (units[ui].selected)
                         DrawRectangleLinesEx(
                             (Rectangle){ (float)(cardX - 1), (float)(cardsY - 1),
-                                        (float)(HUD_CARD_WIDTH + 2), (float)(HUD_CARD_HEIGHT + 2) },
+                                        (float)(hudCardW + 2), (float)(hudCardH + 2) },
                             2, (Color){ 100, 255, 100, 255 });
 
                     // Rarity border glow
@@ -4863,19 +4880,19 @@ int main(void)
                         unsigned char alpha = (unsigned char)(120 + pulse * 80);
                         DrawRectangleLinesEx(
                             (Rectangle){ (float)(cardX-1), (float)(cardsY-1),
-                                        (float)(HUD_CARD_WIDTH+2), (float)(HUD_CARD_HEIGHT+2) },
+                                        (float)(hudCardW+2), (float)(hudCardH+2) },
                             2, (Color){ 255, 60, 60, alpha });
                     } else if (units[ui].rarity == RARITY_RARE) {
                         DrawRectangleLinesEx(
                             (Rectangle){ (float)(cardX-1), (float)(cardsY-1),
-                                        (float)(HUD_CARD_WIDTH+2), (float)(HUD_CARD_HEIGHT+2) },
+                                        (float)(hudCardW+2), (float)(hudCardH+2) },
                             1, (Color){ 180, 100, 255, 160 });
                     }
 
                     // X button (remove unit) — prep phase only
                     if (phase == PHASE_PREP) {
-                        int xBtnSize = 16;
-                        int xBtnX = cardX + HUD_CARD_WIDTH - xBtnSize - 2;
+                        int xBtnSize = S(18);
+                        int xBtnX = cardX + hudCardW - xBtnSize - 2;
                         int xBtnY = cardsY + 2;
                         Color xBg = (Color){ 180, 50, 50, 200 };
                         if (CheckCollisionPointRec(GetMousePosition(),
@@ -4888,38 +4905,39 @@ int main(void)
                     }
 
                     // Portrait (left side of card) — Y-flipped for RenderTexture
-                    Rectangle srcRect = { 0, 0, (float)HUD_PORTRAIT_SIZE, -(float)HUD_PORTRAIT_SIZE };
-                    Rectangle dstRect = { (float)(cardX + 4), (float)(cardsY + 4),
-                                          (float)HUD_PORTRAIT_SIZE, (float)HUD_PORTRAIT_SIZE };
+                    // srcRect uses base texture size, dstRect uses scaled size
+                    Rectangle srcRect = { 0, 0, (float)HUD_PORTRAIT_SIZE_BASE, -(float)HUD_PORTRAIT_SIZE_BASE };
+                    Rectangle dstRect = { (float)(cardX + S(4)), (float)(cardsY + S(4)),
+                                          (float)hudPortraitSize, (float)hudPortraitSize };
                     DrawTexturePro(portraits[slot].texture, srcRect, dstRect,
                                   (Vector2){ 0, 0 }, 0.0f, WHITE);
-                    DrawRectangleLines(cardX + 4, cardsY + 4,
-                                      HUD_PORTRAIT_SIZE, HUD_PORTRAIT_SIZE,
+                    DrawRectangleLines(cardX + S(4), cardsY + S(4),
+                                      hudPortraitSize, hudPortraitSize,
                                       (Color){ 60, 60, 80, 255 });
 
                     // Unit name below portrait
                     const char *unitName = type->name;
-                    int nameW = GameMeasureText(unitName, 12);
+                    int nameW = GameMeasureText(unitName, S(12));
                     GameDrawText(unitName,
-                            cardX + 4 + (HUD_PORTRAIT_SIZE - nameW) / 2,
-                            cardsY + HUD_PORTRAIT_SIZE + 8,
-                            12, (Color){ 200, 200, 220, 255 });
+                            cardX + S(4) + (hudPortraitSize - nameW) / 2,
+                            cardsY + S(4) + hudPortraitSize + S(2),
+                            S(12), (Color){ 200, 200, 220, 255 });
 
                     if (units[ui].rarity > 0) {
                         const char *stars = (units[ui].rarity == RARITY_LEGENDARY) ? "* *" : "*";
-                        int starsW = GameMeasureText(stars, 10);
+                        int starsW = GameMeasureText(stars, S(10));
                         Color starColor = (units[ui].rarity == RARITY_LEGENDARY)
                             ? (Color){ 255, 60, 60, 255 }
                             : (Color){ 180, 100, 255, 255 };
-                        GameDrawText(stars, cardX + 4 + (HUD_PORTRAIT_SIZE - starsW)/2,
-                                 cardsY + HUD_PORTRAIT_SIZE + 1, 10, starColor);
+                        GameDrawText(stars, cardX + S(4) + (hudPortraitSize - starsW)/2,
+                                 cardsY + S(4) + hudPortraitSize - S(4), S(10), starColor);
                     }
 
                     // Mini health bar
-                    int hbX = cardX + 4;
-                    int hbY = cardsY + HUD_PORTRAIT_SIZE + 22;
-                    int hbW = HUD_PORTRAIT_SIZE;
-                    int hbH = 6;
+                    int hbX = cardX + S(4);
+                    int hbY = cardsY + S(4) + hudPortraitSize + S(16);
+                    int hbW = hudPortraitSize;
+                    int hbH = S(6);
                     float cardMaxHP = stats->health * units[ui].hpMultiplier;
                     float hpRatio = units[ui].currentHealth / cardMaxHP;
                     if (hpRatio < 0) hpRatio = 0;
@@ -4930,57 +4948,61 @@ int main(void)
                     DrawRectangleLines(hbX, hbY, hbW, hbH, (Color){ 60, 60, 80, 255 });
 
                     // 2x2 Ability slot grid (right side of card)
-                    int abilStartX = cardX + HUD_PORTRAIT_SIZE + 12;
+                    int abilStartX = cardX + hudPortraitSize + 12;
                     int abilStartY = cardsY + 8;
                     for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
                     {
                         int col = a % 2;
                         int row = a / 2;
-                        int ax = abilStartX + col * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                        int ay = abilStartY + row * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
+                        int ax = abilStartX + col * (hudAbilSlotSize + hudAbilSlotGap);
+                        int ay = abilStartY + row * (hudAbilSlotSize + hudAbilSlotGap);
 
                         AbilitySlot *aslot = &units[ui].abilities[a];
                         if (aslot->abilityId >= 0 && aslot->abilityId < ABILITY_COUNT) {
                             // Filled slot — colored background
-                            DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
+                            DrawRectangle(ax, ay, hudAbilSlotSize, hudAbilSlotSize,
                                          ABILITY_DEFS[aslot->abilityId].color);
                             // Hover detection
                             bool slotHovered = CheckCollisionPointRec(GetMousePosition(),
-                                (Rectangle){(float)ax,(float)ay,(float)HUD_ABILITY_SLOT_SIZE,(float)HUD_ABILITY_SLOT_SIZE});
+                                (Rectangle){(float)ax,(float)ay,(float)hudAbilSlotSize,(float)hudAbilSlotSize});
                             if (slotHovered) { hoverAbilityId = aslot->abilityId; hoverAbilityLevel = aslot->level; }
                             // Abbreviation (scale up when charging tooltip)
-                            int abbrSize = 11;
+                            int abbrSize = S(13);
                             if (slotHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
-                                abbrSize = 11 + (int)(3.0f * (hoverTimer / tooltipDelay));
+                                abbrSize = S(13) + (int)(3.0f * (hoverTimer / tooltipDelay));
                             const char *abbr = ABILITY_DEFS[aslot->abilityId].abbrev;
                             int aw2 = GameMeasureText(abbr, abbrSize);
-                            GameDrawText(abbr, ax + (HUD_ABILITY_SLOT_SIZE - aw2) / 2,
-                                    ay + (HUD_ABILITY_SLOT_SIZE - abbrSize) / 2, abbrSize, WHITE);
-                            // Level indicator (bottom-left)
+                            GameDrawText(abbr, ax + (hudAbilSlotSize - aw2) / 2,
+                                    ay + (hudAbilSlotSize - abbrSize) / 2, abbrSize, WHITE);
+                            // Level indicator (bottom-left) with shadow
                             const char *lvl = TextFormat("L%d", aslot->level + 1);
-                            GameDrawText(lvl, ax + 2, ay + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
+                            int lvlFsz = S(11);
+                            GameDrawText(lvl, ax + S(2) + 1, ay + hudAbilSlotSize - lvlFsz + 1, lvlFsz, (Color){0,0,0,180});
+                            GameDrawText(lvl, ax + S(2), ay + hudAbilSlotSize - lvlFsz, lvlFsz, WHITE);
                             // Cooldown overlay (combat only)
                             if (aslot->cooldownRemaining > 0 && phase == PHASE_COMBAT) {
                                 const AbilityDef *adef = &ABILITY_DEFS[aslot->abilityId];
                                 float cdFrac = aslot->cooldownRemaining / adef->cooldown[aslot->level];
                                 if (cdFrac > 1) cdFrac = 1;
-                                int overlayH = (int)(HUD_ABILITY_SLOT_SIZE * cdFrac);
-                                DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, overlayH, (Color){0,0,0,150});
+                                int overlayH = (int)(hudAbilSlotSize * cdFrac);
+                                DrawRectangle(ax, ay, hudAbilSlotSize, overlayH, (Color){0,0,0,150});
+                                int cdFsz = S(14);
                                 const char *cdTxt = TextFormat("%.0f", aslot->cooldownRemaining);
-                                int cdw = GameMeasureText(cdTxt, 12);
-                                GameDrawText(cdTxt, ax + (HUD_ABILITY_SLOT_SIZE - cdw)/2,
-                                        ay + (HUD_ABILITY_SLOT_SIZE - 12)/2, 12, WHITE);
+                                int cdw = GameMeasureText(cdTxt, cdFsz);
+                                GameDrawText(cdTxt, ax + (hudAbilSlotSize - cdw)/2,
+                                        ay + (hudAbilSlotSize - cdFsz)/2, cdFsz, WHITE);
                             }
                         } else {
                             // Empty slot
-                            DrawRectangle(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
+                            DrawRectangle(ax, ay, hudAbilSlotSize, hudAbilSlotSize,
                                          (Color){ 40, 40, 55, 255 });
                             const char *q = "?";
-                            int qw = GameMeasureText(q, 16);
-                            GameDrawText(q, ax + (HUD_ABILITY_SLOT_SIZE - qw) / 2,
-                                    ay + (HUD_ABILITY_SLOT_SIZE - 16) / 2, 16, (Color){ 80, 80, 100, 255 });
+                            int qFsz = S(18);
+                            int qw = GameMeasureText(q, qFsz);
+                            GameDrawText(q, ax + (hudAbilSlotSize - qw) / 2,
+                                    ay + (hudAbilSlotSize - qFsz) / 2, qFsz, (Color){ 80, 80, 100, 255 });
                         }
-                        DrawRectangleLines(ax, ay, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE,
+                        DrawRectangleLines(ax, ay, hudAbilSlotSize, hudAbilSlotSize,
                                           (Color){ 90, 90, 110, 255 });
                         // Activation order number (top-right corner)
                         // Find which activation position this slot is
@@ -4990,49 +5012,55 @@ int main(void)
                         Color orderCol = (Color){100,100,120,255};
                         if (phase == PHASE_COMBAT && ACTIVATION_ORDER[units[ui].nextAbilitySlot] == a)
                             orderCol = YELLOW;
-                        GameDrawText(TextFormat("%d", orderNum), ax + HUD_ABILITY_SLOT_SIZE - 8, ay + 1, 8, orderCol);
+                        int ordFsz = S(11);
+                        const char *ordTxt = TextFormat("%d", orderNum);
+                        GameDrawText(ordTxt, ax + hudAbilSlotSize - ordFsz + 1, ay + S(1) + 1, ordFsz, (Color){0,0,0,180});
+                        GameDrawText(ordTxt, ax + hudAbilSlotSize - ordFsz, ay + S(1), ordFsz, orderCol);
                     }
                 }
                 else
                 {
                     // Empty slot placeholder
                     const char *emptyText = "EMPTY";
-                    int ew = GameMeasureText(emptyText, 14);
+                    int emptyFsz = S(16);
+                    int ew = GameMeasureText(emptyText, emptyFsz);
                     GameDrawText(emptyText,
-                            cardX + (HUD_CARD_WIDTH - ew) / 2,
-                            cardsY + (HUD_CARD_HEIGHT - 14) / 2,
-                            14, (Color){ 60, 60, 80, 255 });
+                            cardX + (hudCardW - ew) / 2,
+                            cardsY + (hudCardH - emptyFsz) / 2,
+                            emptyFsz, (Color){ 60, 60, 80, 255 });
                 }
             }
 
             // --- Inventory (left of unit cards) ---
             {
-                int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP)) - 20;
+                int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
                 int invStartY = cardsY + 15;
-                GameDrawText("INV", invStartX, invStartY - 14, 10, (Color){160,160,180,255});
+                GameDrawText("INV", invStartX, invStartY - S(16), S(14), (Color){160,160,180,255});
                 for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
                     int icol = inv % HUD_INVENTORY_COLS;
                     int irow = inv / HUD_INVENTORY_COLS;
-                    int ix = invStartX + icol * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                    int iy = invStartY + irow * (HUD_ABILITY_SLOT_SIZE + HUD_ABILITY_SLOT_GAP);
-                    DrawRectangle(ix, iy, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE, (Color){40,40,55,255});
-                    DrawRectangleLines(ix, iy, HUD_ABILITY_SLOT_SIZE, HUD_ABILITY_SLOT_SIZE, (Color){90,90,110,255});
+                    int ix = invStartX + icol * (hudAbilSlotSize + hudAbilSlotGap);
+                    int iy = invStartY + irow * (hudAbilSlotSize + hudAbilSlotGap);
+                    DrawRectangle(ix, iy, hudAbilSlotSize, hudAbilSlotSize, (Color){40,40,55,255});
+                    DrawRectangleLines(ix, iy, hudAbilSlotSize, hudAbilSlotSize, (Color){90,90,110,255});
                     if (inventory[inv].abilityId >= 0 && inventory[inv].abilityId < ABILITY_COUNT) {
-                        DrawRectangle(ix+1, iy+1, HUD_ABILITY_SLOT_SIZE-2, HUD_ABILITY_SLOT_SIZE-2,
+                        DrawRectangle(ix+1, iy+1, hudAbilSlotSize-2, hudAbilSlotSize-2,
                                       ABILITY_DEFS[inventory[inv].abilityId].color);
                         // Hover detection
                         bool invHovered = CheckCollisionPointRec(GetMousePosition(),
-                            (Rectangle){(float)ix,(float)iy,(float)HUD_ABILITY_SLOT_SIZE,(float)HUD_ABILITY_SLOT_SIZE});
+                            (Rectangle){(float)ix,(float)iy,(float)hudAbilSlotSize,(float)hudAbilSlotSize});
                         if (invHovered) { hoverAbilityId = inventory[inv].abilityId; hoverAbilityLevel = inventory[inv].level; }
-                        int invAbbrSize = 11;
+                        int invAbbrSize = S(13);
                         if (invHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
-                            invAbbrSize = 11 + (int)(3.0f * (hoverTimer / tooltipDelay));
+                            invAbbrSize = S(13) + (int)(3.0f * (hoverTimer / tooltipDelay));
                         const char *iabbr = ABILITY_DEFS[inventory[inv].abilityId].abbrev;
                         int iaw = GameMeasureText(iabbr, invAbbrSize);
-                        GameDrawText(iabbr, ix + (HUD_ABILITY_SLOT_SIZE-iaw)/2,
-                                 iy + (HUD_ABILITY_SLOT_SIZE-invAbbrSize)/2, invAbbrSize, WHITE);
+                        GameDrawText(iabbr, ix + (hudAbilSlotSize-iaw)/2,
+                                 iy + (hudAbilSlotSize-invAbbrSize)/2, invAbbrSize, WHITE);
                         const char *ilvl = TextFormat("L%d", inventory[inv].level + 1);
-                        GameDrawText(ilvl, ix + 2, iy + HUD_ABILITY_SLOT_SIZE - 9, 8, (Color){220,220,220,200});
+                        int ilvlFsz = S(11);
+                        GameDrawText(ilvl, ix + S(2) + 1, iy + hudAbilSlotSize - ilvlFsz + 1, ilvlFsz, (Color){0,0,0,180});
+                        GameDrawText(ilvl, ix + S(2), iy + hudAbilSlotSize - ilvlFsz, ilvlFsz, WHITE);
                     }
                 }
             }
@@ -5098,7 +5126,7 @@ int main(void)
                 // Draw synergy panel rows (right of the cards)
                 int synPanelX = cardsStartX + totalCardsW + 12;
                 int synPanelY = cardsY + 2;
-                int synRowH = 20;
+                int synRowH = S(22);
                 int activeSynCount = 0;
                 for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
                     if (synTier[s] < 0) continue;
@@ -5106,16 +5134,16 @@ int main(void)
                     int rowY = synPanelY + activeSynCount * synRowH;
 
                     // Hover detection for tooltip
-                    Rectangle synRow = { (float)synPanelX, (float)rowY, 140.0f, (float)synRowH };
+                    Rectangle synRow = { (float)synPanelX, (float)rowY, (float)S(160), (float)synRowH };
                     bool synHovered = CheckCollisionPointRec(GetMousePosition(), synRow);
                     if (synHovered) hoverSynergyIdx = s;
 
                     // Colored dot
-                    DrawCircle(synPanelX + 5, rowY + synRowH / 2, 4, syn->color);
+                    DrawCircle(synPanelX + 5, rowY + synRowH / 2, S(5), syn->color);
                     // Synergy name
-                    GameDrawText(syn->name, synPanelX + 14, rowY + 2, 10, WHITE);
+                    GameDrawText(syn->name, synPanelX + 14, rowY + 2, S(12), WHITE);
                     // Tier pips
-                    int pipX = synPanelX + 14 + GameMeasureText(syn->name, 10) + 6;
+                    int pipX = synPanelX + 14 + GameMeasureText(syn->name, S(12)) + 6;
                     for (int t = 0; t < syn->tierCount; t++) {
                         Color pipColor = (t <= synTier[s])
                             ? syn->color
@@ -5125,7 +5153,7 @@ int main(void)
                     // Buff text
                     if (syn->buffDesc[synTier[s]]) {
                         int buffX = pipX + syn->tierCount * 10 + 6;
-                        GameDrawText(syn->buffDesc[synTier[s]], buffX, rowY + 4, 10,
+                        GameDrawText(syn->buffDesc[synTier[s]], buffX, rowY + 4, S(12),
                                  (Color){ 160, 160, 180, 200 });
                     }
                     activeSynCount++;
@@ -5133,8 +5161,8 @@ int main(void)
 
                 // Per-card synergy badges (below each unit card)
                 for (int sl = 0; sl < blueHudCount; sl++) {
-                    int cardX = cardsStartX + sl * (HUD_CARD_WIDTH + HUD_CARD_SPACING);
-                    int badgeY = cardsY + HUD_CARD_HEIGHT + 2;
+                    int cardX = cardsStartX + sl * (hudCardW + hudCardSpacing);
+                    int badgeY = cardsY + hudCardH + 2;
                     int badgeX = cardX + 2;
                     for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
                         if (!unitSyn[sl][s]) continue;
@@ -5162,20 +5190,20 @@ int main(void)
                               ABILITY_DEFS[dragState.abilityId].color);
                 DrawRectangleLines((int)dmouse.x - 16, (int)dmouse.y - 16, 32, 32, WHITE);
                 const char *dabbr = ABILITY_DEFS[dragState.abilityId].abbrev;
-                int daw = GameMeasureText(dabbr, 11);
-                GameDrawText(dabbr, (int)dmouse.x - daw/2, (int)dmouse.y - 5, 11, WHITE);
+                int daw = GameMeasureText(dabbr, S(13));
+                GameDrawText(dabbr, (int)dmouse.x - daw/2, (int)dmouse.y - 5, S(13), WHITE);
             }
 
             // --- Shop panel (only during PREP, above unit bar) ---
             if (phase == PHASE_PREP)
             {
                 int shopY = hudTop + 2;
-                int shopH = HUD_SHOP_HEIGHT - 2;
+                int shopH = hudShopH - 2;
                 DrawRectangle(0, shopY, hudSw, shopH, (Color){ 20, 20, 28, 240 });
                 DrawRectangle(0, shopY + shopH - 1, hudSw, 1, (Color){ 60, 60, 80, 255 });
 
                 // ROLL button (left) — show cost
-                Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
+                Rectangle rollBtn = { 20, (float)(shopY + 10), S(90), S(34) };
                 bool canRoll = (playerGold >= rollCost);
                 Color rollColor = canRoll ? (Color){ 180, 140, 40, 255 } : (Color){ 80, 70, 40, 255 };
                 if (canRoll && CheckCollisionPointRec(GetMousePosition(), rollBtn))
@@ -5183,13 +5211,13 @@ int main(void)
                 DrawRectangleRec(rollBtn, rollColor);
                 DrawRectangleLinesEx(rollBtn, 2, (Color){ 120, 90, 20, 255 });
                 const char *rollText = TextFormat("ROLL %dg", rollCost);
-                int rollW = GameMeasureText(rollText, 14);
-                GameDrawText(rollText, (int)(rollBtn.x + (80 - rollW) / 2),
-                        (int)(rollBtn.y + (30 - 14) / 2), 14, WHITE);
+                int rollW = GameMeasureText(rollText, S(16));
+                GameDrawText(rollText, (int)(rollBtn.x + (S(90) - rollW) / 2),
+                        (int)(rollBtn.y + (S(34) - S(16)) / 2), S(16), WHITE);
 
                 // Shop ability cards (3 slots, centered)
-                int shopCardW = 120;
-                int shopCardH = 34;
+                int shopCardW = S(130);
+                int shopCardH = S(38);
                 int shopCardGap = 10;
                 int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
                 int shopCardsX = (hudSw - totalShopW) / 2;
@@ -5209,24 +5237,26 @@ int main(void)
                         DrawRectangle(scx, scy, shopCardW, shopCardH, cardBg);
                         DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){90,90,110,255});
                         const char *sname = TextFormat("%s %dg", sdef->name, sdef->goldCost);
-                        int snw = GameMeasureText(sname, 12);
-                        GameDrawText(sname, scx + (shopCardW - snw)/2, scy + (shopCardH - 12)/2, 12,
+                        int shopFontSz = S(14);
+                        int snw = GameMeasureText(sname, shopFontSz);
+                        GameDrawText(sname, scx + (shopCardW - snw)/2, scy + (shopCardH - shopFontSz)/2, shopFontSz,
                                 canAfford ? WHITE : (Color){100,100,120,255});
                     } else {
+                        int shopFontSz = S(14);
                         DrawRectangle(scx, scy, shopCardW, shopCardH, (Color){35,35,45,255});
                         DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){60,60,80,255});
-                        GameDrawText("SOLD", scx + (shopCardW - GameMeasureText("SOLD",12))/2,
-                                scy + (shopCardH - 12)/2, 12, (Color){60,60,80,255});
+                        GameDrawText("SOLD", scx + (shopCardW - GameMeasureText("SOLD",shopFontSz))/2,
+                                scy + (shopCardH - shopFontSz)/2, shopFontSz, (Color){60,60,80,255});
                     }
                     // Keybind indicator
                     const char *keyLabel = TextFormat("[%d]", s + 1);
-                    GameDrawText(keyLabel, scx + 2, scy + 2, 10, (Color){180, 180, 200, 160});
+                    GameDrawText(keyLabel, scx + 2, scy + 2, S(12), (Color){180, 180, 200, 160});
                 }
 
                 // Gold display (right side)
                 const char *goldText = TextFormat("Gold: %d", playerGold);
-                int gw = GameMeasureText(goldText, 18);
-                GameDrawText(goldText, hudSw - gw - 20, shopY + 16, 18, (Color){ 240, 200, 60, 255 });
+                int gw = GameMeasureText(goldText, S(20));
+                GameDrawText(goldText, hudSw - gw - 20, shopY + 16, S(20), (Color){ 240, 200, 60, 255 });
             }
         }
 
@@ -5244,7 +5274,7 @@ int main(void)
             int ctw = GameMeasureText(confirmText, 16);
             GameDrawText(confirmText, popX + (popW - ctw) / 2, popY + 12, 16, WHITE);
             // Abilities returned note
-            GameDrawText("(abilities return to inventory)", popX + 14, popY + 32, 9, (Color){160,160,180,255});
+            GameDrawText("(abilities stay on figurine)", popX + 14, popY + 32, 9, (Color){160,160,180,255});
             // Yes / No buttons
             Rectangle yesBtn = { (float)(popX + 20), (float)(popY + popH - 32), 80, 24 };
             Rectangle noBtn  = { (float)(popX + popW - 100), (float)(popY + popH - 32), 80, 24 };
@@ -5355,16 +5385,16 @@ int main(void)
             int cdLineIdx = numStatLines; // special: cooldown uses cooldown[] not values[]
             numStatLines++; // reserve a line for cooldown
 
-            int tipW = 200;
-            int tipH = 44 + numStatLines * 14;
+            int tipW = S(220);
+            int tipH = 44 + numStatLines * S(16);
             int tipX = (int)mpos.x + 14;
             int tipY = (int)mpos.y - tipH - 4;
             if (tipX + tipW > GetScreenWidth()) tipX = (int)mpos.x - tipW - 4;
             if (tipY < 0) tipY = (int)mpos.y + 20;
             DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
             DrawRectangleLines(tipX, tipY, tipW, tipH, (Color){100, 100, 130, 255});
-            GameDrawText(tipDef->name, tipX + 6, tipY + 4, 14, WHITE);
-            GameDrawText(tipDef->description, tipX + 6, tipY + 22, 10, (Color){180, 180, 200, 255});
+            GameDrawText(tipDef->name, tipX + 6, tipY + 4, S(16), WHITE);
+            GameDrawText(tipDef->description, tipX + 6, tipY + 22, S(12), (Color){180, 180, 200, 255});
 
             Color dimStatColor = { 100, 100, 120, 255 };
             int lineY = tipY + 38;
@@ -5373,24 +5403,24 @@ int main(void)
                 if (sl == cdLineIdx) {
                     // Cooldown line
                     const char *cdLabel = "CD: ";
-                    GameDrawText(cdLabel, lx, lineY, 10, (Color){180,180,200,255});
-                    lx += GameMeasureText(cdLabel, 10);
+                    GameDrawText(cdLabel, lx, lineY, S(12), (Color){180,180,200,255});
+                    lx += GameMeasureText(cdLabel, S(12));
                     for (int lv = 0; lv < ABILITY_MAX_LEVELS; lv++) {
                         const char *val = TextFormat("%.1fs", tipDef->cooldown[lv]);
                         Color vc = (lv == hoverAbilityLevel) ? WHITE : dimStatColor;
-                        GameDrawText(val, lx, lineY, 10, vc);
-                        lx += GameMeasureText(val, 10);
+                        GameDrawText(val, lx, lineY, S(12), vc);
+                        lx += GameMeasureText(val, S(12));
                         if (lv < ABILITY_MAX_LEVELS - 1) {
-                            GameDrawText(" / ", lx, lineY, 10, dimStatColor);
-                            lx += GameMeasureText(" / ", 10);
+                            GameDrawText(" / ", lx, lineY, S(12), dimStatColor);
+                            lx += GameMeasureText(" / ", S(12));
                         }
                     }
                 } else {
                     // Stat value line
                     char labelBuf[32];
                     snprintf(labelBuf, sizeof(labelBuf), "%s: ", statLines[sl].label);
-                    GameDrawText(labelBuf, lx, lineY, 10, (Color){180,180,200,255});
-                    lx += GameMeasureText(labelBuf, 10);
+                    GameDrawText(labelBuf, lx, lineY, S(12), (Color){180,180,200,255});
+                    lx += GameMeasureText(labelBuf, S(12));
                     for (int lv = 0; lv < ABILITY_MAX_LEVELS; lv++) {
                         float v = tipDef->values[lv][statLines[sl].valueIndex];
                         const char *val;
@@ -5401,15 +5431,15 @@ int main(void)
                         else
                             val = TextFormat("%.1f", v);
                         Color vc = (lv == hoverAbilityLevel) ? WHITE : dimStatColor;
-                        GameDrawText(val, lx, lineY, 10, vc);
-                        lx += GameMeasureText(val, 10);
+                        GameDrawText(val, lx, lineY, S(12), vc);
+                        lx += GameMeasureText(val, S(12));
                         if (lv < ABILITY_MAX_LEVELS - 1) {
-                            GameDrawText(" / ", lx, lineY, 10, dimStatColor);
-                            lx += GameMeasureText(" / ", 10);
+                            GameDrawText(" / ", lx, lineY, S(12), dimStatColor);
+                            lx += GameMeasureText(" / ", S(12));
                         }
                     }
                 }
-                lineY += 14;
+                lineY += S(16);
             }
         }
 
@@ -5753,7 +5783,7 @@ int main(void)
                 // Portrait
                 if (h < blueHudCount) {
                     int portSize = 80;
-                    Rectangle srcRect = { 0, 0, (float)HUD_PORTRAIT_SIZE, -(float)HUD_PORTRAIT_SIZE };
+                    Rectangle srcRect = { 0, 0, (float)hudPortraitSize, -(float)hudPortraitSize };
                     Rectangle dstRect = { (float)(cx + 10), (float)(cardY + 10), (float)portSize, (float)portSize };
                     DrawTexturePro(portraits[h].texture, srcRect, dstRect, (Vector2){0,0}, 0.0f, WHITE);
                     DrawRectangleLines(cx + 10, cardY + 10, portSize, portSize, (Color){60,60,80,255});
@@ -5903,7 +5933,7 @@ int main(void)
                 // Portrait
                 if (h < BLUE_TEAM_MAX_SIZE) {
                     int portSize = 80;
-                    Rectangle srcRect = { 0, 0, (float)HUD_PORTRAIT_SIZE, -(float)HUD_PORTRAIT_SIZE };
+                    Rectangle srcRect = { 0, 0, (float)hudPortraitSize, -(float)hudPortraitSize };
                     Rectangle dstRect = { (float)(cx + 10), (float)(goCardY + 6), (float)portSize, (float)portSize };
                     DrawTexturePro(portraits[h].texture, srcRect, dstRect, (Vector2){0,0}, 0.0f, WHITE);
                     DrawRectangleLines(cx + 10, goCardY + 6, portSize, portSize, (Color){60,60,80,255});
