@@ -625,6 +625,7 @@ int main(void)
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
     bool usedShopHotkey = false;  // hides hotkey hint after first use
+    bool usedRollHotkey = false;  // hides roll hint after first use
 
     // Synergy hover tooltip state
     int hoverSynergyIdx = -1;
@@ -2104,6 +2105,7 @@ int main(void)
             // Quick-roll: R key
             if (!(isMultiplayer && playerReady) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE && !nfcInputActive) {
                 if (IsKeyPressed(KEY_R) && playerGold >= rollCost) {
+                    usedRollHotkey = true;
                     PlaySound(sfxUiReroll);
                     if (isMultiplayer) {
                         net_client_send_roll(&netClient);
@@ -5609,6 +5611,21 @@ int main(void)
                 GameDrawText(rollText, (int)(rollBtn.x + (S(90) - rollW) / 2),
                         (int)(rollBtn.y + (S(34) - S(16)) / 2), S(16), WHITE);
                 GameDrawText("[R]", (int)(rollBtn.x + 2), (int)(rollBtn.y + 2), S(10), (Color){255,255,200,240});
+
+                // Roll hotkey hint (first round only, until player uses it)
+                if (currentRound == 0 && !usedRollHotkey) {
+                    const char *rhint = "Press [R] to reroll shop!";
+                    int rhSz = S(14);
+                    int rhW = GameMeasureText(rhint, rhSz);
+                    int rhX = (int)(rollBtn.x + rollBtn.width + 10);
+                    int rhY = (int)(rollBtn.y + (rollBtn.height - rhSz) / 2);
+                    float rpulse = 0.5f + 0.5f * sinf((float)GetTime() * 3.0f);
+                    unsigned char rhAlpha = (unsigned char)(160 + (int)(rpulse * 95));
+                    DrawRectangle(rhX - 6, rhY - 4, rhW + 12, rhSz + 8, (Color){20, 20, 35, (unsigned char)(rhAlpha * 0.7f)});
+                    DrawRectangleLinesEx((Rectangle){(float)(rhX - 6), (float)(rhY - 4),
+                        (float)(rhW + 12), (float)(rhSz + 8)}, 1, (Color){255, 220, 100, rhAlpha});
+                    GameDrawText(rhint, rhX, rhY, rhSz, (Color){255, 230, 120, rhAlpha});
+                }
 
                 // Shop ability cards (3 slots, centered)
                 int shopCardW = S(160);
