@@ -1405,14 +1405,15 @@ int main(void)
                                                 ApplyUnitRarity(&units[unitCount - 1]);
                                                 printf("[NFC] Reader %d: UID %s -> Spawning %s name=\"%s\" (rarity=%d)\n",
                                                     nfcReader, nfcHex, unitTypes[nfcTypeIdx].name, nfcNameBuf, nfcRarity);
-                                                // If unnamed, prompt for name
+                                                // If unnamed, prompt for name first (intro plays after)
                                                 if (nfcNameBuf[0] == '\0') {
                                                     namingUnitIndex = unitCount - 1;
                                                     namingBuf[0] = '\0';
                                                     namingPos = 0;
+                                                } else {
+                                                    intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                                                        .typeIndex = nfcTypeIdx, .unitIndex = unitCount - 1, .animFrame = 0 };
                                                 }
-                                                intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                                                    .typeIndex = nfcTypeIdx, .unitIndex = unitCount - 1, .animFrame = 0 };
                                             } else {
                                                 printf("[NFC] Reader %d: UID %s -> Blue team full\n", nfcReader, nfcHex);
                                             }
@@ -6488,6 +6489,9 @@ int main(void)
                         net_nfc_set_name(serverHost, NET_PORT,
                             units[ni].nfcUid, units[ni].nfcUidLen, namingBuf);
                     }
+                    // Start intro cutscene now that naming is done
+                    intro = (UnitIntro){ .active = true, .timer = 0.0f,
+                        .typeIndex = units[ni].typeIndex, .unitIndex = ni, .animFrame = 0 };
                 }
                 namingUnitIndex = -1;
             }
