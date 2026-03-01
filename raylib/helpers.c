@@ -1026,7 +1026,7 @@ bool ParseUnitCode(const char *code, int *outTypeIndex, AbilitySlot outAbilities
         }
 
         int level = p[2] - '0';
-        if (level < 1 || level > 3) {
+        if (level < 1 || level > ABILITY_MAX_LEVELS) {
             fprintf(stderr, "[ParseUnitCode] Invalid level '%c' at slot %d\n", p[2], a);
             return false;
         }
