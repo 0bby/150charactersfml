@@ -102,5 +102,22 @@ static const SynergyDef SYNERGY_DEFS[] = {
             { .minUnits = 3, .speedMult = 1.05f, .hpMult = 1.0f, .dmgMult = 1.10f },
         }
     },
+    // 4: Devil Pact
+    {
+        .name = "Devil Pact",
+        .abbrev = "DP",
+#ifndef SERVER_BUILD
+        .color = { 200, 50, 50, 255 },
+#endif
+        .buffDesc = { "+15% DMG, +10% HP", "+30% DMG, +20% HP", NULL, NULL },
+        .requiredTypes = { 2 },       // Devil
+        .requiredTypeCount = 1,
+        .targetType = 2,              // buff goes to devils
+        .tierCount = 2,
+        .tiers = {
+            { .minUnits = 2, .speedMult = 1.0f, .hpMult = 1.10f, .dmgMult = 1.15f },
+            { .minUnits = 3, .speedMult = 1.0f, .hpMult = 1.20f, .dmgMult = 1.30f },
+        }
+    },
 };
 #define SYNERGY_COUNT (sizeof(SYNERGY_DEFS) / sizeof(SYNERGY_DEFS[0]))

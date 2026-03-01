@@ -41,7 +41,7 @@ typedef enum {
     PHASE_GAME_OVER,  // all rounds finished
 } GamePhase;
 
-typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_SCARED, ANIM_COUNT } AnimState;
+typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_SCARED, ANIM_ATTACK, ANIM_CAST, ANIM_COUNT } AnimState;
 
 #define MAX_SHOP_SLOTS 3
 #define MAX_MODIFIERS 128
@@ -161,6 +161,10 @@ typedef struct {
     int idleAnimCount;              // number of idle animations
     ModelAnimation *scaredAnims;    // scared animations (NULL if none)
     int scaredAnimCount;            // number of scared animations
+    ModelAnimation *attackAnims;    // melee attack anims (NULL if none)
+    int attackAnimCount;
+    ModelAnimation *castAnims;      // spellcast/ability anims (NULL if none)
+    int castAnimCount;
     int animIndex[ANIM_COUNT];      // index into respective anim array (-1 = not found)
     bool hasAnimations;
     float yOffset;          // vertical draw offset (raise/lower model)
@@ -194,6 +198,7 @@ typedef struct {
     int   chargeTarget;    // Primal Charge: target unit index (-1 = not charging)
     float hitFlash;        // >0 = flash white on damage (decays to 0)
     float castPause;       // >0 = frozen after casting projectile ability
+    float attackAnimTimer; // >0 = playing attack animation (counts down)
     // NFC tag UID (travels with unit during array compaction)
     unsigned char nfcUid[7];
     int nfcUidLen;         // 0 = not from NFC
@@ -377,3 +382,26 @@ typedef struct {
     int scroll;
 } BattleLog;
 #endif
+
+//------------------------------------------------------------------------------------
+// Environment Piece Editor
+//------------------------------------------------------------------------------------
+#define MAX_ENV_PIECES 32
+#define MAX_ENV_MODELS 8
+
+typedef struct {
+    const char *name;        // display name for UI
+    const char *modelPath;
+    const char *texturePath; // NULL if no separate texture
+    Model model;
+    Texture2D texture;       // separately loaded texture (id=0 if none)
+    bool loaded;
+} EnvModelDef;
+
+typedef struct {
+    int modelIndex;          // index into envModels[]
+    Vector3 position;
+    float rotationY;         // degrees around Y axis
+    float scale;             // uniform multiplier (1.0 = auto-computed default)
+    bool active;
+} EnvPiece;

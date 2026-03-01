@@ -6,6 +6,19 @@
 #include <stdio.h>
 
 //------------------------------------------------------------------------------------
+// Animation Helpers
+//------------------------------------------------------------------------------------
+ModelAnimation *GetAnimArray(UnitType *type, AnimState state) {
+    switch (state) {
+        case ANIM_IDLE:   return type->idleAnims;
+        case ANIM_SCARED: return type->scaredAnims ? type->scaredAnims : type->anims;
+        case ANIM_ATTACK: return type->attackAnims;
+        case ANIM_CAST:   return type->castAnims;
+        default:          return type->anims;  // ANIM_WALK and fallback
+    }
+}
+
+//------------------------------------------------------------------------------------
 // Unit Utilities
 //------------------------------------------------------------------------------------
 // Count active units for a specific team

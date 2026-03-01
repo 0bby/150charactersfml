@@ -54,7 +54,7 @@
 int main(void)
 {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-    InitWindow(1280, 720, "Autochess — Set in Stone");
+    InitWindow(1280, 720, "Relic Rivals");
     SetWindowMinSize(640, 360);
     InitAudioDevice();
 
@@ -158,10 +158,14 @@ int main(void)
     unitTypes[1].name = "Goblin";
     unitTypes[1].modelPath = "assets/goblin/animations/PluginGoblinWalk.glb";
     unitTypes[1].scale = 9.0f;
+    unitTypes[2].name = "Devil";
+    unitTypes[2].modelPath = "assets/classes/devil/DevilIdle.glb";
+    unitTypes[2].scale = 9.0f;
+    unitTypes[2].yOffset = 0.0f;
     unitTypes[5].name = "Reptile";
-    unitTypes[5].modelPath = "assets/classes/reptile/reptile.obj";
-    unitTypes[5].scale = 0.07f;
-    unitTypes[5].yOffset = 1.5f;
+    unitTypes[5].modelPath = "assets/classes/reptile/ReptileIdle.glb";
+    unitTypes[5].scale = 9.0f;
+    unitTypes[5].yOffset = 0.0f;
 
     for (int i = 0; i < unitTypeCount; i++)
     {
@@ -196,6 +200,64 @@ int main(void)
     unitTypes[1].scaredAnimCount = 0;
     if (walkAnimCount > 0) unitTypes[1].animIndex[ANIM_SCARED] = 0;  // fallback to walk
     unitTypes[1].hasAnimations = (walkAnimCount > 0 || idleAnimCount > 0);
+    unitTypes[1].attackAnims = NULL; unitTypes[1].attackAnimCount = 0;
+    unitTypes[1].castAnims = NULL;   unitTypes[1].castAnimCount = 0;
+
+    // Reptile animations
+    {
+        int cnt = 0;
+        ModelAnimation *walk = LoadModelAnimations("assets/classes/reptile/ReptileWalking.glb", &cnt);
+        unitTypes[5].anims = walk; unitTypes[5].animCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *idle = LoadModelAnimations("assets/classes/reptile/ReptileIdle.glb", &cnt);
+        unitTypes[5].idleAnims = idle; unitTypes[5].idleAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *atk = LoadModelAnimations("assets/classes/reptile/ReptileAttack.glb", &cnt);
+        unitTypes[5].attackAnims = atk; unitTypes[5].attackAnimCount = cnt;
+
+        unitTypes[5].scaredAnims = NULL; unitTypes[5].scaredAnimCount = 0;
+        unitTypes[5].castAnims = NULL;   unitTypes[5].castAnimCount = 0;
+
+        for (int s = 0; s < ANIM_COUNT; s++) unitTypes[5].animIndex[s] = -1;
+        if (unitTypes[5].idleAnimCount > 0)   unitTypes[5].animIndex[ANIM_IDLE] = 0;
+        if (unitTypes[5].animCount > 0)       unitTypes[5].animIndex[ANIM_WALK] = 0;
+        if (unitTypes[5].animCount > 0)       unitTypes[5].animIndex[ANIM_SCARED] = 0;
+        if (unitTypes[5].attackAnimCount > 0) unitTypes[5].animIndex[ANIM_ATTACK] = 0;
+        unitTypes[5].hasAnimations = true;
+    }
+
+    // Devil animations
+    {
+        int cnt = 0;
+        ModelAnimation *walk = LoadModelAnimations("assets/classes/devil/DevilWalk.glb", &cnt);
+        unitTypes[2].anims = walk; unitTypes[2].animCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *idle = LoadModelAnimations("assets/classes/devil/DevilIdle.glb", &cnt);
+        unitTypes[2].idleAnims = idle; unitTypes[2].idleAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *atk = LoadModelAnimations("assets/classes/devil/DevilPunch.glb", &cnt);
+        unitTypes[2].attackAnims = atk; unitTypes[2].attackAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *cast = LoadModelAnimations("assets/classes/devil/DevilMagic.glb", &cnt);
+        unitTypes[2].castAnims = cast; unitTypes[2].castAnimCount = cnt;
+
+        cnt = 0;
+        ModelAnimation *scared = LoadModelAnimations("assets/classes/devil/DevilScared.glb", &cnt);
+        unitTypes[2].scaredAnims = scared; unitTypes[2].scaredAnimCount = cnt;
+
+        for (int s = 0; s < ANIM_COUNT; s++) unitTypes[2].animIndex[s] = -1;
+        if (unitTypes[2].idleAnimCount > 0)    unitTypes[2].animIndex[ANIM_IDLE] = 0;
+        if (unitTypes[2].animCount > 0)        unitTypes[2].animIndex[ANIM_WALK] = 0;
+        if (unitTypes[2].scaredAnimCount > 0)  unitTypes[2].animIndex[ANIM_SCARED] = 0;
+        if (unitTypes[2].attackAnimCount > 0)  unitTypes[2].animIndex[ANIM_ATTACK] = 0;
+        if (unitTypes[2].castAnimCount > 0)    unitTypes[2].animIndex[ANIM_CAST] = 0;
+        unitTypes[2].hasAnimations = true;
+    }
 
     // Portrait render textures for HUD (one per max blue unit)
     RenderTexture2D portraits[BLUE_TEAM_MAX_SIZE];
@@ -447,9 +509,11 @@ int main(void)
     Modifier modifiers[MAX_MODIFIERS] = { 0 };
     Projectile projectiles[MAX_PROJECTILES] = { 0 };
     Particle particles[MAX_PARTICLES] = { 0 };
-    int playerGold = 100; // DEBUG: was 10
+    int playerGold = 20; // DEBUG: was 10
     int goldPerRound = 5;
-    int rollCost = 2;
+    int rollCost = 1;
+    const int rollCostBase = 1;
+    const int rollCostIncrement = 1;
     ShopSlot shopSlots[MAX_SHOP_SLOTS];
     for (int i = 0; i < MAX_SHOP_SLOTS; i++) shopSlots[i].abilityId = -1;
     InventorySlot inventory[MAX_INVENTORY_SLOTS];
@@ -527,9 +591,11 @@ int main(void)
             MatrixTranslate(-tCenterX, -tBaseY, -tCenterZ),
             MatrixScale(tScale, tScale, tScale));
     }
-    // --- Environment models: platform, stairs, circle ---
-    Model platformModel = LoadModel("assets/goblin/environment/platform/platform.obj");
+    // --- Environment models: ground (replaces old platform), stairs, circle ---
+    Texture2D groundDiffuse = LoadTexture("assets/goblin/environment/ground/T_Ground_BC.png");
+    Model platformModel = LoadModel("assets/goblin/environment/ground/ground.obj");
     for (int m = 0; m < platformModel.materialCount; m++) {
+        platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = groundDiffuse;
         platformModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
         platformModel.materials[m].shader = lightShader;
     }
@@ -586,14 +652,173 @@ int main(void)
             MatrixRotateX(-90.0f * DEG2RAD));
     }
 
-    Vector3 platformPos  = { 0.0f, -10.0f, 0.0f };
-    Vector3 stairsFarPos = { 0.0f, -1.0f, -120.0f };
-    Vector3 stairsLPos   = { -120.0f, -1.0f, 0.0f };
-    Vector3 stairsRPos   = { 120.0f, -1.0f, 0.0f };
-    Vector3 circlePos    = { 0.0f, 0.0f, -140.0f };
+    // platformPos, stairsFarPos, stairsLPos, stairsRPos, circlePos now live in envPieces[]
 
     Vector3 doorPos = { 120.0f, 0.0f, 80.0f };
     Vector3 trophyPos = { -120.0f, 0.0f, 80.0f };
+
+    // --- Environment model catalog (for debug piece editor) ---
+    EnvModelDef envModels[MAX_ENV_MODELS] = {0};
+    int envModelCount = 0;
+
+    // 0: Arches
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Arches";
+        em->modelPath = "assets/goblin/environment/arches/Arches.obj";
+        em->texturePath = "assets/goblin/environment/arches/T_Arches_BC.png";
+        em->texture = LoadTexture(em->texturePath);
+        em->model = LoadModel(em->modelPath);
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 15.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 1: Wall
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Wall";
+        em->modelPath = "assets/goblin/environment/wall/Wall_LP.obj";
+        em->texturePath = "assets/goblin/environment/wall/T_Wall_BC.png";
+        em->texture = LoadTexture(em->texturePath);
+        em->model = LoadModel(em->modelPath);
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 15.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 2: Stairs (reuse already-loaded stairsModel)
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Stairs";
+        em->modelPath = "assets/goblin/environment/stairs/Stairs_LP.obj";
+        em->texturePath = NULL;
+        em->model = stairsModel;  // reuse — do NOT unload separately
+        em->texture = (Texture2D){0};
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 3: Circle (reuse already-loaded circleModel)
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Circle";
+        em->modelPath = "assets/goblin/environment/circle/circle.obj";
+        em->texturePath = NULL;
+        em->model = circleModel;  // reuse — do NOT unload separately
+        em->texture = (Texture2D){0};
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 4: FloorTiles
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "FloorTiles";
+        em->modelPath = "assets/goblin/environment/floor_tiles/FloorTiles_LP.obj";
+        em->texturePath = NULL;
+        em->model = LoadModel(em->modelPath);
+        em->texture = (Texture2D){0};
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 10.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 5: Ground (reuse already-loaded platformModel)
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "Ground";
+        em->modelPath = "assets/goblin/environment/ground/ground.obj";
+        em->texturePath = NULL;
+        em->model = platformModel;  // reuse — do NOT unload separately
+        em->texture = (Texture2D){0};
+        em->loaded = true;
+        envModelCount++;
+    }
+
+    // --- Env pieces array (populated from save file) ---
+    EnvPiece envPieces[MAX_ENV_PIECES] = {0};
+    int envPieceCount = 0;
+    int envSelectedPiece = -1;
+    bool envDragging = false;
+    float envSaveFlashTimer = 0.0f;  // flash "SAVED" text
+
+    // Load env layout from file
+    {
+        FILE *fp = fopen("env_layout.txt", "r");
+        if (fp) {
+            char line[256];
+            while (fgets(line, sizeof(line), fp) && envPieceCount < MAX_ENV_PIECES) {
+                if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+                int mi;
+                float x, y, z, rot, sc;
+                if (sscanf(line, "%d %f %f %f %f %f", &mi, &x, &y, &z, &rot, &sc) == 6) {
+                    if (mi >= 0 && mi < envModelCount) {
+                        envPieces[envPieceCount] = (EnvPiece){
+                            .modelIndex = mi, .position = {x, y, z},
+                            .rotationY = rot, .scale = sc, .active = true
+                        };
+                        envPieceCount++;
+                    }
+                }
+            }
+            fclose(fp);
+        }
+    }
+    // Populate default env pieces if no layout was loaded
+    if (envPieceCount == 0) {
+        // Ground
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 5, .position = {0, -10, 0},
+            .rotationY = 0, .scale = 1.0f, .active = true };
+        // Stairs far
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 2, .position = {0, -1, -120},
+            .rotationY = 0, .scale = 1.0f, .active = true };
+        // Stairs left
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 2, .position = {-120, -1, 0},
+            .rotationY = 90, .scale = 1.0f, .active = true };
+        // Stairs right
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 2, .position = {120, -1, 0},
+            .rotationY = -90, .scale = 1.0f, .active = true };
+        // Circle
+        envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 3, .position = {0, 0, -140},
+            .rotationY = 0, .scale = 1.0f, .active = true };
+    }
     int plazaHoverObject = 0;  // 0=none, 1=trophy, 2=door
     float plazaSparkleTimer = 0.0f;  // for sparkle effect on objects
 
@@ -656,6 +881,7 @@ int main(void)
     int nfcFd = -1;
     char nfcLineBuf[128];
     int nfcLinePos = 0;
+    float easterEggTimer = 0.0f;
     if (nfcPipe) {
         nfcFd = fileno(nfcPipe);
         int flags = fcntl(nfcFd, F_GETFL, 0);
@@ -715,6 +941,47 @@ int main(void)
                 tileLayout = (tileLayout - 1 + TILE_LAYOUT_COUNT) % TILE_LAYOUT_COUNT;
                 GENERATE_TILE_GRID();
             }
+
+            // Env piece keyboard controls (selected piece)
+            if (envSelectedPiece >= 0 && envSelectedPiece < envPieceCount && envPieces[envSelectedPiece].active) {
+                if (IsKeyPressed(KEY_Q)) envPieces[envSelectedPiece].rotationY -= 15.0f;
+                if (IsKeyPressed(KEY_E)) envPieces[envSelectedPiece].rotationY += 15.0f;
+                if (IsKeyPressed(KEY_R)) envPieces[envSelectedPiece].position.y += 1.0f;
+                if (IsKeyPressed(KEY_F)) envPieces[envSelectedPiece].position.y -= 1.0f;
+                if (IsKeyPressed(KEY_RIGHT_BRACKET)) envPieces[envSelectedPiece].scale += 0.1f;
+                if (IsKeyPressed(KEY_LEFT_BRACKET)) {
+                    envPieces[envSelectedPiece].scale -= 0.1f;
+                    if (envPieces[envSelectedPiece].scale < 0.1f) envPieces[envSelectedPiece].scale = 0.1f;
+                }
+                if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE)) {
+                    envPieces[envSelectedPiece].active = false;
+                    // Compact: shift remaining pieces down
+                    for (int j = envSelectedPiece; j < envPieceCount - 1; j++)
+                        envPieces[j] = envPieces[j + 1];
+                    envPieceCount--;
+                    envPieces[envPieceCount] = (EnvPiece){0};
+                    envSelectedPiece = -1;
+                    envDragging = false;
+                }
+            }
+
+            // Env piece dragging (XZ plane)
+            if (envDragging && envSelectedPiece >= 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                Ray ray = GetScreenToWorldRay(GetMousePosition(), camera);
+                RayCollision hit = GetRayCollisionQuad(ray,
+                    (Vector3){ -500, 0, -500 }, (Vector3){ -500, 0, 500 },
+                    (Vector3){  500, 0,  500 }, (Vector3){  500, 0, -500 });
+                if (hit.hit) {
+                    envPieces[envSelectedPiece].position.x = hit.point.x;
+                    envPieces[envSelectedPiece].position.z = hit.point.z;
+                }
+            }
+            if (envDragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                envDragging = false;
+            }
+
+            // Env save flash timer
+            if (envSaveFlashTimer > 0.0f) envSaveFlashTimer -= dt;
         }
 
         // Update unit intro animation
@@ -876,9 +1143,10 @@ int main(void)
                                     uint8_t nfcStatus, nfcTypeIdx, nfcRarity;
                                     AbilitySlot nfcAbilities[MAX_ABILITIES_PER_UNIT];
                                     // Dedup: skip if this UID is already on the blue team
+                                    // Check ALL units (not just active) — dead units still count
                                     bool uidAlreadySpawned = false;
                                     for (int u = 0; u < unitCount; u++) {
-                                        if (units[u].active && units[u].team == TEAM_BLUE &&
+                                        if (units[u].team == TEAM_BLUE &&
                                             units[u].nfcUidLen == nfcUidLen &&
                                             memcmp(units[u].nfcUid, nfcUid, nfcUidLen) == 0) {
                                             uidAlreadySpawned = true;
@@ -887,6 +1155,8 @@ int main(void)
                                     }
                                     if (uidAlreadySpawned) {
                                         // Tag still on scanner — ignore
+                                    } else if (strcmp(nfcHex, "CA31A80C") == 0 || strcmp(nfcHex, "644477EE") == 0) {
+                                        easterEggTimer = 4.0f;
                                     } else if (!nfc_cache_contains(&nfcCache, nfcHex)) {
                                         printf("[NFC] Reader %d: UID %s -> unknown (not in local cache)\n", nfcReader, nfcHex);
                                     } else if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
@@ -1013,9 +1283,10 @@ int main(void)
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
                     statueSpawn.phase = SSPAWN_INACTIVE;
-                    playerGold = 100;
+                    playerGold = 20;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     RollShop(shopSlots, &playerGold, 0);
+                    rollCost = rollCostBase;
                     dragState.dragging = false;
                     SpawnWave(units, &unitCount, 0, unitTypeCount);
                     phase = PHASE_PREP;
@@ -1185,6 +1456,7 @@ int main(void)
                     }
                 }
 
+                bool plazaClickedBtn = false;
                 int btnXBlue = btnMargin;
                 int clickIdx = 0;
                 for (int i = 0; i < unitTypeCount; i++) {
@@ -1200,6 +1472,7 @@ int main(void)
                             intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                 .typeIndex = i, .unitIndex = unitCount - 1, .animFrame = 0 };
                         }
+                        plazaClickedBtn = true;
                         break;
                     }
                 }
@@ -1230,6 +1503,97 @@ int main(void)
                             intro = (UnitIntro){ .active = true, .timer = 0.0f,
                                 .typeIndex = 0, .unitIndex = unitCount - 1, .animFrame = 0 };
                         }
+                    }
+                }
+
+                // Env piece spawn + save buttons (plaza debug)
+                if (!plazaClickedBtn) {
+                    int envBtnW = 110, envBtnH = 24, envBtnGap = 4;
+                    int envColX = sw / 2 - envBtnW / 2;
+                    int envStartY = btnYStart;
+                    for (int ei = 0; ei < envModelCount; ei++) {
+                        if (!envModels[ei].loaded) continue;
+                        Rectangle er = { (float)envColX, (float)(envStartY + ei * (envBtnH + envBtnGap)),
+                                         (float)envBtnW, (float)envBtnH };
+                        if (CheckCollisionPointRec(mouse, er) && envPieceCount < MAX_ENV_PIECES) {
+                            envPieces[envPieceCount] = (EnvPiece){
+                                .modelIndex = ei, .position = {0, 0, 0},
+                                .rotationY = 0, .scale = 1.0f, .active = true
+                            };
+                            envSelectedPiece = envPieceCount;
+                            envPieceCount++;
+                            plazaClickedBtn = true;
+                            break;
+                        }
+                    }
+                    if (!plazaClickedBtn) {
+                        int saveY = envStartY + envModelCount * (envBtnH + envBtnGap) + 4;
+                        Rectangle saveBtn = { (float)envColX, (float)saveY, (float)envBtnW, (float)envBtnH };
+                        if (CheckCollisionPointRec(mouse, saveBtn)) {
+                            FILE *fp = fopen("env_layout.txt", "w");
+                            if (fp) {
+                                fprintf(fp, "# modelIndex x y z rotationY scale\n");
+                                for (int pi = 0; pi < envPieceCount; pi++) {
+                                    if (!envPieces[pi].active) continue;
+                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f\n",
+                                            envPieces[pi].modelIndex,
+                                            envPieces[pi].position.x, envPieces[pi].position.y,
+                                            envPieces[pi].position.z,
+                                            envPieces[pi].rotationY, envPieces[pi].scale);
+                                }
+                                fclose(fp);
+                                envSaveFlashTimer = 2.0f;
+                            }
+                        }
+                    }
+                }
+
+                // Env piece 3D picking (plaza, debug mode)
+                if (!plazaClickedBtn) {
+                    int dHudTop2 = sh - HUD_TOTAL_HEIGHT;
+                    if (mouse.y < dHudTop2) {
+                        Ray envRay = GetScreenToWorldRay(mouse, camera);
+                        float closestDist = 1e9f;
+                        int closestIdx = -1;
+                        for (int ep = 0; ep < envPieceCount; ep++) {
+                            if (!envPieces[ep].active) continue;
+                            EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+                            if (!emd->loaded || emd->model.meshCount == 0) continue;
+                            BoundingBox mbb = GetMeshBoundingBox(emd->model.meshes[0]);
+                            Matrix mt = emd->model.transform;
+                            Vector3 corners[8] = {
+                                {mbb.min.x, mbb.min.y, mbb.min.z}, {mbb.max.x, mbb.min.y, mbb.min.z},
+                                {mbb.min.x, mbb.max.y, mbb.min.z}, {mbb.max.x, mbb.max.y, mbb.min.z},
+                                {mbb.min.x, mbb.min.y, mbb.max.z}, {mbb.max.x, mbb.min.y, mbb.max.z},
+                                {mbb.min.x, mbb.max.y, mbb.max.z}, {mbb.max.x, mbb.max.y, mbb.max.z},
+                            };
+                            BoundingBox tbb = { .min = {1e9f, 1e9f, 1e9f}, .max = {-1e9f, -1e9f, -1e9f} };
+                            for (int ci = 0; ci < 8; ci++) {
+                                Vector3 tc = Vector3Transform(corners[ci], mt);
+                                if (tc.x < tbb.min.x) tbb.min.x = tc.x;
+                                if (tc.y < tbb.min.y) tbb.min.y = tc.y;
+                                if (tc.z < tbb.min.z) tbb.min.z = tc.z;
+                                if (tc.x > tbb.max.x) tbb.max.x = tc.x;
+                                if (tc.y > tbb.max.y) tbb.max.y = tc.y;
+                                if (tc.z > tbb.max.z) tbb.max.z = tc.z;
+                            }
+                            float ps = envPieces[ep].scale;
+                            BoundingBox wbb = {
+                                .min = { tbb.min.x * ps + envPieces[ep].position.x,
+                                         tbb.min.y * ps + envPieces[ep].position.y,
+                                         tbb.min.z * ps + envPieces[ep].position.z },
+                                .max = { tbb.max.x * ps + envPieces[ep].position.x,
+                                         tbb.max.y * ps + envPieces[ep].position.y,
+                                         tbb.max.z * ps + envPieces[ep].position.z }
+                            };
+                            RayCollision rc = GetRayCollisionBox(envRay, wbb);
+                            if (rc.hit && rc.distance < closestDist) {
+                                closestDist = rc.distance;
+                                closestIdx = ep;
+                            }
+                        }
+                        envSelectedPiece = closestIdx;
+                        envDragging = (closestIdx >= 0);
                     }
                 }
             }
@@ -1677,17 +2041,61 @@ int main(void)
                         }
                     }
                 }
+                // Env piece spawn + save buttons (debug only)
+                if (!clickedButton && debugMode)
+                {
+                    int envBtnW = 110, envBtnH = 24, envBtnGap = 4;
+                    int envColX = sw / 2 - envBtnW / 2;
+                    int envStartY = btnYStart;
+                    for (int ei = 0; ei < envModelCount; ei++) {
+                        if (!envModels[ei].loaded) continue;
+                        Rectangle er = { (float)envColX, (float)(envStartY + ei * (envBtnH + envBtnGap)),
+                                         (float)envBtnW, (float)envBtnH };
+                        if (CheckCollisionPointRec(mouse, er) && envPieceCount < MAX_ENV_PIECES) {
+                            envPieces[envPieceCount] = (EnvPiece){
+                                .modelIndex = ei, .position = {0, 0, 0},
+                                .rotationY = 0, .scale = 1.0f, .active = true
+                            };
+                            envSelectedPiece = envPieceCount;
+                            envPieceCount++;
+                            clickedButton = true;
+                            break;
+                        }
+                    }
+                    if (!clickedButton) {
+                        int saveY = envStartY + envModelCount * (envBtnH + envBtnGap) + 4;
+                        Rectangle saveBtn = { (float)envColX, (float)saveY, (float)envBtnW, (float)envBtnH };
+                        if (CheckCollisionPointRec(mouse, saveBtn)) {
+                            FILE *fp = fopen("env_layout.txt", "w");
+                            if (fp) {
+                                fprintf(fp, "# modelIndex x y z rotationY scale\n");
+                                for (int pi = 0; pi < envPieceCount; pi++) {
+                                    if (!envPieces[pi].active) continue;
+                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f\n",
+                                            envPieces[pi].modelIndex,
+                                            envPieces[pi].position.x, envPieces[pi].position.y,
+                                            envPieces[pi].position.z,
+                                            envPieces[pi].rotationY, envPieces[pi].scale);
+                                }
+                                fclose(fp);
+                                envSaveFlashTimer = 2.0f;
+                            }
+                            clickedButton = true;
+                        }
+                    }
+                }
                 // --- Shop: ROLL button click ---
                 if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
                     Rectangle rollBtn = { 20, (float)(shopY + 10), 80, 30 };
-                    if (CheckCollisionPointRec(mouse, rollBtn)) {
+                    if (CheckCollisionPointRec(mouse, rollBtn) && playerGold >= rollCost) {
                         PlaySound(sfxUiReroll);
                         if (isMultiplayer) {
                             net_client_send_roll(&netClient);
                         } else {
                             RollShop(shopSlots, &playerGold, rollCost);
                         }
+                        rollCost += rollCostIncrement;
                         TriggerShake(&shake, 2.0f, 0.15f);
                         clickedButton = true;
                     }
@@ -1809,6 +2217,53 @@ int main(void)
                         }
                     }
                     if (!hitAny) for (int j = 0; j < unitCount; j++) units[j].selected = false;
+
+                    // Env piece 3D picking (debug mode, only if no unit was hit)
+                    if (!hitAny && debugMode) {
+                        Ray envRay = GetScreenToWorldRay(mouse, camera);
+                        float closestDist = 1e9f;
+                        int closestIdx = -1;
+                        for (int ep = 0; ep < envPieceCount; ep++) {
+                            if (!envPieces[ep].active) continue;
+                            EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+                            if (!emd->loaded || emd->model.meshCount == 0) continue;
+                            // Compute AABB by transforming all 8 corners through model transform
+                            BoundingBox mbb = GetMeshBoundingBox(emd->model.meshes[0]);
+                            Matrix mt = emd->model.transform;
+                            Vector3 corners[8] = {
+                                {mbb.min.x, mbb.min.y, mbb.min.z}, {mbb.max.x, mbb.min.y, mbb.min.z},
+                                {mbb.min.x, mbb.max.y, mbb.min.z}, {mbb.max.x, mbb.max.y, mbb.min.z},
+                                {mbb.min.x, mbb.min.y, mbb.max.z}, {mbb.max.x, mbb.min.y, mbb.max.z},
+                                {mbb.min.x, mbb.max.y, mbb.max.z}, {mbb.max.x, mbb.max.y, mbb.max.z},
+                            };
+                            BoundingBox tbb = { .min = {1e9f, 1e9f, 1e9f}, .max = {-1e9f, -1e9f, -1e9f} };
+                            for (int ci = 0; ci < 8; ci++) {
+                                Vector3 tc = Vector3Transform(corners[ci], mt);
+                                if (tc.x < tbb.min.x) tbb.min.x = tc.x;
+                                if (tc.y < tbb.min.y) tbb.min.y = tc.y;
+                                if (tc.z < tbb.min.z) tbb.min.z = tc.z;
+                                if (tc.x > tbb.max.x) tbb.max.x = tc.x;
+                                if (tc.y > tbb.max.y) tbb.max.y = tc.y;
+                                if (tc.z > tbb.max.z) tbb.max.z = tc.z;
+                            }
+                            float ps = envPieces[ep].scale;
+                            BoundingBox wbb = {
+                                .min = { tbb.min.x * ps + envPieces[ep].position.x,
+                                         tbb.min.y * ps + envPieces[ep].position.y,
+                                         tbb.min.z * ps + envPieces[ep].position.z },
+                                .max = { tbb.max.x * ps + envPieces[ep].position.x,
+                                         tbb.max.y * ps + envPieces[ep].position.y,
+                                         tbb.max.z * ps + envPieces[ep].position.z }
+                            };
+                            RayCollision rc = GetRayCollisionBox(envRay, wbb);
+                            if (rc.hit && rc.distance < closestDist) {
+                                closestDist = rc.distance;
+                                closestIdx = ep;
+                            }
+                        }
+                        envSelectedPiece = closestIdx;
+                        envDragging = (closestIdx >= 0);
+                    }
                 }
             }
 
@@ -2563,6 +3018,7 @@ int main(void)
                             }
                         }
                         units[i].attackCooldown = stats->attackSpeed;
+                        units[i].attackAnimTimer = 0.4f;
                     }
                 }
             }
@@ -2777,6 +3233,7 @@ int main(void)
                     SpawnWave(units, &unitCount, currentRound, unitTypeCount);
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0);
+                    rollCost = rollCostBase;
                     phase = PHASE_PREP;
                 }
             }
@@ -2847,6 +3304,7 @@ int main(void)
                     SpawnWave(units, &unitCount, currentRound, unitTypeCount);
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0);
+                    rollCost = rollCostBase;
                     phase = PHASE_PREP;
                 }
             }
@@ -2872,7 +3330,7 @@ int main(void)
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
-                playerGold = 100;
+                playerGold = 20;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
                 joinCodeLen = 0;
@@ -2944,7 +3402,7 @@ int main(void)
                     ClearAllFloatingTexts(floatingTexts);
                     ClearAllFissures(fissures);
                     statueSpawn.phase = SSPAWN_INACTIVE;
-                    playerGold = 100;
+                    playerGold = 20;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                     dragState.dragging = false;
                     unitCount = 0;
@@ -2958,14 +3416,29 @@ int main(void)
 
             // Death penalty: just press R (no withdraw possible)
             if (deathPenalty && IsKeyPressed(KEY_R)) {
-                // Reset NFC-tagged units' abilities on server
+                // Reset NFC-tagged units' abilities on server (include dead units)
                 for (int u2 = 0; u2 < unitCount; u2++) {
-                    if (units[u2].active && units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
+                    if (units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
                         net_nfc_reset_abilities(serverHost, NET_PORT, units[u2].nfcUid, units[u2].nfcUidLen);
                     }
                 }
-                for (int u2 = 0; u2 < MAX_UNITS; u2++) units[u2].nfcUidLen = 0;
-                unitCount = 0;
+                // Keep blue NFC units but wipe their abilities and revive them
+                int keptCount = 0;
+                for (int u2 = 0; u2 < unitCount; u2++) {
+                    if (units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
+                        units[keptCount] = units[u2];
+                        units[keptCount].active = true;
+                        units[keptCount].currentHealth = UNIT_STATS[units[keptCount].typeIndex].health * units[keptCount].hpMultiplier;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            units[keptCount].abilities[a].abilityId = -1;
+                            units[keptCount].abilities[a].level = 0;
+                            units[keptCount].abilities[a].cooldownRemaining = 0;
+                            units[keptCount].abilities[a].triggered = false;
+                        }
+                        keptCount++;
+                    }
+                }
+                unitCount = keptCount;
                 snapshotCount = 0;
                 currentRound = 0;
                 blueWins = 0;
@@ -2979,8 +3452,9 @@ int main(void)
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
+                intro.active = false;
                 statueSpawn.phase = SSPAWN_INACTIVE;
-                playerGold = 100;
+                playerGold = 20;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
                 memset(plazaData, 0, sizeof(plazaData));
@@ -2998,13 +3472,18 @@ int main(void)
             if (!units[i].active) continue;
             if (units[i].hitFlash > 0) units[i].hitFlash -= dt;
             if (IsUnitInStatueSpawn(&statueSpawn, i)) continue; // frozen as statue
-            if (units[i].castPause > 0) continue; // frozen during cast
             UnitType *type = &unitTypes[units[i].typeIndex];
             if (!type->hasAnimations) continue;
 
             // Determine desired anim state
             AnimState desired = ANIM_IDLE;
-            if (phase == PHASE_COMBAT && units[i].targetIndex >= 0) {
+
+            if (units[i].castPause > 0 && type->animIndex[ANIM_CAST] >= 0) {
+                desired = ANIM_CAST;
+            } else if (units[i].attackAnimTimer > 0 && type->animIndex[ANIM_ATTACK] >= 0) {
+                units[i].attackAnimTimer -= dt;
+                desired = ANIM_ATTACK;
+            } else if (phase == PHASE_COMBAT && units[i].targetIndex >= 0) {
                 float dist = DistXZ(units[i].position, units[units[i].targetIndex].position);
                 if (dist > ATTACK_RANGE) desired = ANIM_WALK;
             } else if (phase == PHASE_PLAZA) {
@@ -3020,16 +3499,12 @@ int main(void)
             // Advance frame — pick anim array based on current state
             int idx = type->animIndex[units[i].currentAnim];
             if (idx >= 0) {
-                ModelAnimation *arr;
-                if (units[i].currentAnim == ANIM_IDLE)
-                    arr = type->idleAnims;
-                else if (units[i].currentAnim == ANIM_SCARED && type->scaredAnims)
-                    arr = type->scaredAnims;
-                else
-                    arr = type->anims;
-                int frameCount = arr[idx].frameCount;
-                if (frameCount > 0)
-                    units[i].animFrame = (units[i].animFrame + 1) % frameCount;
+                ModelAnimation *arr = GetAnimArray(type, units[i].currentAnim);
+                if (arr) {
+                    int frameCount = arr[idx].frameCount;
+                    if (frameCount > 0)
+                        units[i].animFrame = (units[i].animFrame + 1) % frameCount;
+                }
             }
         }
 
@@ -3133,15 +3608,14 @@ int main(void)
             for (int i = 0; i < TILE_VARIANTS; i++)
                 for (int m = 0; m < tileModels[i].materialCount; m++)
                     tileModels[i].materials[m].shader = shadowDepthShader;
-            for (int m = 0; m < platformModel.materialCount; m++)
-                platformModel.materials[m].shader = shadowDepthShader;
-            for (int m = 0; m < stairsModel.materialCount; m++)
-                stairsModel.materials[m].shader = shadowDepthShader;
-            for (int m = 0; m < circleModel.materialCount; m++)
-                circleModel.materials[m].shader = shadowDepthShader;
+            // Swap env model materials to shadow depth shader (covers ground, stairs, circle, etc.)
+            for (int ei = 0; ei < envModelCount; ei++) {
+                if (!envModels[ei].loaded) continue;
+                for (int m = 0; m < envModels[ei].model.materialCount; m++)
+                    envModels[ei].model.materials[m].shader = shadowDepthShader;
+            }
 
             // Draw shadow-casting geometry
-            DrawModel(platformModel, platformPos, 1.0f, WHITE);
             {
                 float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
                 for (int r = 0; r < TILE_GRID_SIZE; r++) {
@@ -3168,14 +3642,27 @@ int main(void)
                     }
                 }
             }
-            DrawModelEx(stairsModel, stairsFarPos, (Vector3){0,1,0},   0.0f, (Vector3){1,1,1}, WHITE);
-            DrawModelEx(stairsModel, stairsLPos,   (Vector3){0,1,0},  90.0f, (Vector3){1,1,1}, WHITE);
-            DrawModelEx(stairsModel, stairsRPos,   (Vector3){0,1,0}, -90.0f, (Vector3){1,1,1}, WHITE);
-            DrawModel(circleModel, circlePos, 1.0f, WHITE);
+            // Draw env pieces (shadow pass — includes ground, stairs, circle)
+            for (int ep = 0; ep < envPieceCount; ep++) {
+                if (!envPieces[ep].active) continue;
+                EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+                if (!emd->loaded) continue;
+                float es = envPieces[ep].scale;
+                DrawModelEx(emd->model, envPieces[ep].position, (Vector3){0,1,0},
+                            envPieces[ep].rotationY, (Vector3){es,es,es}, WHITE);
+            }
             for (int i = 0; i < unitCount; i++) {
                 if (!units[i].active) continue;
                 UnitType *type = &unitTypes[units[i].typeIndex];
                 if (!type->loaded) continue;
+                // Update animation pose so shadow matches current frame
+                if (type->hasAnimations) {
+                    int idx = type->animIndex[units[i].currentAnim];
+                    if (idx >= 0) {
+                        ModelAnimation *arr = GetAnimArray(type, units[i].currentAnim);
+                        if (arr) UpdateModelAnimation(type->model, arr[idx], units[i].animFrame);
+                    }
+                }
                 float s = type->scale * units[i].scaleOverride;
                 Vector3 drawPos = units[i].position;
                 drawPos.y += type->yOffset;
@@ -3192,12 +3679,12 @@ int main(void)
             for (int i = 0; i < TILE_VARIANTS; i++)
                 for (int m = 0; m < tileModels[i].materialCount; m++)
                     tileModels[i].materials[m].shader = lightShader;
-            for (int m = 0; m < platformModel.materialCount; m++)
-                platformModel.materials[m].shader = lightShader;
-            for (int m = 0; m < stairsModel.materialCount; m++)
-                stairsModel.materials[m].shader = lightShader;
-            for (int m = 0; m < circleModel.materialCount; m++)
-                circleModel.materials[m].shader = lightShader;
+            // Restore lighting shader on env model materials
+            for (int ei = 0; ei < envModelCount; ei++) {
+                if (!envModels[ei].loaded) continue;
+                for (int m = 0; m < envModels[ei].model.materialCount; m++)
+                    envModels[ei].model.materials[m].shader = lightShader;
+            }
 
             rlDrawRenderBatchActive();
             rlEnableColorBlend();
@@ -3215,9 +3702,6 @@ int main(void)
         BeginTextureMode(sceneRT);
         ClearBackground((Color){ 45, 40, 35, 255 });
         BeginMode3D(camera);
-            // Draw environment: platform (underneath tiles)
-            DrawModel(platformModel, platformPos, 1.0f, WHITE);
-
             // Draw tiled floor
             {
                 float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
@@ -3274,11 +3758,17 @@ int main(void)
                 }
             }
 
-            // Draw environment: stairs (3 sides) and circle
-            DrawModelEx(stairsModel, stairsFarPos, (Vector3){0,1,0},   0.0f, (Vector3){1,1,1}, WHITE);
-            DrawModelEx(stairsModel, stairsLPos,   (Vector3){0,1,0},  90.0f, (Vector3){1,1,1}, WHITE);
-            DrawModelEx(stairsModel, stairsRPos,   (Vector3){0,1,0}, -90.0f, (Vector3){1,1,1}, WHITE);
-            DrawModel(circleModel, circlePos, 1.0f, WHITE);
+            // Draw env pieces (main render pass — includes ground, stairs, circle)
+            for (int ep = 0; ep < envPieceCount; ep++) {
+                if (!envPieces[ep].active) continue;
+                EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+                if (!emd->loaded) continue;
+                float es = envPieces[ep].scale;
+                Color eTint = WHITE;
+                if (debugMode && ep == envSelectedPiece) eTint = (Color){150, 255, 150, 255};
+                DrawModelEx(emd->model, envPieces[ep].position, (Vector3){0,1,0},
+                            envPieces[ep].rotationY, (Vector3){es,es,es}, eTint);
+            }
 
             // Draw units
             for (int i = 0; i < unitCount; i++)
@@ -3309,8 +3799,8 @@ int main(void)
                 if (type->hasAnimations) {
                     int idx = type->animIndex[units[i].currentAnim];
                     if (idx >= 0) {
-                        ModelAnimation *arr = (units[i].currentAnim == ANIM_IDLE) ? type->idleAnims : type->anims;
-                        UpdateModelAnimation(type->model, arr[idx], units[i].animFrame);
+                        ModelAnimation *arr = GetAnimArray(type, units[i].currentAnim);
+                        if (arr) UpdateModelAnimation(type->model, arr[idx], units[i].animFrame);
                     }
                 }
                 float s = type->scale * units[i].scaleOverride;
@@ -3834,6 +4324,56 @@ int main(void)
 
                 DrawText("[F1] DEBUG MODE", dBtnXBlue, dBtnYStart - 20, 12, YELLOW);
                 DrawText(TextFormat("[</>] Tiles: %s", tileLayoutNames[tileLayout]), dBtnXBlue, dBtnYStart - 36, 12, YELLOW);
+
+                // --- ENV PIECE spawn buttons (centered column) ---
+                {
+                    int envBtnW = 110, envBtnH = 24, envBtnGap = 4;
+                    int envColX = sw / 2 - envBtnW / 2;
+                    int envStartY = dBtnYStart;
+                    DrawText("[ENV PIECES]", envColX, envStartY - 16, 12, YELLOW);
+                    for (int ei = 0; ei < envModelCount; ei++) {
+                        if (!envModels[ei].loaded) continue;
+                        Rectangle er = { (float)envColX, (float)(envStartY + ei * (envBtnH + envBtnGap)),
+                                         (float)envBtnW, (float)envBtnH };
+                        Color ec = (Color){80, 160, 80, 255};
+                        if (CheckCollisionPointRec(GetMousePosition(), er)) ec = GREEN;
+                        DrawRectangleRec(er, ec);
+                        DrawRectangleLinesEx(er, 1, DARKGREEN);
+                        const char *el = TextFormat("+ %s", envModels[ei].name);
+                        int elw = MeasureText(el, 12);
+                        DrawText(el, (int)(er.x + (envBtnW - elw) / 2), (int)(er.y + 6), 12, WHITE);
+                    }
+                    // SAVE LAYOUT button
+                    int saveY = envStartY + envModelCount * (envBtnH + envBtnGap) + 4;
+                    Rectangle saveBtn = { (float)envColX, (float)saveY, (float)envBtnW, (float)envBtnH };
+                    Color savCol = (Color){160, 120, 40, 255};
+                    if (CheckCollisionPointRec(GetMousePosition(), saveBtn)) savCol = GOLD;
+                    DrawRectangleRec(saveBtn, savCol);
+                    DrawRectangleLinesEx(saveBtn, 1, DARKBROWN);
+                    const char *savLbl = TextFormat("SAVE (%d pcs)", envPieceCount);
+                    int savLblW = MeasureText(savLbl, 12);
+                    DrawText(savLbl, (int)(saveBtn.x + (envBtnW - savLblW) / 2), (int)(saveBtn.y + 6), 12, WHITE);
+
+                    // Flash "SAVED!" text
+                    if (envSaveFlashTimer > 0.0f) {
+                        float alpha = envSaveFlashTimer > 1.0f ? 1.0f : envSaveFlashTimer;
+                        DrawText("SAVED!", envColX + envBtnW + 8, saveY + 4, 14,
+                                 (Color){50, 255, 50, (unsigned char)(255 * alpha)});
+                    }
+
+                    // Selected piece info overlay
+                    if (envSelectedPiece >= 0 && envSelectedPiece < envPieceCount && envPieces[envSelectedPiece].active) {
+                        EnvPiece *sp = &envPieces[envSelectedPiece];
+                        const char *infoName = envModels[sp->modelIndex].name;
+                        int infoY = saveY + envBtnH + 12;
+                        DrawText(TextFormat("%s  [X:%.1f Y:%.1f Z:%.1f]", infoName,
+                                 sp->position.x, sp->position.y, sp->position.z),
+                                 envColX, infoY, 12, WHITE);
+                        DrawText(TextFormat("Rot: %.0f deg  Scale: %.1fx", sp->rotationY, sp->scale),
+                                 envColX, infoY + 14, 12, WHITE);
+                        DrawText("[Q/E] Rot  [R/F] Y  [[ / ]] Scale  [DEL] Remove", envColX, infoY + 28, 10, (Color){180,180,180,200});
+                    }
+                }
             }
 
             // Round info label (prep phase only)
@@ -4814,7 +5354,7 @@ int main(void)
             int msh = GetScreenHeight();
 
             // Title text (floating over the 3D scene)
-            const char *title = "Sets of Skills";
+            const char *title = "Relic Rivals";
             int titleSize = 72;
             int tw = MeasureText(title, titleSize);
             DrawText(title, msw/2 - tw/2, 60, titleSize, (Color){200, 180, 255, 220});
@@ -5466,6 +6006,19 @@ int main(void)
             DrawText("Shadow Color RT", (int)dstRec.x, (int)dstRec.y + (int)previewSize + 4, 16, YELLOW);
         }
 
+        // Easter egg overlay
+        if (easterEggTimer > 0.0f) {
+            easterEggTimer -= rawDt;
+            float alpha = easterEggTimer > 1.0f ? 1.0f : easterEggTimer;
+            const char *msg = "hey judges :)";
+            int fontSize = 120;
+            int w = MeasureText(msg, fontSize);
+            int x = (GetScreenWidth() - w) / 2;
+            int y = (GetScreenHeight() - fontSize) / 2;
+            DrawText(msg, x + 3, y + 3, fontSize, Fade(BLACK, alpha * 0.5f));
+            DrawText(msg, x, y, fontSize, Fade(GOLD, alpha));
+        }
+
         DrawFPS(10, 10);
         EndDrawing();
     }
@@ -5499,6 +6052,10 @@ int main(void)
             UnloadModelAnimations(unitTypes[i].idleAnims, unitTypes[i].idleAnimCount);
         if (unitTypes[i].scaredAnims)
             UnloadModelAnimations(unitTypes[i].scaredAnims, unitTypes[i].scaredAnimCount);
+        if (unitTypes[i].attackAnims)
+            UnloadModelAnimations(unitTypes[i].attackAnims, unitTypes[i].attackAnimCount);
+        if (unitTypes[i].castAnims)
+            UnloadModelAnimations(unitTypes[i].castAnims, unitTypes[i].castAnimCount);
         if (unitTypes[i].loaded) UnloadModel(unitTypes[i].model);
     }
     for (int i = 0; i < TILE_VARIANTS; i++) UnloadModel(tileModels[i]);
@@ -5506,10 +6063,17 @@ int main(void)
     UnloadModel(doorModel);
     UnloadModel(trophyModel);
     UnloadModel(platformModel);
+    UnloadTexture(groundDiffuse);
     UnloadModel(stairsModel);
     UnloadTexture(stairsDiffuse);
     UnloadModel(circleModel);
     UnloadTexture(circleDiffuse);
+    // Unload env models (skip 2=stairs, 3=circle, 5=ground which alias stairsModel/circleModel/platformModel)
+    for (int i = 0; i < envModelCount; i++) {
+        if (i == 2 || i == 3 || i == 5) continue;  // reused models, already unloaded above
+        if (envModels[i].loaded) UnloadModel(envModels[i].model);
+        if (envModels[i].texture.id > 0) UnloadTexture(envModels[i].texture);
+    }
     UnloadMusicStream(bgm);
     UnloadSound(sfxWin);
     UnloadSound(sfxLoss);
