@@ -395,9 +395,11 @@ typedef struct {
     const char *modelPath;
     const char *texturePath;    // NULL if no separate BC texture
     const char *ormTexturePath; // NULL if no separate ORM texture
+    const char *normalTexturePath; // NULL if no normal map
     Model model;
     Texture2D texture;          // BC texture (id=0 if none)
     Texture2D ormTexture;       // ORM texture (id=0 if none)
+    Texture2D normalTexture;    // Normal map texture (id=0 if none)
     bool loaded;
 } EnvModelDef;
 

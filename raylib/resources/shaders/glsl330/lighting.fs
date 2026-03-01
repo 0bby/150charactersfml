@@ -6,11 +6,14 @@ in vec2 fragTexCoord;
 in vec4 fragColor;
 in vec3 fragNormal;
 in vec4 fragPosLightSpace;
+in mat3 fragTBN;
 
 // Input uniform values
 uniform sampler2D texture0;      // BC (diffuse/albedo)
 uniform sampler2D texture1;      // ORM (Occlusion, Roughness, Metallic)
 uniform sampler2D shadowMap;
+uniform sampler2D normalMap;
+uniform int useNormalMap;
 uniform vec4 colDiffuse;
 
 // Output fragment color
@@ -66,7 +69,13 @@ void main()
     float roughness = orm.g;
 
     vec3 lightDot = vec3(0.0);
-    vec3 normal = normalize(fragNormal);
+    vec3 normal;
+    if (useNormalMap == 1) {
+        normal = texture(normalMap, fragTexCoord).rgb * 2.0 - 1.0;
+        normal = normalize(fragTBN * normal);
+    } else {
+        normal = normalize(fragNormal);
+    }
     vec3 viewD = normalize(viewPos - fragPosition);
     vec3 specular = vec3(0.0);
 

@@ -422,6 +422,8 @@ int main(void)
     int shadowMapLoc = GetShaderLocation(lightShader, "shadowMap");
     int shadowDebugLoc = GetShaderLocation(lightShader, "shadowDebug");
     int noShadowLoc = GetShaderLocation(lightShader, "noShadow");
+    int normalMapLoc = GetShaderLocation(lightShader, "normalMap");
+    int useNormalMapLoc = GetShaderLocation(lightShader, "useNormalMap");
 
     // Assign lighting shader to all loaded models
     for (int i = 0; i < unitTypeCount; i++)
@@ -743,9 +745,12 @@ int main(void)
         em->modelPath = "assets/goblin/environment/arches/Arches.obj";
         em->texturePath = "assets/goblin/environment/arches/T_Arches_BC.png";
         em->ormTexturePath = "assets/goblin/environment/arches/T_Arches_ORM.png";
+        em->normalTexturePath = "assets/goblin/environment/arches/T_Arches_N.png";
         em->texture = LoadTexture(em->texturePath);
         em->ormTexture = LoadTexture(em->ormTexturePath);
+        em->normalTexture = LoadTexture(em->normalTexturePath);
         em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -772,9 +777,12 @@ int main(void)
         em->modelPath = "assets/goblin/environment/wall/Wall_LP.obj";
         em->texturePath = "assets/goblin/environment/wall/T_Wall_BC.png";
         em->ormTexturePath = "assets/goblin/environment/wall/T_Wall_ORM.png";
+        em->normalTexturePath = "assets/goblin/environment/wall/T_Wall_N.png";
         em->texture = LoadTexture(em->texturePath);
         em->ormTexture = LoadTexture(em->ormTexturePath);
+        em->normalTexture = LoadTexture(em->normalTexturePath);
         em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
         for (int m = 0; m < em->model.materialCount; m++) {
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
             em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -851,6 +859,71 @@ int main(void)
         em->texturePath = NULL;
         em->model = platformModel;  // reuse — do NOT unload separately
         em->texture = (Texture2D){0};
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 6: PillarBig
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        em->name = "PillarBig";
+        em->modelPath = "assets/goblin/environment/pillars/PillarBig_LP.obj";
+        em->texturePath = "assets/goblin/environment/pillars/T_Pillars_BC.png";
+        em->ormTexturePath = "assets/goblin/environment/pillars/T_Pillars_ORM.png";
+        em->normalTexturePath = "assets/goblin/environment/pillars/T_Pillars_N.png";
+        em->texture = LoadTexture(em->texturePath);
+        em->ormTexture = LoadTexture(em->ormTexturePath);
+        em->normalTexture = LoadTexture(em->normalTexturePath);
+        em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = em->ormTexture;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 15.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
+        em->loaded = true;
+        envModelCount++;
+    }
+    // 7: PillarSmall (shares textures with PillarBig)
+    {
+        EnvModelDef *em = &envModels[envModelCount];
+        EnvModelDef *pillarBig = &envModels[envModelCount - 1];
+        em->name = "PillarSmall";
+        em->modelPath = "assets/goblin/environment/pillars/PillarSmall_LP.obj";
+        em->texturePath = pillarBig->texturePath;
+        em->ormTexturePath = pillarBig->ormTexturePath;
+        em->normalTexturePath = pillarBig->normalTexturePath;
+        em->texture = pillarBig->texture;         // shared — do NOT unload separately
+        em->ormTexture = pillarBig->ormTexture;   // shared
+        em->normalTexture = pillarBig->normalTexture; // shared
+        em->model = LoadModel(em->modelPath);
+        for (int mi = 0; mi < em->model.meshCount; mi++) GenMeshTangents(&em->model.meshes[mi]);
+        for (int m = 0; m < em->model.materialCount; m++) {
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+            em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture = em->ormTexture;
+            em->model.materials[m].shader = lightShader;
+        }
+        if (em->model.meshCount > 0) {
+            BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+            float cx = (bb.min.x + bb.max.x) * 0.5f;
+            float by = bb.min.y;
+            float cz = (bb.min.z + bb.max.z) * 0.5f;
+            float h  = bb.max.y - bb.min.y;
+            float s  = 15.0f / h;
+            em->model.transform = MatrixMultiply(
+                MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+        }
         em->loaded = true;
         envModelCount++;
     }
@@ -3871,9 +3944,19 @@ int main(void)
                 float es = envPieces[ep].scale;
                 Color eTint = WHITE;
                 if (debugMode && ep == envSelectedPiece) eTint = (Color){150, 255, 150, 255};
+                if (emd->normalTexture.id > 0) {
+                    rlActiveTextureSlot(3);
+                    rlEnableTexture(emd->normalTexture.id);
+                    SetShaderValue(lightShader, normalMapLoc, (int[]){3}, SHADER_UNIFORM_INT);
+                    SetShaderValue(lightShader, useNormalMapLoc, (int[]){1}, SHADER_UNIFORM_INT);
+                } else {
+                    SetShaderValue(lightShader, useNormalMapLoc, (int[]){0}, SHADER_UNIFORM_INT);
+                }
                 DrawModelEx(emd->model, envPieces[ep].position, (Vector3){0,1,0},
                             envPieces[ep].rotationY, (Vector3){es,es,es}, eTint);
             }
+            // Reset normal map after env pieces so other models don't use it
+            SetShaderValue(lightShader, useNormalMapLoc, (int[]){0}, SHADER_UNIFORM_INT);
 
             // Draw units
             for (int i = 0; i < unitCount; i++)
@@ -6296,11 +6379,14 @@ int main(void)
     UnloadTexture(circleDiffuse);
     UnloadTexture(circleORM);
     // Unload env models (skip 2=stairs, 3=circle, 5=ground which alias stairsModel/circleModel/platformModel)
+    // Skip textures for 7=PillarSmall which shares textures with 6=PillarBig
     for (int i = 0; i < envModelCount; i++) {
         if (i == 2 || i == 3 || i == 5) continue;  // reused models, already unloaded above
         if (envModels[i].loaded) UnloadModel(envModels[i].model);
+        if (i == 7) continue;  // PillarSmall shares textures with PillarBig
         if (envModels[i].texture.id > 0) UnloadTexture(envModels[i].texture);
         if (envModels[i].ormTexture.id > 0) UnloadTexture(envModels[i].ormTexture);
+        if (envModels[i].normalTexture.id > 0) UnloadTexture(envModels[i].normalTexture);
     }
     UnloadTexture(defaultORM);
     UnloadMusicStream(bgm);
