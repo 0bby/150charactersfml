@@ -1370,6 +1370,7 @@ int main(void)
                         CountTeams(units, unitCount, &ba, &ra);
                         if (ba > 0 && ra > 0)
                         {
+                            CompactBlueUnits(units, &unitCount);
                             SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
                             // Sync NFC-tagged units' abilities to server before combat
                             for (int u2 = 0; u2 < unitCount; u2++) {
