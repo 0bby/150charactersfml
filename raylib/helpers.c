@@ -726,25 +726,25 @@ static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
     { .count = 1, .entries = {
         { .unitType = -1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
-    // Round 2: 2 enemies, no abilities
+    // Round 2: 2 enemies, no abilities, slightly tougher
     { .count = 2, .entries = {
-        { .unitType = 0, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.3f, .dmgMult = 1.1f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.3f, .dmgMult = 1.1f, .scaleMult = 1.0f },
     }},
-    // Round 3: 2 enemies with 1 ability each
+    // Round 3: 2 enemies with 1 ability each, beefier
     { .count = 2, .entries = {
-        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.6f, .dmgMult = 1.3f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.6f, .dmgMult = 1.3f, .scaleMult = 1.0f },
     }},
-    // Round 4: 3 enemies, 1-2 abilities level 0-1
+    // Round 4: 3 enemies, 1-2 abilities level 0-1, strong
     { .count = 3, .entries = {
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 1, .abilityLevel = 1, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 2.0f, .dmgMult = 1.5f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 1, .abilityLevel = 1, .hpMult = 2.0f, .dmgMult = 1.5f, .scaleMult = 1.0f },
+        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 2.0f, .dmgMult = 1.5f, .scaleMult = 1.0f },
     }},
     // Round 5: BOSS — single massive unit, 4 abilities all level 2
     { .count = 1, .entries = {
-        { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 8.0f, .dmgMult = 3.0f, .scaleMult = 2.5f },
+        { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 7.2f, .dmgMult = 2.7f, .scaleMult = 2.5f },
     }},
 };
 
@@ -771,12 +771,12 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
             }
         }
     } else {
-        // Infinite scaling (round 5+)
+        // Infinite scaling (round 5+) — linear growth
         int extraRounds = round - TOTAL_ROUNDS;  // 0 for round 6, 1 for round 7, etc.
         int enemyCount = 3 + (extraRounds + 1);
         if (enemyCount > MAX_WAVE_ENEMIES) enemyCount = MAX_WAVE_ENEMIES;
-        float hpScale = powf(1.25f, (float)(extraRounds + 1));
-        float dmgScale = powf(1.15f, (float)(extraRounds + 1));
+        float hpScale = 2.0f + 0.5f * (float)(extraRounds + 1);
+        float dmgScale = 1.5f + 0.3f * (float)(extraRounds + 1);
         for (int e = 0; e < enemyCount; e++) {
             int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
             if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
