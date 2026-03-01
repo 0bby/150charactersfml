@@ -718,6 +718,7 @@ int main(void)
     int nfcFd = -1;
     char nfcLineBuf[128];
     int nfcLinePos = 0;
+    float easterEggTimer = 0.0f;
     if (nfcPipe) {
         nfcFd = fileno(nfcPipe);
         int flags = fcntl(nfcFd, F_GETFL, 0);
@@ -950,6 +951,8 @@ int main(void)
                                     }
                                     if (uidAlreadySpawned) {
                                         // Tag still on scanner — ignore
+                                    } else if (strcmp(nfcHex, "CA31A80C") == 0 || strcmp(nfcHex, "644477EE") == 0) {
+                                        easterEggTimer = 4.0f;
                                     } else if (!nfc_cache_contains(&nfcCache, nfcHex)) {
                                         printf("[NFC] Reader %d: UID %s -> unknown (not in local cache)\n", nfcReader, nfcHex);
                                     } else if (net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
@@ -5411,6 +5414,19 @@ int main(void)
             DrawTexturePro(shadowRT.texture, srcRec, dstRec, (Vector2){0,0}, 0.0f, WHITE);
             DrawRectangleLines((int)dstRec.x, (int)dstRec.y, (int)previewSize, (int)previewSize, YELLOW);
             DrawText("Shadow Color RT", (int)dstRec.x, (int)dstRec.y + (int)previewSize + 4, 16, YELLOW);
+        }
+
+        // Easter egg overlay
+        if (easterEggTimer > 0.0f) {
+            easterEggTimer -= rawDt;
+            float alpha = easterEggTimer > 1.0f ? 1.0f : easterEggTimer;
+            const char *msg = "hey judges :)";
+            int fontSize = 120;
+            int w = MeasureText(msg, fontSize);
+            int x = (GetScreenWidth() - w) / 2;
+            int y = (GetScreenHeight() - fontSize) / 2;
+            DrawText(msg, x + 3, y + 3, fontSize, Fade(BLACK, alpha * 0.5f));
+            DrawText(msg, x, y, fontSize, Fade(GOLD, alpha));
         }
 
         DrawFPS(10, 10);
