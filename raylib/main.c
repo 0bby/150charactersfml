@@ -181,6 +181,7 @@ int main(void)
     float camDistance = prepDistance;
     float camFOV = prepFOV;
     float camX = prepX;
+    bool camOverride = false;
     Camera camera = { 0 };
     camera.position = (Vector3){ camX, camHeight, camDistance };
     camera.target   = (Vector3){ 0.0f, 0.0f, 35.0f };
@@ -1145,8 +1146,8 @@ int main(void)
         int prevHoverSynergyIdx = hoverSynergyIdx;
         hoverSynergyIdx = -1;
 
-        // Lerp camera toward phase preset
-        {
+        // Lerp camera toward phase preset (skip when debug override active)
+        if (!camOverride) {
             bool combat = (phase == PHASE_COMBAT);
             bool plaza = (phase == PHASE_PLAZA);
             float tgtH = plaza ? plazaHeight : (combat ? combatHeight : prepHeight);
@@ -4723,29 +4724,97 @@ int main(void)
 
         // Camera debug sliders (debug mode only)
         if (debugMode) {
-            Rectangle hBar = { 10, 60, 150, 20 };
-            float hPerc = camHeight / 150.0f; if (hPerc > 1) hPerc = 1; if (hPerc < 0) hPerc = 0;
-            DrawRectangleRec(hBar, LIGHTGRAY);
-            DrawRectangle(10, 60, (int)(150*hPerc), 20, SKYBLUE);
-            GameDrawText(TextFormat("Height: %.1f", camHeight), 170, 60, 10, BLACK);
-            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), hBar))
-            { camHeight = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camHeight < 1) camHeight = 1; }
+            // Override toggle button
+            Rectangle overrideBtn = { 10, 60, 80, 20 };
+            DrawRectangleRec(overrideBtn, camOverride ? GREEN : GRAY);
+            GameDrawText(camOverride ? "Override ON" : "Override OFF", 14, 64, 10, WHITE);
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), overrideBtn))
+                camOverride = !camOverride;
 
-            Rectangle dBar = { 10, 90, 150, 20 };
-            float dPerc = camDistance / 150.0f; if (dPerc > 1) dPerc = 1; if (dPerc < 0) dPerc = 0;
-            DrawRectangleRec(dBar, LIGHTGRAY);
-            DrawRectangle(10, 90, (int)(150*dPerc), 20, SKYBLUE);
-            GameDrawText(TextFormat("Distance: %.1f", camDistance), 170, 90, 10, BLACK);
-            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), dBar))
-            { camDistance = (GetMousePosition().x - 10) / 150.0f * 150.0f; if (camDistance < 1) camDistance = 1; }
+            Color sliderBg = camOverride ? LIGHTGRAY : (Color){100,100,100,255};
+            Color sliderFill = camOverride ? SKYBLUE : (Color){80,80,120,255};
 
-            Rectangle fBar = { 10, 120, 150, 20 };
-            float fPerc = camFOV / 120.0f; if (fPerc > 1) fPerc = 1; if (fPerc < 0) fPerc = 0;
-            DrawRectangleRec(fBar, LIGHTGRAY);
-            DrawRectangle(10, 120, (int)(150*fPerc), 20, SKYBLUE);
-            GameDrawText(TextFormat("FOV: %.1f", camFOV), 170, 120, 10, BLACK);
-            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), fBar))
-            { camFOV = (GetMousePosition().x - 10) / 150.0f * 120.0f; if (camFOV < 1) camFOV = 1; }
+            // Height slider: range -50 to 500
+            Rectangle hBar = { 10, 85, 200, 20 };
+            float hPerc = (camHeight - (-50.0f)) / (500.0f - (-50.0f));
+            if (hPerc > 1) hPerc = 1;
+            if (hPerc < 0) hPerc = 0;
+            DrawRectangleRec(hBar, sliderBg);
+            DrawRectangle(10, 85, (int)(200*hPerc), 20, sliderFill);
+            GameDrawText(TextFormat("Height: %.1f", camHeight), 220, 85, 10, BLACK);
+            if (camOverride && IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), hBar)) {
+                float t = (GetMousePosition().x - 10.0f) / 200.0f;
+                if (t < 0) t = 0;
+                if (t > 1) t = 1;
+                camHeight = -50.0f + t * 550.0f;
+            }
+
+            // Distance slider: range -300 to 500
+            Rectangle dBar = { 10, 110, 200, 20 };
+            float dPerc = (camDistance - (-300.0f)) / (500.0f - (-300.0f));
+            if (dPerc > 1) dPerc = 1;
+            if (dPerc < 0) dPerc = 0;
+            DrawRectangleRec(dBar, sliderBg);
+            DrawRectangle(10, 110, (int)(200*dPerc), 20, sliderFill);
+            GameDrawText(TextFormat("Distance: %.1f", camDistance), 220, 110, 10, BLACK);
+            if (camOverride && IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), dBar)) {
+                float t = (GetMousePosition().x - 10.0f) / 200.0f;
+                if (t < 0) t = 0;
+                if (t > 1) t = 1;
+                camDistance = -300.0f + t * 800.0f;
+            }
+
+            // FOV slider: range 5 to 160
+            Rectangle fBar = { 10, 135, 200, 20 };
+            float fPerc = (camFOV - 5.0f) / (160.0f - 5.0f);
+            if (fPerc > 1) fPerc = 1;
+            if (fPerc < 0) fPerc = 0;
+            DrawRectangleRec(fBar, sliderBg);
+            DrawRectangle(10, 135, (int)(200*fPerc), 20, sliderFill);
+            GameDrawText(TextFormat("FOV: %.1f", camFOV), 220, 135, 10, BLACK);
+            if (camOverride && IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), fBar)) {
+                float t = (GetMousePosition().x - 10.0f) / 200.0f;
+                if (t < 0) t = 0;
+                if (t > 1) t = 1;
+                camFOV = 5.0f + t * 155.0f;
+            }
+
+            // X Offset slider: range -200 to 200
+            Rectangle xBar = { 10, 160, 200, 20 };
+            float xPerc = (camX - (-200.0f)) / (200.0f - (-200.0f));
+            if (xPerc > 1) xPerc = 1;
+            if (xPerc < 0) xPerc = 0;
+            DrawRectangleRec(xBar, sliderBg);
+            DrawRectangle(10, 160, (int)(200*xPerc), 20, sliderFill);
+            GameDrawText(TextFormat("X Offset: %.1f", camX), 220, 160, 10, BLACK);
+            if (camOverride && IsMouseButtonDown(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), xBar)) {
+                float t = (GetMousePosition().x - 10.0f) / 200.0f;
+                if (t < 0) t = 0;
+                if (t > 1) t = 1;
+                camX = -200.0f + t * 400.0f;
+            }
+
+            // Save button
+            Rectangle saveBtn = { 10, 185, 50, 20 };
+            DrawRectangleRec(saveBtn, (Color){60,60,200,255});
+            GameDrawText("Save", 18, 189, 10, WHITE);
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), saveBtn)) {
+                FILE *f = fopen("cam_debug.txt", "w");
+                if (f) { fprintf(f, "%f %f %f %f\n", camHeight, camDistance, camFOV, camX); fclose(f); }
+            }
+
+            // Load button
+            Rectangle loadBtn = { 65, 185, 50, 20 };
+            DrawRectangleRec(loadBtn, (Color){60,150,60,255});
+            GameDrawText("Load", 73, 189, 10, WHITE);
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), loadBtn)) {
+                FILE *f = fopen("cam_debug.txt", "r");
+                if (f) {
+                    if (fscanf(f, "%f %f %f %f", &camHeight, &camDistance, &camFOV, &camX) == 4)
+                        camOverride = true;
+                    fclose(f);
+                }
+            }
         }
 
         // ── UNIT HUD BAR + SHOP ── (visible during prep, combat, round_over only)
