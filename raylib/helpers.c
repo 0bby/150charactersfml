@@ -1,5 +1,6 @@
 #include "game.h"
 #include "helpers.h"
+#include "synergies.h"
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -40,6 +41,7 @@ bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
         .scaleOverride  = 1.0f,
         .hpMultiplier   = 1.0f,
         .dmgMultiplier  = 1.0f,
+        .speedMultiplier = 1.0f,
         .shieldHP       = 0.0f,
         .abilityCastDelay = 0.0f,
         .chargeTarget   = -1,
@@ -146,6 +148,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
             .scaleOverride  = 1.0f,
             .hpMultiplier   = 1.0f,
             .dmgMultiplier  = 1.0f,
+            .speedMultiplier = 1.0f,
             .shieldHP       = 0.0f,
             .abilityCastDelay = 0.0f,
             .chargeTarget   = -1,
@@ -767,6 +770,71 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
                 int numAb = GetRandomValue(2, 4);
                 int abLevel = GetRandomValue(1, 2);
                 AssignAbilitiesAtLevel(u, numAb, abLevel);
+            }
+        }
+    }
+}
+
+//------------------------------------------------------------------------------------
+// Synergy System
+//------------------------------------------------------------------------------------
+void ApplySynergies(Unit units[], int unitCount)
+{
+    for (int team = 0; team < 2; team++) {
+        Team t = (Team)team;
+
+        for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
+            const SynergyDef *syn = &SYNERGY_DEFS[s];
+
+            // Count units matching any of the required types on this team
+            int matchCount = 0;
+            for (int i = 0; i < unitCount; i++) {
+                if (!units[i].active || units[i].team != t) continue;
+                for (int r = 0; r < syn->requiredTypeCount; r++) {
+                    if (units[i].typeIndex == syn->requiredTypes[r]) {
+                        matchCount++;
+                        break;
+                    }
+                }
+            }
+
+            // Find highest tier met
+            int bestTier = -1;
+            for (int tier = 0; tier < syn->tierCount; tier++) {
+                if (matchCount >= syn->tiers[tier].minUnits)
+                    bestTier = tier;
+            }
+            if (bestTier < 0) continue;
+
+            // Apply buffs to target units on this team
+            for (int i = 0; i < unitCount; i++) {
+                if (!units[i].active || units[i].team != t) continue;
+
+                bool isTarget = false;
+                if (syn->targetType < 0) {
+                    // -1 = buff all matching types
+                    for (int r = 0; r < syn->requiredTypeCount; r++) {
+                        if (units[i].typeIndex == syn->requiredTypes[r]) {
+                            isTarget = true;
+                            break;
+                        }
+                    }
+                } else {
+                    isTarget = (units[i].typeIndex == syn->targetType);
+                }
+                if (!isTarget) continue;
+
+                units[i].speedMultiplier *= syn->tiers[bestTier].speedMult;
+                units[i].dmgMultiplier *= syn->tiers[bestTier].dmgMult;
+
+                if (syn->tiers[bestTier].hpMult != 1.0f) {
+                    float oldMax = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+                    units[i].hpMultiplier *= syn->tiers[bestTier].hpMult;
+                    float newMax = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+                    // Scale current health proportionally
+                    if (oldMax > 0)
+                        units[i].currentHealth *= (newMax / oldMax);
+                }
             }
         }
     }

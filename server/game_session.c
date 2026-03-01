@@ -1,6 +1,7 @@
 #include "game_session.h"
 #include "../raylib/combat_sim.h"
 #include "../raylib/helpers.h"
+#include "../raylib/synergies.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -205,6 +206,7 @@ void session_start_combat(GameSession *s)
         setup_pve_enemies(s->combatUnits, &s->combatUnitCount,
                           s->players[0].units, s->players[0].unitCount,
                           waveIdx);
+        ApplySynergies(s->combatUnits, s->combatUnitCount);
 
         // Send combat start to both players with their own army + PVE wave
         for (int p = 0; p < 2; p++) {
@@ -222,6 +224,7 @@ void session_start_combat(GameSession *s)
         setup_pvp_combat(s->combatUnits, &s->combatUnitCount,
                          s->players[0].units, s->players[0].unitCount,
                          s->players[1].units, s->players[1].unitCount);
+        ApplySynergies(s->combatUnits, s->combatUnitCount);
 
         // Player 0 sees: their army (blue) vs p1 mirror (red)
         send_combat_start(s, 0, s->combatUnits, s->combatUnitCount);

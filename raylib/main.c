@@ -1145,6 +1145,7 @@ int main(void)
                                 units[u2].abilities, MAX_ABILITIES_PER_UNIT);
                         }
                     }
+                    ApplySynergies(units, unitCount);
                     phase = PHASE_COMBAT;
                     ClearAllModifiers(modifiers);
                     ClearAllProjectiles(projectiles);
@@ -1378,6 +1379,7 @@ int main(void)
                                         units[u2].abilities, MAX_ABILITIES_PER_UNIT);
                                 }
                             }
+                            ApplySynergies(units, unitCount);
                             phase = PHASE_COMBAT;
                             ClearAllModifiers(modifiers);
                             ClearAllProjectiles(projectiles);
@@ -2115,7 +2117,7 @@ int main(void)
 
                 // Movement + basic attack
                 if (target < 0) continue;
-                float moveSpeed = stats->movementSpeed;
+                float moveSpeed = stats->movementSpeed * units[i].speedMultiplier;
                 float speedMult = GetModifierValue(modifiers, i, MOD_SPEED_MULT);
                 if (speedMult > 0) moveSpeed *= speedMult;
 

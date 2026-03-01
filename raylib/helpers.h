@@ -99,6 +99,9 @@ int FindHighestHPAlly(Unit units[], int unitCount, int selfIndex);
 int FindFurthestEnemy(Unit units[], int unitCount, int selfIndex);
 int FindLowestHPAlly(Unit units[], int unitCount, int selfIndex);
 
+// Synergy system
+void ApplySynergies(Unit units[], int unitCount);
+
 // Wave spawning helpers
 Vector3 FindValidSpawnPos(Unit units[], int unitCount, float minDist);
 void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount);

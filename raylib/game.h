@@ -181,6 +181,7 @@ typedef struct {
     float scaleOverride;   // model scale multiplier (1.0 = normal, 2.5 = boss)
     float hpMultiplier;    // max HP multiplier (1.0 = normal)
     float dmgMultiplier;   // attack damage multiplier (1.0 = normal)
+    float speedMultiplier; // movement speed multiplier (1.0 = normal)
     float shieldHP;        // absorbs damage before HP (blue bar visual)
     float abilityCastDelay; // 0.75s delay between successive ability casts
     int   chargeTarget;    // Primal Charge: target unit index (-1 = not charging)

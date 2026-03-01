@@ -550,7 +550,7 @@ int CombatTick(Unit units[], int unitCount,
 
         // Movement + basic attack
         if (target < 0) continue;
-        float moveSpeed = stats->movementSpeed;
+        float moveSpeed = stats->movementSpeed * units[i].speedMultiplier;
         float speedMult = GetModifierValue(modifiers, i, MOD_SPEED_MULT);
         if (speedMult > 0) moveSpeed *= speedMult;
 
