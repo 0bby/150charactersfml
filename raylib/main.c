@@ -3611,9 +3611,9 @@ int main(void)
                 (void)totalW; (void)startX; // positioning computed for drawing code below
 
                 // Buttons (two: SET IN STONE, CONTINUE)
-                int btnW = 180, btnH = 44;
-                int btnY = cardY + cardH + 40;
-                int btnGap = 30;
+                int btnW = 240, btnH = 54;
+                int btnY = cardY + cardH + 30;
+                int btnGap = 40;
                 int totalBtnW = 2 * btnW + btnGap;
                 int btnStartX = (sw - totalBtnW) / 2;
 
@@ -6107,13 +6107,13 @@ int main(void)
             DrawRectangle(0, 0, msw, msh, (Color){0,0,0,160});
 
             // Title
-            const char *msTitle = TextFormat("MILESTONE REACHED - Wave %d", currentRound);
-            int mstw = GameMeasureText(msTitle, 32);
-            GameDrawText(msTitle, msw/2 - mstw/2, 40, 32, GOLD);
+            const char *msTitle = TextFormat("MILESTONE - Wave %d", currentRound);
+            int mstw = GameMeasureText(msTitle, 40);
+            GameDrawText(msTitle, msw/2 - mstw/2, 30, 40, GOLD);
 
-            const char *msSubtitle = "Set your party in stone, or risk it all and continue";
-            int mssw = GameMeasureText(msSubtitle, 16);
-            GameDrawText(msSubtitle, msw/2 - mssw/2, 80, 16, (Color){200,200,220,200});
+            const char *msSubtitle = "Immortalise your party, or gamble their fate?";
+            int mssw = GameMeasureText(msSubtitle, 22);
+            GameDrawText(msSubtitle, msw/2 - mssw/2, 78, 22, (Color){220,220,240,220});
 
             // Collect active blue units
             int msBlue[BLUE_TEAM_MAX_SIZE]; int msCount = 0;
@@ -6172,9 +6172,9 @@ int main(void)
             }
 
             // Buttons (two: SET IN STONE, CONTINUE)
-            int btnW2 = 180, btnH2 = 44;
-            int btnY2 = cardY + cardH + 40;
-            int btnGap2 = 30;
+            int btnW2 = 240, btnH2 = 54;
+            int btnY2 = cardY + cardH + 30;
+            int btnGap2 = 40;
             int totalBtnW2 = 2 * btnW2 + btnGap2;
             int btnStartX2 = (msw - totalBtnW2) / 2;
 
@@ -6187,8 +6187,16 @@ int main(void)
                 DrawRectangleRec(setBtn, setBg);
                 DrawRectangleLinesEx(setBtn, 2, (Color){140,120,30,255});
                 const char *setText = "SET IN STONE";
-                int setW = GameMeasureText(setText, 16);
-                GameDrawText(setText, (int)(setBtn.x + btnW2/2 - setW/2), (int)(setBtn.y + 14), 16, WHITE);
+                int setW = GameMeasureText(setText, 22);
+                GameDrawText(setText, (int)(setBtn.x + btnW2/2 - setW/2), (int)(setBtn.y + 16), 22, WHITE);
+
+                // Description under SET IN STONE
+                const char *setDesc1 = "Save your party to the leaderboard.";
+                int sd1w = GameMeasureText(setDesc1, 16);
+                GameDrawText(setDesc1, (int)(setBtn.x + btnW2/2 - sd1w/2), (int)(setBtn.y + btnH2 + 8), 16, (Color){255,210,80,230});
+                const char *setDesc2 = "Your creatures are imprisoned forever.";
+                int sd2w = GameMeasureText(setDesc2, 14);
+                GameDrawText(setDesc2, (int)(setBtn.x + btnW2/2 - sd2w/2), (int)(setBtn.y + btnH2 + 28), 14, (Color){255,180,60,180});
             }
 
             // CONTINUE button
@@ -6200,17 +6208,17 @@ int main(void)
                 DrawRectangleRec(contBtn, contBg);
                 DrawRectangleLinesEx(contBtn, 2, DARKGREEN);
                 const char *contText = "CONTINUE";
-                int contW = GameMeasureText(contText, 16);
-                GameDrawText(contText, (int)(contBtn.x + btnW2/2 - contW/2), (int)(contBtn.y + 14), 16, WHITE);
-            }
+                int contW = GameMeasureText(contText, 22);
+                GameDrawText(contText, (int)(contBtn.x + btnW2/2 - contW/2), (int)(contBtn.y + 16), 22, WHITE);
 
-            // Risk warning
-            const char *warnText = "SET IN STONE saves your party to the leaderboard and ends the run.";
-            int warnW = GameMeasureText(warnText, 12);
-            GameDrawText(warnText, msw/2 - warnW/2, btnY2 + btnH2 + 10, 12, (Color){255,180,80,200});
-            const char *riskText = "CONTINUE risks everything - losing past this point means permanent death!";
-            int riskW = GameMeasureText(riskText, 12);
-            GameDrawText(riskText, msw/2 - riskW/2, btnY2 + btnH2 + 26, 12, (Color){255,100,80,200});
+                // Description under CONTINUE
+                const char *contDesc1 = "Keep fighting. Higher risk, higher glory.";
+                int cd1w = GameMeasureText(contDesc1, 16);
+                GameDrawText(contDesc1, (int)(contBtn.x + btnW2/2 - cd1w/2), (int)(contBtn.y + btnH2 + 8), 16, (Color){100,220,120,230});
+                const char *contDesc2 = "If you lose, your party dies for nothing!";
+                int cd2w = GameMeasureText(contDesc2, 14);
+                GameDrawText(contDesc2, (int)(contBtn.x + btnW2/2 - cd2w/2), (int)(contBtn.y + btnH2 + 28), 14, (Color){255,100,80,200});
+            }
         }
 
         //==============================================================================
