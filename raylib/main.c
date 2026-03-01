@@ -40,9 +40,12 @@
 #define PROJ_EXPLODE_COUNT  30
 
 // --- Win/loss sound split point (seconds) — tweak & re-split with ffmpeg if needed ---
-// Loss = first 6.5s of "cgj loss and win demo 2.mp3" → sfx/loss.wav
-// Win  = from 6.5s onward                            → sfx/win.wav
-#define ENDGAME_SFX_VOL  0.8f
+#define ENDGAME_SFX_VOL  0.5f
+#define COMBAT_SFX_VOL   0.5f
+#define VOICE_SFX_VOL    0.5f
+#define SPAWN_SFX_VOL    0.5f
+#define UI_SFX_VOL       0.7f
+#define BGM_VOL          0.3f
 
 //------------------------------------------------------------------------------------
 // Main
@@ -55,52 +58,52 @@ int main(void)
     InitAudioDevice();
 
     // Win/loss sounds — pre-split into separate files
-    Sound sfxWin  = LoadSound("sfx/match_win.ogg");
-    Sound sfxLoss = LoadSound("sfx/match_loss.ogg");
+    Sound sfxWin  = LoadSound("music/match_win.ogg");
+    Sound sfxLoss = LoadSound("music/match_loss.ogg");
     SetSoundVolume(sfxWin,  ENDGAME_SFX_VOL);
     SetSoundVolume(sfxLoss, ENDGAME_SFX_VOL);
     bool lastOutcomeWin = false;
 
     // Combat SFX
-    Sound sfxMeleeHit        = LoadSound("sfx/cgj_sfx_v1/melee_hit.ogg");
-    Sound sfxProjectileWhoosh= LoadSound("sfx/cgj_sfx_v1/projectile_whoosh.ogg");
-    Sound sfxProjectileHit   = LoadSound("sfx/cgj_sfx_v1/projectile_hit.ogg");
-    Sound sfxMagicHit        = LoadSound("sfx/cgj_sfx_v1/magic_hit.ogg");
-    SetSoundVolume(sfxMeleeHit, 0.6f);
-    SetSoundVolume(sfxProjectileWhoosh, 0.6f);
-    SetSoundVolume(sfxProjectileHit, 0.6f);
-    SetSoundVolume(sfxMagicHit, 0.6f);
+    Sound sfxMeleeHit        = LoadSound("sfx/melee_hit.ogg");
+    Sound sfxProjectileWhoosh= LoadSound("sfx/projectile_whoosh.ogg");
+    Sound sfxProjectileHit   = LoadSound("sfx/projectile_hit.ogg");
+    Sound sfxMagicHit        = LoadSound("sfx/magic_hit.ogg");
+    SetSoundVolume(sfxMeleeHit, COMBAT_SFX_VOL);
+    SetSoundVolume(sfxProjectileWhoosh, COMBAT_SFX_VOL);
+    SetSoundVolume(sfxProjectileHit, COMBAT_SFX_VOL);
+    SetSoundVolume(sfxMagicHit, COMBAT_SFX_VOL);
     // Unit voice SFX
-    Sound sfxToadShout   = LoadSound("sfx/cgj_sfx_v1/toad_shout.ogg");
-    Sound sfxToadDie     = LoadSound("sfx/cgj_sfx_v1/toad_die.ogg");
-    Sound sfxGoblinShout = LoadSound("sfx/cgj_sfx_v1/goblin_shout.ogg");
-    Sound sfxGoblinDie   = LoadSound("sfx/cgj_sfx_v1/goblin_die.ogg");
-    SetSoundVolume(sfxToadShout, 0.5f);
-    SetSoundVolume(sfxToadDie, 0.5f);
-    SetSoundVolume(sfxGoblinShout, 0.5f);
-    SetSoundVolume(sfxGoblinDie, 0.5f);
+    Sound sfxToadShout   = LoadSound("sfx/toad_shout.ogg");
+    Sound sfxToadDie     = LoadSound("sfx/toad_die.ogg");
+    Sound sfxGoblinShout = LoadSound("sfx/goblin_shout.ogg");
+    Sound sfxGoblinDie   = LoadSound("sfx/goblin_die.ogg");
+    SetSoundVolume(sfxToadShout, VOICE_SFX_VOL);
+    SetSoundVolume(sfxToadDie, VOICE_SFX_VOL);
+    SetSoundVolume(sfxGoblinShout, VOICE_SFX_VOL);
+    SetSoundVolume(sfxGoblinDie, VOICE_SFX_VOL);
     // Spawn SFX
-    Sound sfxCharacterFall = LoadSound("sfx/cgj_sfx_v1/character_fall.ogg");
-    Sound sfxCharacterLand = LoadSound("sfx/cgj_sfx_v1/character_land.ogg");
-    Sound sfxNewCharacter  = LoadSound("sfx/cgj_sfx_v1/new_character.ogg");
-    SetSoundVolume(sfxCharacterFall, 0.7f);
-    SetSoundVolume(sfxCharacterLand, 0.7f);
-    SetSoundVolume(sfxNewCharacter, 0.7f);
+    Sound sfxCharacterFall = LoadSound("sfx/character_fall.ogg");
+    Sound sfxCharacterLand = LoadSound("sfx/character_land.ogg");
+    Sound sfxNewCharacter  = LoadSound("sfx/new_character.ogg");
+    SetSoundVolume(sfxCharacterFall, SPAWN_SFX_VOL);
+    SetSoundVolume(sfxCharacterLand, SPAWN_SFX_VOL);
+    SetSoundVolume(sfxNewCharacter, SPAWN_SFX_VOL);
     // UI SFX
-    Sound sfxUiClick  = LoadSound("sfx/cgj_sfx_v1/ui_click.ogg");
-    Sound sfxUiBuy    = LoadSound("sfx/cgj_sfx_v1/ui_buy.ogg");
-    Sound sfxUiDrag   = LoadSound("sfx/cgj_sfx_v1/ui_drag.ogg");
-    Sound sfxUiDrop   = LoadSound("sfx/cgj_sfx_v1/ui_drop.ogg");
-    Sound sfxUiReroll = LoadSound("sfx/cgj_sfx_v1/ui_reroll.ogg");
-    SetSoundVolume(sfxUiClick, 0.4f);
-    SetSoundVolume(sfxUiBuy, 0.4f);
-    SetSoundVolume(sfxUiDrag, 0.4f);
-    SetSoundVolume(sfxUiDrop, 0.4f);
-    SetSoundVolume(sfxUiReroll, 0.4f);
+    Sound sfxUiClick  = LoadSound("sfx/ui_click.ogg");
+    Sound sfxUiBuy    = LoadSound("sfx/ui_buy.ogg");
+    Sound sfxUiDrag   = LoadSound("sfx/ui_drag.ogg");
+    Sound sfxUiDrop   = LoadSound("sfx/ui_drop.ogg");
+    Sound sfxUiReroll = LoadSound("sfx/ui_reroll.ogg");
+    SetSoundVolume(sfxUiClick, UI_SFX_VOL);
+    SetSoundVolume(sfxUiBuy, UI_SFX_VOL);
+    SetSoundVolume(sfxUiDrag, UI_SFX_VOL);
+    SetSoundVolume(sfxUiDrop, UI_SFX_VOL);
+    SetSoundVolume(sfxUiReroll, UI_SFX_VOL);
 
     // Background music
-    Music bgm = LoadMusicStream("sfx/bgm_v1.ogg");
-    SetMusicVolume(bgm, 0.35f);
+    Music bgm = LoadMusicStream("music/bgm.ogg");
+    SetMusicVolume(bgm, BGM_VOL);
     PlayMusicStream(bgm);
 
     // Camera presets — prep (top-down auto-chess) vs combat (diagonal MOBA) vs plaza (cinematic)
