@@ -1073,8 +1073,8 @@ int main(void)
                 currentRoundIsPve = netClient.isPveRound;
                 for (int i = 0; i < MAX_SHOP_SLOTS; i++)
                     shopSlots[i] = netClient.serverShop[i];
-                // Reset multiplayer game state
-                unitCount = 0;
+                // Reset multiplayer game state — keep blue units from plaza
+                ClearRedUnits(units, &unitCount);
                 snapshotCount = 0;
                 blueWins = 0;
                 redWins = 0;
@@ -1084,7 +1084,6 @@ int main(void)
                 ClearAllParticles(particles);
                 ClearAllFloatingTexts(floatingTexts);
                 ClearAllFissures(fissures);
-                for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
                 playerReady = false;
                 waitingForOpponent = false;
@@ -1217,6 +1216,8 @@ int main(void)
                     if (IsKeyPressed(quickBuyKeys[s]) && shopSlots[s].abilityId >= 0) {
                         if (isMultiplayer) {
                             net_client_send_buy(&netClient, s);
+                            // Also process locally so ability appears immediately
+                            BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
                         } else {
                             // Check if a selected blue unit has an empty ability slot
                             int selUnit = -1;
@@ -1469,6 +1470,8 @@ int main(void)
                             PlaySound(sfxUiBuy);
                             if (isMultiplayer) {
                                 net_client_send_buy(&netClient, s);
+                                // Also process locally so ability appears in inventory immediately
+                                BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
                             } else {
                                 BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
                             }
@@ -3152,7 +3155,13 @@ int main(void)
 
             // Round info label (prep phase only)
             if (phase == PHASE_PREP) {
-                const char *waveLabel = TextFormat("Wave %d", currentRound + 1);
+                const char *waveLabel;
+                if (isMultiplayer) {
+                    const char *roundType = currentRoundIsPve ? "PVE" : "PVP";
+                    waveLabel = TextFormat("Round %d - %s", currentRound + 1, roundType);
+                } else {
+                    waveLabel = TextFormat("Wave %d", currentRound + 1);
+                }
                 int wlw = MeasureText(waveLabel, 16);
                 DrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, 16, WHITE);
             }
@@ -3210,18 +3219,33 @@ int main(void)
                 DrawText(nextText, sw/2 - ntw/2, 82, 14, ORANGE);
             }
 
-            // PLAY button (centre-bottom, prep phase only)
+            // PLAY / READY button (centre-bottom, prep phase only)
             if (phase == PHASE_PREP) {
                 Rectangle dPlayBtn = { (float)(sw/2 - playBtnW/2), (float)(dHudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 int ba, ra;
                 CountTeams(units, unitCount, &ba, &ra);
-                bool canPlay = (ba > 0 && ra > 0);
-                Color pc = canPlay ? (Color){50,180,80,255} : LIGHTGRAY;
-                if (canPlay && CheckCollisionPointRec(GetMousePosition(), dPlayBtn))
+                bool canPlay = isMultiplayer ? (ba > 0) : (ba > 0 && ra > 0);
+                bool alreadyReady = isMultiplayer && playerReady;
+                Color pc;
+                if (alreadyReady)
+                    pc = (Color){80,80,80,255};
+                else if (canPlay)
+                    pc = (Color){50,180,80,255};
+                else
+                    pc = LIGHTGRAY;
+                if (canPlay && !alreadyReady && CheckCollisionPointRec(GetMousePosition(), dPlayBtn))
                     pc = (Color){30,220,60,255};
                 DrawRectangleRec(dPlayBtn, pc);
-                DrawRectangleLinesEx(dPlayBtn, 2, canPlay ? DARKGREEN : GRAY);
-                const char *pt = TextFormat("PLAY Round %d", currentRound + 1);
+                DrawRectangleLinesEx(dPlayBtn, 2, canPlay && !alreadyReady ? DARKGREEN : GRAY);
+                const char *pt;
+                if (isMultiplayer) {
+                    if (alreadyReady)
+                        pt = waitingForOpponent ? "WAITING FOR OPPONENT..." : "I'M READY!";
+                    else
+                        pt = TextFormat("I'M READY - Round %d", currentRound + 1);
+                } else {
+                    pt = TextFormat("PLAY Round %d", currentRound + 1);
+                }
                 int ptw = MeasureText(pt, 18);
                 DrawText(pt, dPlayBtn.x + (playBtnW - ptw)/2, dPlayBtn.y + (playBtnH - 18)/2, 18, WHITE);
             }
@@ -3237,8 +3261,13 @@ int main(void)
                 DrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
             }
             if (isMultiplayer) {
-                DrawText(TextFormat("BLUE: %d", blueWins), sw/2 - 120, 35, 18, DARKBLUE);
-                DrawText(TextFormat("RED: %d", redWins),  sw/2 + 60, 35, 18, MAROON);
+                const char *youLabel = TextFormat("YOU (%s): %d", playerName, blueWins);
+                const char *oppLabel = TextFormat("OPP (%s): %d", netClient.opponentName[0] ? netClient.opponentName : "???", redWins);
+                int youW = MeasureText(youLabel, 18);
+                int oppW = MeasureText(oppLabel, 18);
+                DrawText(youLabel, sw/2 - youW - 10, 35, 18, DARKBLUE);
+                DrawText(oppLabel, sw/2 + 10, 35, 18, MAROON);
+                (void)oppW;
             }
 
             // Phase label

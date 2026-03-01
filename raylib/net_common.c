@@ -149,6 +149,7 @@ int deserialize_units(const NetUnit in[], int inCount, Unit units[], int maxUnit
             .animFrame = 0,
 #endif
             .scaleOverride = 1.0f,
+            .speedMultiplier = 1.0f,
             .hpMultiplier = 1.0f,
             .dmgMultiplier = 1.0f,
             .shieldHP = 0.0f,

@@ -217,6 +217,7 @@ void session_start_combat(GameSession *s)
             setup_pve_enemies(playerCombat, &playerCombatCount,
                               s->players[p].units, s->players[p].unitCount,
                               waveIdx);
+            ApplySynergies(playerCombat, playerCombatCount);
             send_combat_start(s, p, playerCombat, playerCombatCount);
         }
     } else {
@@ -236,6 +237,7 @@ void session_start_combat(GameSession *s)
         setup_pvp_combat(p1View, &p1ViewCount,
                          s->players[1].units, s->players[1].unitCount,
                          s->players[0].units, s->players[0].unitCount);
+        ApplySynergies(p1View, p1ViewCount);
         send_combat_start(s, 1, p1View, p1ViewCount);
     }
 }
