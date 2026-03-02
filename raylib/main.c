@@ -82,6 +82,44 @@ static inline void GameDrawTextOnColor(const char *text, int x, int y, int fontS
 #include "pve_waves.h"
 #include "plaza.h"
 
+// --- Settings persistence ---
+static void SaveSettings(float musicVol, float sfxVol, bool fullscreen, const char *name)
+{
+    FILE *fp = fopen("settings.json", "w");
+    if (!fp) return;
+    fprintf(fp, "{\n  \"musicVolume\": %.3f,\n  \"sfxVolume\": %.3f,\n  \"fullscreen\": %s,\n  \"playerName\": \"%s\"\n}\n",
+            musicVol, sfxVol, fullscreen ? "true" : "false", name);
+    fclose(fp);
+}
+
+static void LoadSettings(float *musicVol, float *sfxVol, bool *fullscreen, char *name, int *nameLen)
+{
+    FILE *fp = fopen("settings.json", "r");
+    if (!fp) return;
+    char buf[512];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, fp);
+    buf[n] = '\0';
+    fclose(fp);
+
+    char *p;
+    if ((p = strstr(buf, "\"musicVolume\""))) { float v; if (sscanf(p, "\"musicVolume\": %f", &v) == 1) *musicVol = v; }
+    if ((p = strstr(buf, "\"sfxVolume\"")))   { float v; if (sscanf(p, "\"sfxVolume\": %f", &v) == 1) *sfxVol = v; }
+    if ((p = strstr(buf, "\"fullscreen\"")))  { *fullscreen = (strstr(p, "true") != NULL && strstr(p, "true") < p + 30); }
+    if ((p = strstr(buf, "\"playerName\"")))  {
+        char *q = strchr(p + 13, '"');
+        if (q) {
+            q++;
+            char *end = strchr(q, '"');
+            if (end && (end - q) < 31) {
+                int len = (int)(end - q);
+                memcpy(name, q, len);
+                name[len] = '\0';
+                *nameLen = len;
+            }
+        }
+    }
+}
+
 // --- UI Scale (720p base) ---
 static float uiScale = 1.0f;
 #define S(x) ((int)((x) * uiScale))
@@ -112,6 +150,7 @@ int main(void)
     net_platform_init();
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 720, "Relic Rivals");
+    SetExitKey(0);  // Disable default ESC-to-close — we handle ESC ourselves
     SetWindowMinSize(640, 360);
     InitAudioDevice();
 
@@ -146,10 +185,18 @@ int main(void)
     Sound sfxToadDie     = LoadSound("sfx/toad_die.ogg");
     Sound sfxGoblinShout = LoadSound("sfx/goblin_shout.ogg");
     Sound sfxGoblinDie   = LoadSound("sfx/goblin_die.ogg");
+    Sound sfxDevilShout  = LoadSound("sfx/devil_shout.ogg");
+    Sound sfxDevilDie    = LoadSound("sfx/devil_die.ogg");
+    Sound sfxLizardShout = LoadSound("sfx/lizard_shout.ogg");
+    Sound sfxLizardDie   = LoadSound("sfx/lizard_die.ogg");
     SetSoundVolume(sfxToadShout, VOICE_SFX_VOL);
     SetSoundVolume(sfxToadDie, VOICE_SFX_VOL);
     SetSoundVolume(sfxGoblinShout, VOICE_SFX_VOL);
     SetSoundVolume(sfxGoblinDie, VOICE_SFX_VOL);
+    SetSoundVolume(sfxDevilShout, VOICE_SFX_VOL);
+    SetSoundVolume(sfxDevilDie, VOICE_SFX_VOL);
+    SetSoundVolume(sfxLizardShout, VOICE_SFX_VOL);
+    SetSoundVolume(sfxLizardDie, VOICE_SFX_VOL);
     // Spawn SFX
     Sound sfxCharacterFall = LoadSound("sfx/character_fall.ogg");
     Sound sfxCharacterLand = LoadSound("sfx/character_land.ogg");
@@ -168,6 +215,28 @@ int main(void)
     SetSoundVolume(sfxUiDrag, UI_SFX_VOL);
     SetSoundVolume(sfxUiDrop, UI_SFX_VOL);
     SetSoundVolume(sfxUiReroll, UI_SFX_VOL);
+
+    // SFX arrays for volume control
+    Sound allSfx[] = { sfxWin, sfxLoss, sfxMeleeHit, sfxProjectileWhoosh, sfxProjectileHit,
+        sfxMagicHit, sfxToadShout, sfxToadDie, sfxGoblinShout, sfxGoblinDie,
+        sfxDevilShout, sfxDevilDie, sfxLizardShout, sfxLizardDie,
+        sfxCharacterFall, sfxCharacterLand, sfxNewCharacter,
+        sfxUiClick, sfxUiBuy, sfxUiDrag, sfxUiDrop, sfxUiReroll };
+    float sfxBaseVol[] = { ENDGAME_SFX_VOL, ENDGAME_SFX_VOL,
+        COMBAT_SFX_VOL, COMBAT_SFX_VOL, COMBAT_SFX_VOL, COMBAT_SFX_VOL,
+        VOICE_SFX_VOL, VOICE_SFX_VOL, VOICE_SFX_VOL, VOICE_SFX_VOL,
+        VOICE_SFX_VOL, VOICE_SFX_VOL, VOICE_SFX_VOL, VOICE_SFX_VOL,
+        SPAWN_SFX_VOL, SPAWN_SFX_VOL, SPAWN_SFX_VOL,
+        UI_SFX_VOL, UI_SFX_VOL, UI_SFX_VOL, UI_SFX_VOL, UI_SFX_VOL };
+    int sfxCount = sizeof(allSfx) / sizeof(allSfx[0]);
+
+    // Voice SFX lookup by unit type index (fallback = toad for types without unique SFX)
+    Sound dieSfxByType[MAX_UNIT_TYPES];
+    Sound shoutSfxByType[MAX_UNIT_TYPES];
+    for (int i = 0; i < MAX_UNIT_TYPES; i++) { dieSfxByType[i] = sfxToadDie; shoutSfxByType[i] = sfxToadShout; }
+    dieSfxByType[1] = sfxGoblinDie;   shoutSfxByType[1] = sfxGoblinShout;
+    dieSfxByType[2] = sfxDevilDie;    shoutSfxByType[2] = sfxDevilShout;
+    dieSfxByType[5] = sfxLizardDie;   shoutSfxByType[5] = sfxLizardShout;
 
     // Generate radial gradient texture for particle billboards (white center → transparent edge)
     Texture2D particleTex;
@@ -663,6 +732,13 @@ int main(void)
     float plazaTimer = 0.0f;
     PlazaUnitData plazaData[MAX_UNITS] = {0};
     bool showMultiplayerPanel = false;
+
+    // Escape menu state
+    bool showEscMenu = false;
+    bool showHelp = false;
+    float musicVolume = BGM_VOL;
+    float sfxVolume = 1.0f;
+    bool isFullscreen = false;
     Model doorModel = LoadModel("assets/goblin/environment/door/Door.obj");
     for (int m = 0; m < doorModel.materialCount; m++) {
         doorModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -1074,6 +1150,13 @@ int main(void)
 
     SetTargetFPS(60);
 
+    // Load persisted settings
+    LoadSettings(&musicVolume, &sfxVolume, &isFullscreen, playerName, &playerNameLen);
+    SetMusicVolume(bgm, musicVolume);
+    for (int si = 0; si < sfxCount; si++)
+        SetSoundVolume(allSfx[si], sfxBaseVol[si] * sfxVolume);
+    if (isFullscreen) ToggleBorderlessWindowed();
+
     float easterEggTimer = 0.0f;
 
     //==================================================================================
@@ -1139,6 +1222,15 @@ int main(void)
         if (IsKeyPressed(KEY_F10)) {
             shadowDebugMode = (shadowDebugMode + 1) % 5;
             SetShaderValue(lightShader, shadowDebugLoc, &shadowDebugMode, SHADER_UNIFORM_INT);
+        }
+        // F11: toggle borderless fullscreen
+        if (IsKeyPressed(KEY_F11)) {
+            ToggleBorderlessWindowed();
+            isFullscreen = !isFullscreen;
+        }
+        // H: toggle help overlay (when no other overlay is open)
+        if (IsKeyPressed(KEY_H) && !showEscMenu && !showLeaderboard && !showMultiplayerPanel && !nameInputActive) {
+            showHelp = !showHelp;
         }
 
         // Debug: cycle tile layouts with arrow keys
@@ -1371,7 +1463,7 @@ int main(void)
             }
 
             // Check 3D object hover
-            if (!showLeaderboard && !showMultiplayerPanel) {
+            if (!showLeaderboard && !showMultiplayerPanel && !showEscMenu && !showHelp) {
                 plazaHoverObject = PlazaCheckObjectHover(camera, trophyPos, doorPos);
             } else {
                 plazaHoverObject = 0;
@@ -1476,7 +1568,10 @@ int main(void)
                     playerNameLen--;
                     playerName[playerNameLen] = '\0';
                 }
-                if (IsKeyPressed(KEY_ENTER)) nameInputActive = false;
+                if (IsKeyPressed(KEY_ENTER)) {
+                    nameInputActive = false;
+                    SaveSettings(musicVolume, sfxVolume, isFullscreen, playerName);
+                }
             }
 
             // IP address text input
@@ -1496,11 +1591,13 @@ int main(void)
                 }
             }
 
-            // ESC closes overlays
-            if (showLeaderboard && IsKeyPressed(KEY_ESCAPE))
-                showLeaderboard = false;
-            if (showMultiplayerPanel && IsKeyPressed(KEY_ESCAPE))
-                showMultiplayerPanel = false;
+            // ESC closes overlays or toggles escape menu
+            if (IsKeyPressed(KEY_ESCAPE)) {
+                if (showHelp) showHelp = false;
+                else if (showLeaderboard) showLeaderboard = false;
+                else if (showMultiplayerPanel) showMultiplayerPanel = false;
+                else showEscMenu = !showEscMenu;
+            }
 
             // Leaderboard scroll
             if (showLeaderboard) {
@@ -1514,7 +1611,7 @@ int main(void)
 
             // Debug spawn buttons click handling during plaza
             if (debugMode && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-                !showLeaderboard && !showMultiplayerPanel) {
+                !showLeaderboard && !showMultiplayerPanel && !showEscMenu && !showHelp) {
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
@@ -1726,14 +1823,7 @@ int main(void)
             }
 
             if (IsKeyPressed(KEY_ESCAPE)) {
-                if (isHosting) { host_stop(); isHosting = false; }
-                net_client_disconnect(&netClient);
-                isMultiplayer = false;
-                unitCount = 0;
-                memset(plazaData, 0, sizeof(plazaData));
-                PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
-                plazaState = PLAZA_ROAMING;
-                phase = PHASE_PLAZA;
+                showEscMenu = !showEscMenu;
             }
         }
         //------------------------------------------------------------------------------
@@ -1741,6 +1831,7 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_PREP)
         {
+            if (IsKeyPressed(KEY_ESCAPE)) { if (showHelp) showHelp = false; else showEscMenu = !showEscMenu; }
             // --- Multiplayer: poll network and handle server messages ---
             if (isMultiplayer) {
                 net_client_poll(&netClient);
@@ -1925,7 +2016,7 @@ int main(void)
             }
 
             // Clicks (blocked during intro)
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE)
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE && !showEscMenu && !showHelp)
             {
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
@@ -2522,6 +2613,7 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_COMBAT)
         {
+            if (IsKeyPressed(KEY_ESCAPE)) { if (showHelp) showHelp = false; else showEscMenu = !showEscMenu; }
             // Fixed-timestep accumulator for multiplayer to match server's 1/60s tick
             if (isMultiplayer) {
                 combatAccum += dt;
@@ -2539,6 +2631,12 @@ int main(void)
                 dt = 1.0f / 60.0f;
                 combatAccum -= dt;
                 if (combatAccum > 4.0f * dt) combatAccum = 4.0f * dt; // prevent spiral
+            }
+            // Pause combat in single-player when ESC menu is open
+            if (showEscMenu && !isMultiplayer) {
+                UpdateParticles(particles, dt);
+                UpdateFloatingTexts(floatingTexts, dt);
+                goto combat_skip;
             }
             combatElapsedTime += dt;
 
@@ -2677,7 +2775,7 @@ int main(void)
                             SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
 
                             if (units[ti].currentHealth <= 0) {
-                                PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                PlaySound(dieSfxByType[units[ti].typeIndex]);
                                 SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
                                 TriggerShake(&shake, 6.0f, 0.3f);
 
@@ -2718,7 +2816,7 @@ int main(void)
                             SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
 
                             if (units[ti].currentHealth <= 0) {
-                                PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                PlaySound(dieSfxByType[units[ti].typeIndex]);
                                 SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
                                 TriggerShake(&shake, 6.0f, 0.3f);
 
@@ -2776,7 +2874,7 @@ int main(void)
                                 }
                             }
                             if (units[ti].currentHealth <= 0) {
-                                PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                PlaySound(dieSfxByType[units[ti].typeIndex]);
                                 SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
                                 TriggerShake(&shake, 4.0f, 0.2f);
                                 { Team killerTeam = (units[ti].team == TEAM_BLUE) ? TEAM_RED : TEAM_BLUE;
@@ -2816,7 +2914,7 @@ int main(void)
                             TriggerShake(&shake, 5.0f, 0.25f);
                         }
                         if (units[ti].currentHealth <= 0) {
-                            PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                            PlaySound(dieSfxByType[units[ti].typeIndex]);
                             SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
                             TriggerShake(&shake, 6.0f, 0.3f);
                             killCount++; multiKillCount++; multiKillTimer = 2.0f;
@@ -3029,7 +3127,7 @@ int main(void)
                     }
                     if (castThisFrame) {
                         PlaySound(sfxMagicHit);
-                        PlaySound(units[i].typeIndex == 0 ? sfxToadShout : sfxGoblinShout);
+                        PlaySound(shoutSfxByType[units[i].typeIndex]);
                         SpawnFloatingText(floatingTexts, units[i].position,
                             def->name, def->color, 1.0f);
                         BattleLogAddCast(&battleLog, combatElapsedTime, units[i].team, units[i].typeIndex, slot->abilityId);
@@ -3079,7 +3177,7 @@ int main(void)
                                     SpawnDamageNumber(floatingTexts, units[j].position, dmgHit, true);
         
                                     if (units[j].currentHealth <= 0) {
-                                        PlaySound(units[j].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                        PlaySound(dieSfxByType[units[j].typeIndex]);
                                         SpawnDeathExplosion(particles, units[j].position, units[j].team);
                                         TriggerShake(&shake, 6.0f, 0.3f);
         
@@ -3257,7 +3355,7 @@ int main(void)
                                 }
                             }
                             if (units[target].currentHealth <= 0) {
-                                PlaySound(units[target].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
+                                PlaySound(dieSfxByType[units[target].typeIndex]);
                                 SpawnDeathExplosion(particles, units[target].position, units[target].team);
                                 TriggerShake(&shake, 6.0f, 0.3f);
 
@@ -3534,7 +3632,8 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_MILESTONE)
         {
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (IsKeyPressed(KEY_ESCAPE)) { if (showHelp) showHelp = false; else showEscMenu = !showEscMenu; }
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !showEscMenu && !showHelp) {
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
@@ -3617,13 +3716,14 @@ int main(void)
         {
             // Multiplayer: press R, ESC, or click EXIT button to return to menu
             bool mpExitClicked = false;
-            if (isMultiplayer && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (isMultiplayer && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !showEscMenu && !showHelp) {
                 int exW = 180, exH = 44;
                 int exSw = GetScreenWidth(), exSh = GetScreenHeight();
                 Rectangle exBtn = { (float)(exSw/2 - exW/2), (float)(exSh/2 + 70), (float)exW, (float)exH };
                 if (CheckCollisionPointRec(GetMousePosition(), exBtn)) mpExitClicked = true;
             }
-            if (isMultiplayer && (IsKeyPressed(KEY_R) || IsKeyPressed(KEY_ESCAPE) || mpExitClicked)) {
+            if (IsKeyPressed(KEY_ESCAPE)) { if (showHelp) showHelp = false; else showEscMenu = !showEscMenu; }
+            if (isMultiplayer && (IsKeyPressed(KEY_R) || mpExitClicked)) {
                 if (isHosting) { host_stop(); isHosting = false; }
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
@@ -3651,7 +3751,7 @@ int main(void)
             }
 
             // Solo: existing game over logic
-            if (!isMultiplayer && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !deathPenalty) {
+            if (!isMultiplayer && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !deathPenalty && !showEscMenu && !showHelp) {
                 Vector2 mouse = GetMousePosition();
                 int sw = GetScreenWidth();
                 int sh = GetScreenHeight();
@@ -4918,10 +5018,11 @@ int main(void)
             if (isMultiplayer) {
                 const char *youLabel = TextFormat("YOU (%s): %d", playerName, blueWins);
                 const char *oppLabel = TextFormat("OPP (%s): %d", netClient.opponentName[0] ? netClient.opponentName : "???", redWins);
-                int youW = GameMeasureText(youLabel, 18);
-                int oppW = GameMeasureText(oppLabel, 18);
-                GameDrawText(youLabel, sw/2 - youW - 10, 35, 18, DARKBLUE);
-                GameDrawText(oppLabel, sw/2 + 10, 35, 18, MAROON);
+                int mpNameSz = S(16);
+                int youW = GameMeasureText(youLabel, mpNameSz);
+                int oppW = GameMeasureText(oppLabel, mpNameSz);
+                GameDrawText(youLabel, sw/2 - youW - 10, S(36), mpNameSz, DARKBLUE);
+                GameDrawText(oppLabel, sw/2 + 10, S(36), mpNameSz, MAROON);
                 (void)oppW;
             }
 
@@ -5257,8 +5358,11 @@ int main(void)
                         Color starColor = (units[ui].rarity == RARITY_LEGENDARY)
                             ? (Color){ 255, 60, 60, 255 }
                             : (Color){ 180, 100, 255, 255 };
-                        GameDrawText(stars, cardX + S(4) + (hudPortraitSize - starsW)/2,
-                                 cardsY + S(4) + hudPortraitSize - S(4), S(10), starColor);
+                        int starsX = cardX + S(4) + (hudPortraitSize - starsW)/2;
+                        int starsY = cardsY + S(4) + hudPortraitSize - S(4);
+                        GameDrawText(stars, starsX, starsY, S(10), starColor);
+                        const char *multLabel = (units[ui].rarity == RARITY_LEGENDARY) ? "x1.3" : "x1.1";
+                        GameDrawText(multLabel, starsX + starsW + S(2), starsY, S(8), starColor);
                     }
 
                     // Mini health bar
@@ -5274,6 +5378,17 @@ int main(void)
                     Color hpCol = (hpRatio > 0.5f) ? GREEN : (hpRatio > 0.25f) ? ORANGE : RED;
                     DrawRectangle(hbX, hbY, (int)(hbW * hpRatio), hbH, hpCol);
                     DrawRectangleLines(hbX, hbY, hbW, hbH, (Color){ 60, 60, 80, 255 });
+
+                    // Concise stat line below health bar
+                    {
+                        int effHP = (int)(stats->health * units[ui].hpMultiplier);
+                        int effDMG = (int)(stats->attackDamage * units[ui].dmgMultiplier);
+                        int effSPD = (int)(stats->movementSpeed);
+                        const char *statLine = TextFormat("%d HP  %d DMG  %d SPD", effHP, effDMG, effSPD);
+                        int statFsz = S(8);
+                        int statW = GameMeasureText(statLine, statFsz);
+                        GameDrawText(statLine, hbX + (hbW - statW) / 2, hbY + hbH + S(2), statFsz, (Color){160,160,180,255});
+                    }
 
                     // 2x2 Ability slot grid (right side of card)
                     int abilStartX = cardX + hudPortraitSize + 12;
@@ -6709,6 +6824,194 @@ int main(void)
             DrawText("-/=: vignetteSoftness", 10, oy, 10, GRAY);
         }
 
+        // ---- Help Overlay ----
+        if (showHelp)
+        {
+            int hsw = GetScreenWidth(), hsh = GetScreenHeight();
+            DrawRectangle(0, 0, hsw, hsh, (Color){0,0,0,160});
+
+            int hpW = S(420), hpH = S(380);
+            int hpX = hsw/2 - hpW/2;
+            int hpY = hsh/2 - hpH/2;
+            DrawRectangle(hpX, hpY, hpW, hpH, (Color){24,24,32,240});
+            DrawRectangleLinesEx((Rectangle){(float)hpX,(float)hpY,(float)hpW,(float)hpH}, 2, (Color){100,100,130,255});
+
+            const char *helpTitle = "CONTROLS";
+            int httw = GameMeasureText(helpTitle, S(22));
+            GameDrawText(helpTitle, hpX + hpW/2 - httw/2, hpY + S(10), S(22), (Color){200,180,255,255});
+
+            int lx = hpX + S(20), ly = hpY + S(44);
+            int fsz = S(13), gap = S(20);
+            Color kc = (Color){120,200,255,255}, dc = (Color){200,200,220,255};
+            GameDrawText("Mouse", lx, ly, fsz, kc); GameDrawText("Place / drag units", lx + S(110), ly, fsz, dc); ly += gap;
+            GameDrawText("1-5", lx, ly, fsz, kc); GameDrawText("Buy shop slot", lx + S(110), ly, fsz, dc); ly += gap;
+            GameDrawText("D", lx, ly, fsz, kc); GameDrawText("Reroll shop", lx + S(110), ly, fsz, dc); ly += gap;
+            GameDrawText("Space", lx, ly, fsz, kc); GameDrawText("Start combat / skip", lx + S(110), ly, fsz, dc); ly += gap;
+            GameDrawText("L", lx, ly, fsz, kc); GameDrawText("Lock/unlock shop", lx + S(110), ly, fsz, dc); ly += gap;
+            GameDrawText("H", lx, ly, fsz, kc); GameDrawText("Toggle this help", lx + S(110), ly, fsz, dc); ly += gap;
+            GameDrawText("ESC", lx, ly, fsz, kc); GameDrawText("Settings menu", lx + S(110), ly, fsz, dc); ly += gap;
+            GameDrawText("F1", lx, ly, fsz, kc); GameDrawText("Debug mode", lx + S(110), ly, fsz, dc); ly += gap;
+            GameDrawText("F11", lx, ly, fsz, kc); GameDrawText("Toggle fullscreen", lx + S(110), ly, fsz, dc); ly += gap;
+
+            // Close hint
+            ly += S(6);
+            const char *closeHint = "Press H or ESC to close";
+            int chw = GameMeasureText(closeHint, S(11));
+            GameDrawText(closeHint, hpX + hpW/2 - chw/2, ly, S(11), (Color){140,140,160,255});
+        }
+
+        // ---- Escape Menu Overlay ----
+        if (showEscMenu)
+        {
+            int esw = GetScreenWidth(), esh = GetScreenHeight();
+            DrawRectangle(0, 0, esw, esh, (Color){0,0,0,140});
+
+            int panelW = S(400), panelH = S(390);
+            int panelX = esw/2 - panelW/2;
+            int panelY = esh/2 - panelH/2;
+            DrawRectangle(panelX, panelY, panelW, panelH, (Color){24,24,32,240});
+            DrawRectangleLinesEx((Rectangle){(float)panelX,(float)panelY,(float)panelW,(float)panelH}, 2, (Color){100,100,130,255});
+
+            const char *escTitle = "SETTINGS";
+            int esctw = GameMeasureText(escTitle, S(24));
+            GameDrawText(escTitle, panelX + panelW/2 - esctw/2, panelY + S(10), S(24), (Color){200,180,255,255});
+
+            // Close (X) button
+            Rectangle escCloseBtn = { (float)(panelX + panelW - S(36)), (float)(panelY + S(4)), (float)S(32), (float)S(32) };
+            Color escCloseBg = (Color){180,50,50,200};
+            if (CheckCollisionPointRec(GetMousePosition(), escCloseBtn))
+                escCloseBg = (Color){230,70,70,255};
+            DrawRectangleRec(escCloseBtn, escCloseBg);
+            GameDrawText("X", (int)(escCloseBtn.x + S(10)), (int)(escCloseBtn.y + S(7)), S(18), WHITE);
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), escCloseBtn)) {
+                SaveSettings(musicVolume, sfxVolume, isFullscreen, playerName);
+                showEscMenu = false;
+            }
+
+            // --- Music Volume Slider ---
+            GameDrawText("Music Volume", panelX + S(20), panelY + S(50), S(16), WHITE);
+            int sliderX = panelX + S(20);
+            int sliderW = panelW - S(100);
+            int sliderH = S(16);
+            int musicSliderY = panelY + S(70);
+            Rectangle musicTrack = { (float)sliderX, (float)musicSliderY, (float)sliderW, (float)sliderH };
+            DrawRectangleRec(musicTrack, (Color){40,40,55,255});
+            DrawRectangle(sliderX, musicSliderY, (int)(sliderW * musicVolume), sliderH, (Color){80,160,255,255});
+            DrawRectangleLinesEx(musicTrack, 1, (Color){100,100,130,255});
+            GameDrawText(TextFormat("%d%%", (int)(musicVolume * 100)), sliderX + sliderW + S(8), musicSliderY, S(14), WHITE);
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                Rectangle expanded = { musicTrack.x, musicTrack.y - 5, musicTrack.width, musicTrack.height + 10 };
+                if (CheckCollisionPointRec(GetMousePosition(), expanded)) {
+                    musicVolume = (GetMousePosition().x - musicTrack.x) / musicTrack.width;
+                    if (musicVolume < 0) musicVolume = 0;
+                    if (musicVolume > 1) musicVolume = 1;
+                    SetMusicVolume(bgm, musicVolume);
+                }
+            }
+
+            // --- SFX Volume Slider ---
+            GameDrawText("SFX Volume", panelX + S(20), panelY + S(105), S(16), WHITE);
+            int sfxSliderY = panelY + S(125);
+            Rectangle sfxTrack = { (float)sliderX, (float)sfxSliderY, (float)sliderW, (float)sliderH };
+            DrawRectangleRec(sfxTrack, (Color){40,40,55,255});
+            DrawRectangle(sliderX, sfxSliderY, (int)(sliderW * sfxVolume), sliderH, (Color){80,160,255,255});
+            DrawRectangleLinesEx(sfxTrack, 1, (Color){100,100,130,255});
+            GameDrawText(TextFormat("%d%%", (int)(sfxVolume * 100)), sliderX + sliderW + S(8), sfxSliderY, S(14), WHITE);
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                Rectangle expanded = { sfxTrack.x, sfxTrack.y - 5, sfxTrack.width, sfxTrack.height + 10 };
+                if (CheckCollisionPointRec(GetMousePosition(), expanded)) {
+                    sfxVolume = (GetMousePosition().x - sfxTrack.x) / sfxTrack.width;
+                    if (sfxVolume < 0) sfxVolume = 0;
+                    if (sfxVolume > 1) sfxVolume = 1;
+                    for (int si = 0; si < sfxCount; si++)
+                        SetSoundVolume(allSfx[si], sfxBaseVol[si] * sfxVolume);
+                }
+            }
+
+            // --- Fullscreen Checkbox ---
+            int checkY = panelY + S(160);
+            Rectangle checkBox = { (float)(panelX + S(20)), (float)checkY, (float)S(20), (float)S(20) };
+            DrawRectangleRec(checkBox, (Color){40,40,55,255});
+            DrawRectangleLinesEx(checkBox, 1, (Color){100,100,130,255});
+            if (isFullscreen) {
+                DrawRectangle(panelX + S(24), checkY + S(4), S(12), S(12), (Color){80,160,255,255});
+            }
+            GameDrawText("Fullscreen (F11)", panelX + S(48), checkY + S(2), S(16), WHITE);
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), checkBox)) {
+                ToggleBorderlessWindowed();
+                isFullscreen = !isFullscreen;
+            }
+
+            // --- Quit / Disconnect Button ---
+            int quitBtnW = panelW - S(60), quitBtnH = S(36);
+            int quitBtnX = panelX + panelW/2 - quitBtnW/2;
+            int quitBtnY = panelY + S(210);
+            Rectangle quitBtn = { (float)quitBtnX, (float)quitBtnY, (float)quitBtnW, (float)quitBtnH };
+            Color quitBg = (Color){160,50,50,220};
+            if (CheckCollisionPointRec(GetMousePosition(), quitBtn))
+                quitBg = (Color){210,60,60,255};
+            DrawRectangleRec(quitBtn, quitBg);
+            DrawRectangleLinesEx(quitBtn, 1, (Color){100,100,130,255});
+            const char *quitText = isMultiplayer ? "DISCONNECT" : "QUIT GAME";
+            int qtw = GameMeasureText(quitText, S(18));
+            GameDrawText(quitText, quitBtnX + quitBtnW/2 - qtw/2, quitBtnY + S(8), S(18), WHITE);
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), quitBtn)) {
+                SaveSettings(musicVolume, sfxVolume, isFullscreen, playerName);
+                if (isMultiplayer) {
+                    if (isHosting) { host_stop(); isHosting = false; }
+                    net_client_disconnect(&netClient);
+                    isMultiplayer = false;
+                    unitCount = 0;
+                    memset(plazaData, 0, sizeof(plazaData));
+                    PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
+                    plazaState = PLAZA_ROAMING;
+                    phase = PHASE_PLAZA;
+                    showEscMenu = false;
+                } else {
+                    showEscMenu = false;
+                    break; // exit game loop
+                }
+            }
+
+            // --- Help Button ---
+            {
+                int helpBtnW = panelW - S(60), helpBtnH = S(36);
+                int helpBtnX = panelX + panelW/2 - helpBtnW/2;
+                int helpBtnY = panelY + S(265);
+                Rectangle helpBtn = { (float)helpBtnX, (float)helpBtnY, (float)helpBtnW, (float)helpBtnH };
+                Color helpBg = (Color){60,60,120,220};
+                if (CheckCollisionPointRec(GetMousePosition(), helpBtn))
+                    helpBg = (Color){80,80,170,255};
+                DrawRectangleRec(helpBtn, helpBg);
+                DrawRectangleLinesEx(helpBtn, 1, (Color){100,100,130,255});
+                const char *helpText = "HELP (H)";
+                int htw = GameMeasureText(helpText, S(18));
+                GameDrawText(helpText, helpBtnX + helpBtnW/2 - htw/2, helpBtnY + S(8), S(18), WHITE);
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), helpBtn)) {
+                    showHelp = true;
+                    showEscMenu = false;
+                }
+            }
+
+            // --- Resume Button ---
+            int resBtnW = panelW - S(60), resBtnH = S(36);
+            int resBtnX = panelX + panelW/2 - resBtnW/2;
+            int resBtnY = panelY + S(320);
+            Rectangle resBtn = { (float)resBtnX, (float)resBtnY, (float)resBtnW, (float)resBtnH };
+            Color resBg = (Color){50,120,80,220};
+            if (CheckCollisionPointRec(GetMousePosition(), resBtn))
+                resBg = (Color){60,160,100,255};
+            DrawRectangleRec(resBtn, resBg);
+            DrawRectangleLinesEx(resBtn, 1, (Color){100,100,130,255});
+            const char *resText = "RESUME";
+            int rtw = GameMeasureText(resText, S(18));
+            GameDrawText(resText, resBtnX + resBtnW/2 - rtw/2, resBtnY + S(8), S(18), WHITE);
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), resBtn)) {
+                SaveSettings(musicVolume, sfxVolume, isFullscreen, playerName);
+                showEscMenu = false;
+            }
+        }
+
         DrawFPS(10, 10);
         EndDrawing();
     }
@@ -6787,6 +7090,10 @@ int main(void)
     UnloadSound(sfxToadDie);
     UnloadSound(sfxGoblinShout);
     UnloadSound(sfxGoblinDie);
+    UnloadSound(sfxDevilShout);
+    UnloadSound(sfxDevilDie);
+    UnloadSound(sfxLizardShout);
+    UnloadSound(sfxLizardDie);
     UnloadSound(sfxCharacterFall);
     UnloadSound(sfxCharacterLand);
     UnloadSound(sfxNewCharacter);
