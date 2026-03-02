@@ -1218,7 +1218,11 @@ int main(void)
                 if (KeyRepeat(KEY_D, dt, &envKeyTimers[3])) envPieces[envSelectedPiece].position.x += 1.0f;
                 if (KeyRepeat(KEY_RIGHT_BRACKET, dt, &envKeyTimers[6])) envPieces[envSelectedPiece].scale += 0.1f;
                 if (KeyRepeat(KEY_LEFT_BRACKET, dt, &envKeyTimers[7])) {
-                    envPieces[envSelectedPiece].scale -= 0.1f;
+                    if (envPieces[envSelectedPiece].scale <= 1.0f) {
+                        envPieces[envSelectedPiece].scale -= 0.05f;
+                    } else {
+                        envPieces[envSelectedPiece].scale -= 0.1f;
+                    }
                     if (envPieces[envSelectedPiece].scale < 0.1f) envPieces[envSelectedPiece].scale = 0.1f;
                 }
                 if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE)) {
@@ -1817,7 +1821,7 @@ int main(void)
                                 fprintf(fp, "# modelIndex x y z rotationX rotationY rotationZ scale\n");
                                 for (int pi = 0; pi < envPieceCount; pi++) {
                                     if (!envPieces[pi].active) continue;
-                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f %.1f %.1f\n",
+                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f %.1f %.2f\n",
                                             envPieces[pi].modelIndex,
                                             envPieces[pi].position.x, envPieces[pi].position.y,
                                             envPieces[pi].position.z,
@@ -2417,7 +2421,7 @@ int main(void)
                                 fprintf(fp, "# modelIndex x y z rotationX rotationY rotationZ scale\n");
                                 for (int pi = 0; pi < envPieceCount; pi++) {
                                     if (!envPieces[pi].active) continue;
-                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f %.1f %.1f\n",
+                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f %.1f %.2f\n",
                                             envPieces[pi].modelIndex,
                                             envPieces[pi].position.x, envPieces[pi].position.y,
                                             envPieces[pi].position.z,
@@ -4992,7 +4996,7 @@ int main(void)
                         GameDrawText(TextFormat("%s  [X:%.1f Y:%.1f Z:%.1f]", infoName,
                                  sp->position.x, sp->position.y, sp->position.z),
                                  envColX, infoY, 12, WHITE);
-                        GameDrawText(TextFormat("RotX: %.0f  Y: %.0f  Z: %.0f  Scale: %.1fx",
+                        GameDrawText(TextFormat("RotX: %.0f  Y: %.0f  Z: %.0f  Scale: %.2fx",
                                  sp->rotationX, sp->rotationY, sp->rotationZ, sp->scale),
                                  envColX, infoY + 14, 12, WHITE);
                         GameDrawText("[Q/E] RotY  [X/C] RotX  [\\/ Z] RotZ  [R/F] Y  [[ / ]] Scale  [DEL] Remove", envColX, infoY + 28, 10, (Color){180,180,180,200});
