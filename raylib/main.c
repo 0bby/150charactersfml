@@ -1832,7 +1832,8 @@ int main(void)
                 }
 
                 // Env piece 3D picking (plaza, debug mode)
-                if (!plazaClickedBtn) {
+                bool mouseOnDebugSliders = debugMode && mouse.x < 280 && mouse.y < 210;
+                if (!plazaClickedBtn && !mouseOnDebugSliders) {
                     int dHudTop2 = sh - hudTotalH;
                     if (mouse.y < dHudTop2) {
                         Ray envRay = GetScreenToWorldRay(mouse, camera);
@@ -2566,7 +2567,8 @@ int main(void)
                     if (!hitAny) for (int j = 0; j < unitCount; j++) units[j].selected = false;
 
                     // Env piece 3D picking (debug mode, only if no unit was hit)
-                    if (!hitAny && debugMode) {
+                    bool mouseOnDebugSliders = mouse.x < 280 && mouse.y < 210;
+                    if (!hitAny && debugMode && !mouseOnDebugSliders) {
                         Ray envRay = GetScreenToWorldRay(mouse, camera);
                         float closestDist = 1e9f;
                         int closestIdx = -1;
@@ -4206,6 +4208,8 @@ int main(void)
         // Render 3D scene into offscreen texture (for SSAO post-process)
         BeginTextureMode(sceneRT);
         ClearBackground((Color){ 45, 40, 35, 255 });
+        // significantly reduces z-fighting. remove if stuff is clipping near or far
+        rlSetClipPlanes(0.05f, 500.0f);
         BeginMode3D(camera);
             // Draw tiled floor (bind normal map for tiles)
             rlActiveTextureSlot(3);
