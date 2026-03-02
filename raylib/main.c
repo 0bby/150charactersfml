@@ -6115,7 +6115,7 @@ int main(void)
             int tw = GameMeasureText(title, titleSize);
             GameDrawText(title, msw/2 - tw/2, 60, titleSize, (Color){200, 180, 255, 220});
 
-            const char *subtitle = "Scan a figure to begin";
+            const char *subtitle = "Select a hero to begin";
             int subSize = 32;
             int sw2 = GameMeasureText(subtitle, subSize);
             GameDrawText(subtitle, msw/2 - sw2/2, 140, subSize, (Color){160,140,200,160});
