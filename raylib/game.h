@@ -199,6 +199,8 @@ typedef struct {
     float shieldHP;        // absorbs damage before HP (blue bar visual)
     float abilityCastDelay; // 0.75s delay between successive ability casts
     int   chargeTarget;    // Primal Charge: target unit index (-1 = not charging)
+    Vector3 hookPullDest;  // Hook: destination to pull towards
+    float hookPullSpeed;   // Hook: pull speed (0 = not being pulled)
     float hitFlash;        // >0 = flash white on damage (decays to 0)
     float castPause;       // >0 = frozen after casting projectile ability
     float attackAnimTimer; // >0 = playing attack animation (counts down)

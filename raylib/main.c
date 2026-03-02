@@ -640,6 +640,7 @@ int main(void)
     bool usedShopHotkey = false;  // hides hotkey hint after first use
     bool usedRollHotkey = false;  // hides roll hint after first use
     bool hasDraggedUnit = false;  // hides drag hint after first drag
+    char waveUpgradeText[128] = "";  // describes what changed this wave
 
     // Synergy hover tooltip state
     int hoverSynergyIdx = -1;
@@ -1568,6 +1569,7 @@ int main(void)
                     rollCost = rollCostBase;
                     dragState.dragging = false;
                     SpawnWave(units, &unitCount, 0, unitTypeCount);
+                    waveUpgradeText[0] = '\0';
                     phase = PHASE_PREP;
                 }
             }
@@ -2881,7 +2883,7 @@ int main(void)
                             }
                         }
                     }
-                    // HIT — Hook: pull target to caster, damage by distance
+                    // HIT — Hook: damage by distance, then pull target to caster
                     if (projectiles[p].type == PROJ_HOOK) {
                         if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
                             float hookDist = DistXZ(units[ti].position, units[projectiles[p].sourceIndex].position);
@@ -2894,10 +2896,6 @@ int main(void)
                             units[ti].hitFlash = HIT_FLASH_DURATION;
                             SpawnDamageNumber(floatingTexts, units[ti].position, hitDmg, true);
 
-                            // Teleport target to caster
-                            units[ti].position.x = units[projectiles[p].sourceIndex].position.x;
-                            units[ti].position.z = units[projectiles[p].sourceIndex].position.z;
-                            TriggerShake(&shake, 6.0f, 0.3f);
                             if (units[ti].currentHealth <= 0) {
                                 PlaySound(units[ti].typeIndex == 0 ? sfxToadDie : sfxGoblinDie);
                                 SpawnDeathExplosion(particles, units[ti].position, units[ti].team);
@@ -2917,6 +2915,11 @@ int main(void)
                                 if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
                                 BattleLogAddKill(&battleLog, combatElapsedTime, units[projectiles[p].sourceIndex].team, units[projectiles[p].sourceIndex].typeIndex, units[ti].team, units[ti].typeIndex, ABILITY_HOOK);
                                 units[ti].active = false;
+                            } else {
+                                // Start pulling target to caster
+                                units[ti].hookPullDest = units[projectiles[p].sourceIndex].position;
+                                units[ti].hookPullSpeed = projectiles[p].speed;
+                                AddModifier(modifiers, ti, MOD_STUN, 10.0f, 0); // stun during pull (cleared on arrival)
                             }
                         }
                         projectiles[p].active = false;
@@ -3122,6 +3125,30 @@ int main(void)
                             CheckPassiveSunder(&combatState, i);
                         }
                     }
+                }
+
+                // Hook pull movement — drag unit toward hook destination
+                if (units[i].hookPullSpeed > 0) {
+                    float hdx = units[i].hookPullDest.x - units[i].position.x;
+                    float hdz = units[i].hookPullDest.z - units[i].position.z;
+                    float hlen = sqrtf(hdx*hdx + hdz*hdz);
+                    float hstep = units[i].hookPullSpeed * dt;
+                    if (hlen <= hstep) {
+                        // Arrived at destination
+                        units[i].position.x = units[i].hookPullDest.x;
+                        units[i].position.z = units[i].hookPullDest.z;
+                        units[i].hookPullSpeed = 0;
+                        TriggerShake(&shake, 6.0f, 0.3f);
+                        // Remove the pull stun
+                        for (int m = 0; m < MAX_MODIFIERS; m++) {
+                            if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_STUN)
+                                modifiers[m].active = false;
+                        }
+                    } else {
+                        units[i].position.x += (hdx/hlen) * hstep;
+                        units[i].position.z += (hdz/hlen) * hstep;
+                    }
+                    continue; // skip normal movement while being pulled
                 }
 
                 bool digging = UnitHasModifier(modifiers, i, MOD_DIG_HEAL);
@@ -3677,6 +3704,21 @@ int main(void)
                     ClearAllFissures(fissures);
                     ClearRedUnits(units, &unitCount);
                     SpawnWave(units, &unitCount, currentRound, unitTypeCount);
+                    // Generate wave upgrade description
+                    if (currentRound < TOTAL_ROUNDS) {
+                        switch (currentRound) {
+                            case 1: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, each with 1 ability"); break;
+                            case 2: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemies now have 2 abilities"); break;
+                            case 3: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, abilities leveled up"); break;
+                            case 4: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "BOSS ROUND!"); break;
+                            default: waveUpgradeText[0] = '\0'; break;
+                        }
+                    } else {
+                        int extraR = currentRound - TOTAL_ROUNDS;
+                        int roll = ((extraR * 7 + 13) * 31) % 100;
+                        if (roll < 50) snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy unit");
+                        else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
+                    }
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0);
                     rollCost = rollCostBase;
@@ -3748,6 +3790,21 @@ int main(void)
                 if (CheckCollisionPointRec(mouse, contBtn)) {
                     lastMilestoneRound = currentRound;
                     SpawnWave(units, &unitCount, currentRound, unitTypeCount);
+                    // Generate wave upgrade description
+                    if (currentRound < TOTAL_ROUNDS) {
+                        switch (currentRound) {
+                            case 1: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, each with 1 ability"); break;
+                            case 2: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemies now have 2 abilities"); break;
+                            case 3: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, abilities leveled up"); break;
+                            case 4: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "BOSS ROUND!"); break;
+                            default: waveUpgradeText[0] = '\0'; break;
+                        }
+                    } else {
+                        int extraR = currentRound - TOTAL_ROUNDS;
+                        int roll = ((extraR * 7 + 13) * 31) % 100;
+                        if (roll < 50) snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy unit");
+                        else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
+                    }
                     playerGold += goldPerRound;
                     RollShop(shopSlots, &playerGold, 0);
                     rollCost = rollCostBase;
@@ -4950,6 +5007,17 @@ int main(void)
                 }
                 int wlw = GameMeasureText(waveLabel, S(20));
                 GameDrawText(waveLabel, sw/2 - wlw/2, dBtnYStart - 25, S(20), WHITE);
+
+                // Wave upgrade description (shows what changed this round)
+                if (waveUpgradeText[0] != '\0') {
+                    int wuSz = S(14);
+                    int wuW = GameMeasureText(waveUpgradeText, wuSz);
+                    int wuX = sw / 2 - wuW / 2;
+                    int wuY = dBtnYStart - 25 + S(22);
+                    bool isBoss = (currentRound == 4);
+                    Color wuColor = isBoss ? (Color){255, 80, 80, 220} : (Color){255, 200, 100, 200};
+                    GameDrawText(waveUpgradeText, wuX, wuY, wuSz, wuColor);
+                }
 
                 // Drag hint (first round only, until player drags a unit)
                 if (currentRound == 0 && !hasDraggedUnit) {

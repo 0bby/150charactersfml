@@ -722,29 +722,29 @@ void CompactBlueUnits(Unit units[], int *unitCount)
 
 // Static wave definitions for rounds 1-5
 static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
-    // Round 1: 1 enemy, no abilities
+    // Round 1: 1 enemy, 1 weak ability
     { .count = 1, .entries = {
-        { .unitType = -1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.0f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
-    // Round 2: 2 enemies, no abilities, slightly tougher
+    // Round 2: 2 enemies, 1 ability each
     { .count = 2, .entries = {
-        { .unitType = 0, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.3f, .dmgMult = 1.1f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 0, .abilityLevel = 0, .hpMult = 1.3f, .dmgMult = 1.1f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.2f, .dmgMult = 1.0f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.2f, .dmgMult = 1.0f, .scaleMult = 1.0f },
     }},
-    // Round 3: 2 enemies with 1 ability each, beefier
+    // Round 3: 2 enemies, 2 abilities each
     { .count = 2, .entries = {
-        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.6f, .dmgMult = 1.3f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.6f, .dmgMult = 1.3f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.5f, .dmgMult = 1.2f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.5f, .dmgMult = 1.2f, .scaleMult = 1.0f },
     }},
-    // Round 4: 3 enemies, 1-2 abilities level 0-1, strong
+    // Round 4: 3 enemies, 2 abilities level 0-1
     { .count = 3, .entries = {
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 2.0f, .dmgMult = 1.5f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 1, .abilityLevel = 1, .hpMult = 2.0f, .dmgMult = 1.5f, .scaleMult = 1.0f },
-        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 2.0f, .dmgMult = 1.5f, .scaleMult = 1.0f },
+        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.8f, .dmgMult = 1.4f, .scaleMult = 1.0f },
+        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.8f, .dmgMult = 1.4f, .scaleMult = 1.0f },
+        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.8f, .dmgMult = 1.4f, .scaleMult = 1.0f },
     }},
     // Round 5: BOSS — single massive unit, 4 abilities all level 2
     { .count = 1, .entries = {
-        { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 7.2f, .dmgMult = 2.7f, .scaleMult = 2.5f },
+        { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 5.5f, .dmgMult = 2.0f, .scaleMult = 2.5f },
     }},
 };
 
@@ -771,12 +771,29 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
             }
         }
     } else {
-        // Infinite scaling (round 5+) — linear growth
+        // Infinite scaling (round 6+) — each wave randomly gets ONE bonus:
+        //   either +1 enemy unit, or +1 ability point (new ability or upgrade existing)
+        // We simulate accumulated choices using seeded random per-round.
         int extraRounds = round - TOTAL_ROUNDS;  // 0 for round 6, 1 for round 7, etc.
-        int enemyCount = 3 + (extraRounds + 1);
+        int bonusUnits = 0;
+        int abilityPoints = 0;
+        for (int r = 0; r <= extraRounds; r++) {
+            // Deterministic coin flip per wave so both clients agree
+            int roll = ((r * 7 + 13) * 31) % 100;
+            if (roll < 50) bonusUnits++;
+            else abilityPoints++;
+        }
+        int enemyCount = 3 + bonusUnits;
         if (enemyCount > MAX_WAVE_ENEMIES) enemyCount = MAX_WAVE_ENEMIES;
-        float hpScale = 2.0f + 0.5f * (float)(extraRounds + 1);
-        float dmgScale = 1.5f + 0.3f * (float)(extraRounds + 1);
+        // Distribute ability points: each point is either a new ability or a level-up
+        // numAb = how many ability slots filled, abLevel = base level for those
+        int numAb = 1 + abilityPoints / 2;
+        if (numAb > MAX_ABILITIES_PER_UNIT) numAb = MAX_ABILITIES_PER_UNIT;
+        int abLevel = (abilityPoints > 0) ? (abilityPoints - 1) / 2 : 0;
+        if (abLevel > ABILITY_MAX_LEVELS - 1) abLevel = ABILITY_MAX_LEVELS - 1;
+        // Stats scale gently
+        float hpScale = 2.0f + 0.3f * (float)(extraRounds + 1);
+        float dmgScale = 1.3f + 0.15f * (float)(extraRounds + 1);
         for (int e = 0; e < enemyCount; e++) {
             int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
             if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
@@ -786,9 +803,12 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
                 u->hpMultiplier = hpScale;
                 u->dmgMultiplier = dmgScale;
                 u->currentHealth = UNIT_STATS[type].health * hpScale;
-                int numAb = GetRandomValue(2, 4);
-                int abLevel = GetRandomValue(1, 2);
-                AssignAbilitiesAtLevel(u, numAb, abLevel);
+                // Slight per-unit randomness: some get +1 ability or +1 level
+                int unitAb = numAb + (GetRandomValue(0, 1) ? 1 : 0);
+                if (unitAb > MAX_ABILITIES_PER_UNIT) unitAb = MAX_ABILITIES_PER_UNIT;
+                int unitLvl = abLevel + (GetRandomValue(0, 2) == 0 ? 1 : 0);
+                if (unitLvl > ABILITY_MAX_LEVELS - 1) unitLvl = ABILITY_MAX_LEVELS - 1;
+                AssignAbilitiesAtLevel(u, unitAb, unitLvl);
             }
         }
     }
