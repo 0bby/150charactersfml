@@ -614,7 +614,7 @@ int main(void)
     const int rollCostBase = 1;
     const int rollCostIncrement = 1;
     ShopSlot shopSlots[MAX_SHOP_SLOTS];
-    for (int i = 0; i < MAX_SHOP_SLOTS; i++) shopSlots[i].abilityId = -1;
+    for (int i = 0; i < MAX_SHOP_SLOTS; i++) { shopSlots[i].abilityId = -1; shopSlots[i].locked = false; }
     InventorySlot inventory[MAX_INVENTORY_SLOTS];
     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
     DragState dragState = { 0 };
@@ -655,6 +655,7 @@ int main(void)
     // Battle log
     BattleLog battleLog = {0};
     float combatElapsedTime = 0.0f;
+    float combatAccum = 0.0f;
 
     // Plaza state
     PlazaSubState plazaState = PLAZA_ROAMING;
@@ -1056,6 +1057,7 @@ int main(void)
     int joinIpLen = 9;
     bool isHosting = false;
     bool waitingForOpponent = false;
+    bool opponentIsReady = false;
     char menuError[128] = {0};
     bool currentRoundIsPve = false;
 
@@ -1302,8 +1304,8 @@ int main(void)
             float tgtD = (plaza ? plazaDistance : (combat ? combatDistance : prepDistance)) * camScale;
             float tgtF = plaza ? plazaFOV : (combat ? combatFOV : prepFOV);
             float tgtX = plaza ? plazaX : (combat ? combatX : prepX);
-            // Mirror camera for player 2 during PVP combat
-            if (combat && isMultiplayer && netClient.playerSlot == 1 && !currentRoundIsPve) {
+            // Mirror camera for player 2 during PVP (prep + combat)
+            if (isMultiplayer && netClient.playerSlot == 1 && !currentRoundIsPve && !plaza) {
                 tgtX = -tgtX;
                 tgtD = -tgtD;
             }
@@ -1453,6 +1455,7 @@ int main(void)
                     } else if (plazaHoverObject == 2) {
                         PlaySound(sfxUiClick);
                         showMultiplayerPanel = true;
+                        net_trigger_firewall_prompt(NET_PORT);
                     }
                 }
             }
@@ -1717,6 +1720,7 @@ int main(void)
                 dragState.dragging = false;
                 playerReady = false;
                 waitingForOpponent = false;
+                opponentIsReady = false;
                 phase = PHASE_PREP;
             }
 
@@ -1761,6 +1765,7 @@ int main(void)
                 if (netClient.opponentReady) {
                     netClient.opponentReady = false;
                     waitingForOpponent = false;
+                    opponentIsReady = true;
                 }
                 // Combat started — server sends serialized units
                 if (netClient.combatStarted) {
@@ -1774,7 +1779,7 @@ int main(void)
                     fightBannerTimer = 0.0f;
                     killCount = 0; multiKillCount = 0; multiKillTimer = 0.0f; killFeedTimer = -1.0f;
                     slowmoTimer = 0.0f; slowmoScale = 1.0f;
-                    BattleLogClear(&battleLog); combatElapsedTime = 0.0f;
+                    BattleLogClear(&battleLog); combatElapsedTime = 0.0f; combatAccum = 0.0f;
                     ClearAllModifiers(modifiers);
                     ClearAllProjectiles(projectiles);
                     ClearAllParticles(particles);
@@ -1868,6 +1873,7 @@ int main(void)
                                             units[selUnit].abilities[a].level++;
                                             playerGold -= cost;
                                             shopSlots[s].abilityId = -1;
+                                            shopSlots[s].locked = false;
                                             placed = true;
                                             break;
                                         }
@@ -1880,6 +1886,7 @@ int main(void)
                                                 units[selUnit].abilities[a].level = shopSlots[s].level;
                                                 playerGold -= cost;
                                                 shopSlots[s].abilityId = -1;
+                                                shopSlots[s].locked = false;
                                                 placed = true;
                                                 break;
                                             }
@@ -1947,9 +1954,9 @@ int main(void)
                         units[ri].active = false;
                         removeConfirmUnit = -1;
                         clickedButton = true;
-                        // Check if all blue units removed → return to plaza
+                        // Check if all blue units removed → return to plaza (singleplayer only)
                         int blueLeft = CountTeamUnits(units, unitCount, TEAM_BLUE);
-                        if (blueLeft == 0) {
+                        if (blueLeft == 0 && !isMultiplayer) {
                             ClearRedUnits(units, &unitCount);
                             CompactBlueUnits(units, &unitCount);
                             memset(plazaData, 0, sizeof(plazaData));
@@ -1995,7 +2002,7 @@ int main(void)
                             fightBannerTimer = 0.0f;
                             killCount = 0; multiKillCount = 0; multiKillTimer = 0.0f; killFeedTimer = -1.0f;
                             slowmoTimer = 0.0f; slowmoScale = 1.0f;
-                            BattleLogClear(&battleLog); combatElapsedTime = 0.0f;
+                            BattleLogClear(&battleLog); combatElapsedTime = 0.0f; combatAccum = 0.0f;
                             ClearAllModifiers(modifiers);
                             ClearAllProjectiles(projectiles);
                             ClearAllParticles(particles);
@@ -2130,6 +2137,22 @@ int main(void)
                         clickedButton = true;
                     }
                 }
+                // --- Shop: Right-click to toggle lock ---
+                if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && !(isMultiplayer && playerReady)) {
+                    int shopY = hudTop + 2;
+                    int shopCardW = S(160), shopCardH = S(38), shopCardGap = 10;
+                    int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
+                    int shopCardsX = (sw - totalShopW) / 2;
+                    for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
+                        int scx = shopCardsX + s * (shopCardW + shopCardGap);
+                        Rectangle r = { (float)scx, (float)(shopY + 8), (float)shopCardW, (float)shopCardH };
+                        if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
+                            shopSlots[s].locked = !shopSlots[s].locked;
+                            PlaySound(sfxUiBuy);
+                            break;
+                        }
+                    }
+                }
                 // --- Shop: Buy ability card click ---
                 if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
@@ -2162,6 +2185,7 @@ int main(void)
                                                 units[selUnit].abilities[a].level++;
                                                 playerGold -= cost;
                                                 shopSlots[s].abilityId = -1;
+                                                shopSlots[s].locked = false;
                                                 placed = true;
                                                 break;
                                             }
@@ -2173,6 +2197,7 @@ int main(void)
                                                     units[selUnit].abilities[a].level = shopSlots[s].level;
                                                     playerGold -= cost;
                                                     shopSlots[s].abilityId = -1;
+                                                    shopSlots[s].locked = false;
                                                     placed = true;
                                                     break;
                                                 }
@@ -2395,6 +2420,14 @@ int main(void)
                                 units[ui].abilities[a].level = dragState.level;
                                 placed = true; break;
                             }
+                            // Combine: same ability => merge levels
+                            if (units[ui].abilities[a].abilityId == dragState.abilityId && dragState.abilityId >= 0) {
+                                int combined = dragState.level + units[ui].abilities[a].level + 1;
+                                if (combined > ABILITY_MAX_LEVELS - 1) combined = ABILITY_MAX_LEVELS - 1;
+                                units[ui].abilities[a].level = combined;
+                                PlaySound(sfxUiBuy);
+                                placed = true; break;
+                            }
                             // Swap
                             int oldId = units[ui].abilities[a].abilityId;
                             int oldLv = units[ui].abilities[a].level;
@@ -2429,6 +2462,14 @@ int main(void)
                             if (dragState.sourceType == 0 && dragState.sourceIndex == inv) {
                                 inventory[inv].abilityId = dragState.abilityId;
                                 inventory[inv].level = dragState.level;
+                                placed = true; break;
+                            }
+                            // Combine: same ability => merge levels
+                            if (inventory[inv].abilityId == dragState.abilityId && dragState.abilityId >= 0) {
+                                int combined = dragState.level + inventory[inv].level + 1;
+                                if (combined > ABILITY_MAX_LEVELS - 1) combined = ABILITY_MAX_LEVELS - 1;
+                                inventory[inv].level = combined;
+                                PlaySound(sfxUiBuy);
                                 placed = true; break;
                             }
                             int oldId = inventory[inv].abilityId;
@@ -2480,6 +2521,24 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_COMBAT)
         {
+            // Fixed-timestep accumulator for multiplayer to match server's 1/60s tick
+            if (isMultiplayer) {
+                combatAccum += dt;
+                if (combatAccum < (1.0f / 60.0f)) {
+                    // Not enough time for a sim tick; update visual-only things
+                    UpdateParticles(particles, dt);
+                    UpdateFloatingTexts(floatingTexts, dt);
+                    combatElapsedTime += dt;
+                    // Still poll server for round result
+                    net_client_poll(&netClient);
+                    if (netClient.roundResultReady || netClient.gameOver)
+                        goto combat_check_end;
+                    goto combat_skip;
+                }
+                dt = 1.0f / 60.0f;
+                combatAccum -= dt;
+                if (combatAccum > 4.0f * dt) combatAccum = 4.0f * dt; // prevent spiral
+            }
             combatElapsedTime += dt;
 
             // === STEP 1: Tick modifiers ===
@@ -3286,6 +3345,7 @@ int main(void)
             }
 
             // Check round end
+            combat_check_end:
             if (isMultiplayer) {
                 // In multiplayer, poll for server result
                 net_client_poll(&netClient);
@@ -3364,6 +3424,7 @@ int main(void)
                     }
                 }
             }
+            combat_skip: (void)0;
         }
         //------------------------------------------------------------------------------
         // PHASE: ROUND_OVER — brief pause, then milestone/death/prep
@@ -3390,6 +3451,7 @@ int main(void)
                     ClearAllFissures(fissures);
                     playerReady = false;
                     waitingForOpponent = false;
+                    opponentIsReady = false;
                     phase = PHASE_PREP;
                 }
                 if (netClient.gameOver) {
@@ -3553,8 +3615,15 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_GAME_OVER)
         {
-            // Multiplayer: press R to return to menu
-            if (isMultiplayer && IsKeyPressed(KEY_R)) {
+            // Multiplayer: press R, ESC, or click EXIT button to return to menu
+            bool mpExitClicked = false;
+            if (isMultiplayer && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                int exW = 180, exH = 44;
+                int exSw = GetScreenWidth(), exSh = GetScreenHeight();
+                Rectangle exBtn = { (float)(exSw/2 - exW/2), (float)(exSh/2 + 70), (float)exW, (float)exH };
+                if (CheckCollisionPointRec(GetMousePosition(), exBtn)) mpExitClicked = true;
+            }
+            if (isMultiplayer && (IsKeyPressed(KEY_R) || IsKeyPressed(KEY_ESCAPE) || mpExitClicked)) {
                 if (isHosting) { host_stop(); isHosting = false; }
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
@@ -4394,7 +4463,7 @@ int main(void)
                 // Other active abilities: check for special radius values
                 switch (prevHoverAbilityId) {
                     case ABILITY_HOOK:          displayRadius = def->values[prevHoverAbilityLevel][AV_HK_RANGE]; break;
-                    case ABILITY_PRIMAL_CHARGE: displayRadius = def->values[prevHoverAbilityLevel][AV_PC_AOE_RADIUS]; break;
+                    case ABILITY_PRIMAL_CHARGE: break; // no range limit (targets furthest enemy)
                     default: break; // self-buff / no spatial component
                 }
             }
@@ -4449,18 +4518,20 @@ int main(void)
             const char *label = type->name;
             int nameFontSize = S(16);
             int tw = GameMeasureText(label, nameFontSize);
-            // Drop shadow for readability
-            GameDrawText(label, (int)sp.x - tw/2 + 1, (int)sp.y - S(14) + 1, nameFontSize, (Color){0,0,0,180});
+            // Dark background for readability
+            int bgPad = S(2);
+            DrawRectangle((int)sp.x - tw/2 - bgPad, (int)sp.y - S(14) - bgPad, tw + bgPad*2, nameFontSize + bgPad*2, (Color){0,0,0,120});
             GameDrawText(label, (int)sp.x - tw/2, (int)sp.y - S(14), nameFontSize,
                      (units[i].team == TEAM_BLUE) ? WHITE : (Color){255, 200, 200, 255});
 
-            // Health bar
+            // Health bar (hide for enemies in plaza/lobby)
+            int bw = S(44), bh = S(6);
+            int bx = (int)sp.x - bw/2, by = (int)sp.y + 4;
+            if (!((phase == PHASE_PLAZA || phase == PHASE_LOBBY) && units[i].team == TEAM_RED)) {
             float maxHP = stats->health * units[i].hpMultiplier;
             float hpRatio = units[i].currentHealth / maxHP;
             if (hpRatio < 0) hpRatio = 0;
             if (hpRatio > 1) hpRatio = 1;
-            int bw = S(44), bh = S(6);
-            int bx = (int)sp.x - bw/2, by = (int)sp.y + 4;
             DrawRectangle(bx, by, bw, bh, DARKGRAY);
             Color hpC = (hpRatio > 0.5f) ? GREEN : (hpRatio > 0.25f) ? ORANGE : RED;
             DrawRectangle(bx, by, (int)(bw * hpRatio), bh, hpC);
@@ -4479,6 +4550,7 @@ int main(void)
             int htw = GameMeasureText(hpT, S(12));
             GameDrawText(hpT, (int)sp.x - htw/2 + 1, by + bh + 2 + 1, S(12), (Color){0,0,0,180});
             GameDrawText(hpT, (int)sp.x - htw/2, by + bh + 2, S(12), WHITE);
+            }
 
             // Enemy ability grid (prep phase only, red team)
             if (phase == PHASE_PREP && units[i].team == TEAM_RED) {
@@ -4780,7 +4852,18 @@ int main(void)
                 }
                 int playFontSz = S(20);
                 int ptw = GameMeasureText(pt, playFontSz);
+                if (ptw > playBtnW - S(8)) { playFontSz = S(14); ptw = GameMeasureText(pt, playFontSz); }
                 GameDrawText(pt, dPlayBtn.x + (playBtnW - ptw)/2, dPlayBtn.y + (playBtnH - playFontSz)/2, playFontSz, WHITE);
+                // Opponent ready indicator
+                if (isMultiplayer && opponentIsReady) {
+                    const char *oppTxt = "OPPONENT READY";
+                    int oppFsz = S(14);
+                    int oppW = GameMeasureText(oppTxt, oppFsz);
+                    float oppPulse = 0.5f + 0.5f * sinf((float)GetTime() * 4.0f);
+                    unsigned char oppAlpha = (unsigned char)(180 + (int)(oppPulse * 75));
+                    GameDrawText(oppTxt, (int)(dPlayBtn.x + (playBtnW - oppW) / 2),
+                        (int)(dPlayBtn.y + playBtnH + S(6)), oppFsz, (Color){0,220,180,oppAlpha});
+                }
             }
         }
 
@@ -4790,7 +4873,11 @@ int main(void)
             int sh = GetScreenHeight();
             if (phase != PHASE_PLAZA) {
                 // Round indicator (large, top center)
-                const char *roundText = TextFormat("Wave %d", currentRound + 1);
+                // During GAME_OVER, currentRound was already incremented — show the wave we died/finished on
+                int displayRound = (phase == PHASE_GAME_OVER) ? currentRound : currentRound + 1;
+                const char *roundText = isMultiplayer
+                    ? TextFormat("Round %d", displayRound)
+                    : TextFormat("Wave %d", displayRound);
                 int roundSz = S(28);
                 int roundW = GameMeasureText(roundText, roundSz);
                 int roundX = sw / 2 - roundW / 2;
@@ -4949,7 +5036,9 @@ int main(void)
                     BattleLogEntry *e = &battleLog.entries[ei];
                     int drawY = entryY + (ei - startIdx) * lineH;
                     // Timestamp
-                    const char *ts = TextFormat("%d:%02d", (int)e->timestamp / 60, (int)e->timestamp % 60);
+                    const char *ts = (e->timestamp < 60.0f)
+                        ? TextFormat("%.1fs", e->timestamp)
+                        : TextFormat("%d:%02d", (int)e->timestamp / 60, (int)e->timestamp % 60);
                     GameDrawText(ts, blogX + S(4), drawY, S(12), (Color){140, 140, 140, 200});
                     // Icon
                     const char *icon = (e->type == BLOG_KILL) ? "X" : "*";
@@ -4964,17 +5053,21 @@ int main(void)
             else if (phase == PHASE_GAME_OVER)
             {
                 if (deathPenalty) {
+                    int titleFsz = S(34), subFsz = S(22), hintFsz = S(20);
+                    int totalH = titleFsz + S(12) + subFsz + S(16) + hintFsz;
+                    int startY = sh/2 - totalH/2;
+
                     const char *deathMsg = TextFormat("YOUR UNITS HAVE FALLEN - Wave %d", currentRound);
-                    int dw = GameMeasureText(deathMsg, S(34));
-                    GameDrawText(deathMsg, sw/2 - dw/2, sh/2 - 50, S(34), RED);
+                    int dw = GameMeasureText(deathMsg, titleFsz);
+                    GameDrawText(deathMsg, sw/2 - dw/2, startY, titleFsz, RED);
 
                     const char *deathSub = "Defeated! Your units are lost forever!";
-                    int dsw2 = GameMeasureText(deathSub, S(22));
-                    GameDrawText(deathSub, sw/2 - dsw2/2, sh/2 - 10, S(22), (Color){255,100,100,255});
+                    int dsw2 = GameMeasureText(deathSub, subFsz);
+                    GameDrawText(deathSub, sw/2 - dsw2/2, startY + titleFsz + S(12), subFsz, (Color){255,100,100,255});
 
                     const char *restartMsg = "Press R to return to menu";
-                    int rw2 = GameMeasureText(restartMsg, S(24));
-                    GameDrawText(restartMsg, sw/2 - rw2/2, sh/2 + 30, S(24), GRAY);
+                    int rw2 = GameMeasureText(restartMsg, hintFsz);
+                    GameDrawText(restartMsg, sw/2 - rw2/2, startY + titleFsz + S(12) + subFsz + S(16), hintFsz, GRAY);
                 }
                 // Non-death game over is drawn as a full overlay below
             }
@@ -5253,6 +5346,28 @@ int main(void)
                         GameDrawText(ordTxt, ax + hudAbilSlotSize - ordFsz + 1, ay + S(1) + 1, ordFsz, (Color){0,0,0,180});
                         GameDrawText(ordTxt, ax + hudAbilSlotSize - ordFsz, ay + S(1), ordFsz, orderCol);
                     }
+                    // Activation order arrows between slots (clockwise: TL>TR>BR>BL)
+                    {
+                        int arFsz = S(10);
+                        Color arCol = (Color){160,160,180,180};
+                        int step = hudAbilSlotSize + hudAbilSlotGap;
+                        // TL(0)->TR(1): right arrow between col 0 and col 1, row 0
+                        int arX = abilStartX + hudAbilSlotSize + (hudAbilSlotGap - GameMeasureText(">", arFsz)) / 2;
+                        int arY = abilStartY + (hudAbilSlotSize - arFsz) / 2;
+                        GameDrawText(">", arX, arY, arFsz, arCol);
+                        // TR(1)->BR(3): down arrow on right side, between row 0 and row 1
+                        arX = abilStartX + step + (hudAbilSlotSize - GameMeasureText("v", arFsz)) / 2;
+                        arY = abilStartY + hudAbilSlotSize + (hudAbilSlotGap - arFsz) / 2;
+                        GameDrawText("v", arX, arY, arFsz, arCol);
+                        // BR(3)->BL(2): left arrow between col 1 and col 0, row 1
+                        arX = abilStartX + hudAbilSlotSize + (hudAbilSlotGap - GameMeasureText("<", arFsz)) / 2;
+                        arY = abilStartY + step + (hudAbilSlotSize - arFsz) / 2;
+                        GameDrawText("<", arX, arY, arFsz, arCol);
+                        // BL(2)->TL(0): up arrow on left side, between row 1 and row 0
+                        arX = abilStartX + (hudAbilSlotSize - GameMeasureText("^", arFsz)) / 2 - hudAbilSlotSize / 2;
+                        arY = abilStartY + hudAbilSlotSize + (hudAbilSlotGap - arFsz) / 2;
+                        GameDrawText("^", arX, arY, arFsz, arCol);
+                    }
                 }
                 else
                 {
@@ -5526,7 +5641,10 @@ int main(void)
                         if (canAfford && shopHovered)
                             cardBg = (Color){ cardBg.r + 30, cardBg.g + 30, cardBg.b + 30, 255 };
                         DrawRectangle(scx, scy, shopCardW, shopCardH, cardBg);
-                        DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){90,90,110,255});
+                        if (shopSlots[s].locked)
+                            DrawRectangleLinesEx((Rectangle){(float)scx,(float)scy,(float)shopCardW,(float)shopCardH}, 2, (Color){0,220,220,255});
+                        else
+                            DrawRectangleLines(scx, scy, shopCardW, shopCardH, (Color){90,90,110,255});
                         const char *sname = TextFormat("%s %dg", sdef->name, sdef->goldCost);
                         int shopFontSz = S(14);
                         int snw = GameMeasureText(sname, shopFontSz);
@@ -5545,6 +5663,13 @@ int main(void)
                     // Keybind indicator
                     const char *keyLabel = TextFormat("[%d]", s + 1);
                     GameDrawText(keyLabel, scx + 2, scy + 2, S(12), (Color){255, 255, 220, 240});
+                    // Lock indicator
+                    if (shopSlots[s].locked) {
+                        const char *lockTxt = "LOCKED";
+                        int lkFsz = S(10);
+                        int lkW = GameMeasureText(lockTxt, lkFsz);
+                        GameDrawText(lockTxt, scx + shopCardW - lkW - 3, scy + 2, lkFsz, (Color){0,220,220,255});
+                    }
                 }
 
                 // Gold display (right side)
@@ -6058,13 +6183,20 @@ int main(void)
 
             // Show hosting info
             if (isHosting) {
+                char localIp[64];
+                net_get_local_ip(localIp, sizeof(localIp));
+                char ipInfo[128];
+                snprintf(ipInfo, sizeof(ipInfo), "Your IP: %s", localIp);
+                int iiw = GameMeasureText(ipInfo, 24);
+                GameDrawText(ipInfo, lsw/2 - iiw/2, lsh/2 - 10, 24, (Color){255,230,120,255});
+
                 char portInfo[64];
-                snprintf(portInfo, sizeof(portInfo), "Hosting on port %d", NET_PORT);
+                snprintf(portInfo, sizeof(portInfo), "Port %d", NET_PORT);
                 int piw = GameMeasureText(portInfo, 16);
-                GameDrawText(portInfo, lsw/2 - piw/2, lsh/2, 16, (Color){150,150,170,255});
+                GameDrawText(portInfo, lsw/2 - piw/2, lsh/2 + 20, 16, (Color){150,150,170,255});
                 const char *shareText = "Share your IP with your opponent";
                 int stw = GameMeasureText(shareText, 14);
-                GameDrawText(shareText, lsw/2 - stw/2, lsh/2 + 25, 14, (Color){120,120,140,255});
+                GameDrawText(shareText, lsw/2 - stw/2, lsh/2 + 45, 14, (Color){120,120,140,255});
             }
 
             // Animated dots
@@ -6209,9 +6341,19 @@ int main(void)
             int gsw = GameMeasureText(goScore, 20);
             GameDrawText(goScore, gosw/2 - gsw/2, gosh/2, 20, WHITE);
 
-            const char *goRestart = "Press R to return to menu";
+            const char *goRestart = "Press R / ESC to exit";
             int grw = GameMeasureText(goRestart, 16);
             GameDrawText(goRestart, gosw/2 - grw/2, gosh/2 + 40, 16, (Color){150,150,170,255});
+
+            // EXIT button
+            int exBtnW = 180, exBtnH = 44;
+            Rectangle exRect = { (float)(gosw/2 - exBtnW/2), (float)(gosh/2 + 70), (float)exBtnW, (float)exBtnH };
+            bool exHov = CheckCollisionPointRec(GetMousePosition(), exRect);
+            DrawRectangleRec(exRect, exHov ? (Color){200,60,60,255} : (Color){140,40,40,255});
+            DrawRectangleLinesEx(exRect, 2, (Color){180,80,80,255});
+            const char *exTxt = "EXIT";
+            int exTw = GameMeasureText(exTxt, 22);
+            GameDrawText(exTxt, (int)(exRect.x + exBtnW/2 - exTw/2), (int)(exRect.y + (exBtnH - 22)/2), 22, WHITE);
         }
 
         //==============================================================================

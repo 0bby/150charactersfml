@@ -442,10 +442,10 @@ int session_tick(GameSession *s, float dt)
                 return 1;
             }
 
-            // Give gold and move to next prep
-            int bonusGold = 5;
+            // Give gold: 15 per round, loser gets 20
             for (int p = 0; p < 2; p++) {
-                s->players[p].gold += bonusGold;
+                bool isLoser = (winner >= 0 && winner != p);
+                s->players[p].gold += isLoser ? 20 : 15;
             }
 
             session_start_prep(s);

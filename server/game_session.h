@@ -8,7 +8,7 @@
 // Game Session — manages one 1v1 match between two players
 //------------------------------------------------------------------------------------
 #define COMBAT_DT (1.0f / 60.0f)  // headless combat tick rate
-#define MAX_PVP_WINS 3     // best-of-5: first to 3 PVP wins
+#define MAX_PVP_WINS 4     // best-of-7: first to 4 PVP wins
 #define MAX_ROUNDS 10      // absolute max rounds
 #define PREP_TIMER 45.0f   // seconds before auto-ready
 

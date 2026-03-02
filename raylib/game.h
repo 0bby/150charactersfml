@@ -117,6 +117,7 @@ typedef struct {
 typedef struct {
     int abilityId;
     int level;
+    bool locked;
 } ShopSlot;
 
 typedef struct {

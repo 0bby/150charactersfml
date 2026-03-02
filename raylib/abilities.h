@@ -361,11 +361,11 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .range    = { 0 },
         .cooldown = { 12.0f, 10.0f, 8.0f, 6.0f, 4.0f },
         .values = {
-            { [AV_HK_DMG_PER_DIST]=0.08f, [AV_HK_SPEED]=45.0f, [AV_HK_RANGE]=80.0f },
-            { [AV_HK_DMG_PER_DIST]=0.12f, [AV_HK_SPEED]=45.0f, [AV_HK_RANGE]=90.0f },
-            { [AV_HK_DMG_PER_DIST]=0.16f, [AV_HK_SPEED]=45.0f, [AV_HK_RANGE]=100.0f },
-            { [AV_HK_DMG_PER_DIST]=0.22f, [AV_HK_SPEED]=45.0f, [AV_HK_RANGE]=115.0f },
-            { [AV_HK_DMG_PER_DIST]=0.30f, [AV_HK_SPEED]=45.0f, [AV_HK_RANGE]=135.0f },
+            { [AV_HK_DMG_PER_DIST]=0.12f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=80.0f },
+            { [AV_HK_DMG_PER_DIST]=0.18f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=90.0f },
+            { [AV_HK_DMG_PER_DIST]=0.24f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=100.0f },
+            { [AV_HK_DMG_PER_DIST]=0.32f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=115.0f },
+            { [AV_HK_DMG_PER_DIST]=0.42f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=135.0f },
         },
     },
     [ABILITY_PRIMAL_CHARGE] = {

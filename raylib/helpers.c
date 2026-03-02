@@ -300,6 +300,7 @@ void RollShop(ShopSlot shopSlots[], int *gold, int cost)
     if (*gold < cost) return;
     *gold -= cost;
     for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
+        if (shopSlots[i].locked) continue;
         shopSlots[i].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
         shopSlots[i].level = 0;
     }
@@ -310,6 +311,7 @@ void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int uni
     if (slot->abilityId < 0) return;
     int cost = ABILITY_DEFS[slot->abilityId].goldCost;
     if (*gold < cost) return;
+    slot->locked = false;
 
     // Auto-combine: check if this ability already exists on a blue unit or in inventory
     // Upgrade existing instance instead of creating duplicate

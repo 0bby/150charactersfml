@@ -56,7 +56,11 @@ int net_client_connect(NetClient *nc, const char *host, int port, const char *lo
 
     // Connect (blocking for simplicity)
     if (connect(nc->sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+#ifdef _WIN32
+        snprintf(nc->errorMsg, sizeof(nc->errorMsg), "Connection failed (error %d)", WSAGetLastError());
+#else
         snprintf(nc->errorMsg, sizeof(nc->errorMsg), "Connection failed: %s", strerror(errno));
+#endif
         close_socket(nc->sockfd); nc->sockfd = -1;
         nc->state = NET_ERROR;
         return -1;

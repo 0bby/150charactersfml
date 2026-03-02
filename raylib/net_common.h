@@ -33,3 +33,9 @@ void net_set_nonblocking(int sockfd);
 // Short-lived blocking TCP connect with 3-second timeout (for leaderboard, NFC, etc.)
 // Returns socket fd on success, -1 on error.
 int net_shortlived_connect(const char *host, int port);
+
+// Trigger Windows firewall prompt by briefly listening on a port. No-op on non-Windows.
+void net_trigger_firewall_prompt(int port);
+
+// Get the local LAN IP address (first non-loopback IPv4). Writes into buf.
+void net_get_local_ip(char *buf, int bufSize);

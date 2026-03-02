@@ -17,8 +17,12 @@
   static inline int close_socket(int fd) { return close(fd); }
 #endif
 
+#ifndef _WIN32
+  #include <ifaddrs.h>
+#endif
 #include "net_common.h"
 #include <string.h>
+#include <stdio.h>
 #include <errno.h>
 
 //------------------------------------------------------------------------------------
@@ -279,4 +283,70 @@ int net_shortlived_connect(const char *host, int port)
     int one = 1;
     setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one));
     return sockfd;
+}
+
+//------------------------------------------------------------------------------------
+// Trigger Windows firewall prompt by briefly binding a listening socket.
+// On non-Windows this is a no-op.
+//------------------------------------------------------------------------------------
+void net_trigger_firewall_prompt(int port)
+{
+#ifdef _WIN32
+    net_platform_init();
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return;
+    int one = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&one, sizeof(one));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) == 0)
+        listen(sock, 1);
+    close_socket(sock);
+#else
+    (void)port;
+#endif
+}
+
+//------------------------------------------------------------------------------------
+// Get the local LAN IP address (first non-loopback IPv4).
+//------------------------------------------------------------------------------------
+void net_get_local_ip(char *buf, int bufSize)
+{
+    snprintf(buf, bufSize, "127.0.0.1"); // fallback
+#ifdef _WIN32
+    net_platform_init();
+    char hostname[256];
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        struct hostent *he = gethostbyname(hostname);
+        if (he && he->h_addrtype == AF_INET) {
+            for (int i = 0; he->h_addr_list[i]; i++) {
+                struct in_addr addr;
+                memcpy(&addr, he->h_addr_list[i], sizeof(addr));
+                const char *ip = inet_ntoa(addr);
+                if (ip && strncmp(ip, "127.", 4) != 0) {
+                    snprintf(buf, bufSize, "%s", ip);
+                    return;
+                }
+            }
+        }
+    }
+#else
+    struct ifaddrs *ifaddr, *ifa;
+    if (getifaddrs(&ifaddr) == 0) {
+        for (ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
+            if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+            struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
+            const char *ip = inet_ntoa(sa->sin_addr);
+            if (ip && strncmp(ip, "127.", 4) != 0) {
+                snprintf(buf, bufSize, "%s", ip);
+                freeifaddrs(ifaddr);
+                return;
+            }
+        }
+        freeifaddrs(ifaddr);
+    }
+#endif
 }
