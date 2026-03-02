@@ -241,15 +241,15 @@ int CombatTick(Unit units[], int *unitCountPtr,
                     const AbilityDef *def = &ABILITY_DEFS[ABILITY_SUNDER];
                     float threshold = def->values[slot->level][AV_SU_HP_THRESH];
                     if (units[i].currentHealth > 0 && units[i].currentHealth <= unitMaxHP * threshold) {
-                        int ally = FindHighestHPAlly(units, unitCount, i);
-                        if (ally >= 0) {
+                        int enemy = FindHighestHPEnemy(units, unitCount, i);
+                        if (enemy >= 0) {
                             float myHP = units[i].currentHealth;
-                            float allyHP = units[ally].currentHealth;
-                            units[i].currentHealth = allyHP;
-                            units[ally].currentHealth = myHP;
-                            float allyMax = UNIT_STATS[units[ally].typeIndex].health * units[ally].hpMultiplier;
+                            float enemyHP = units[enemy].currentHealth;
+                            units[i].currentHealth = enemyHP;
+                            units[enemy].currentHealth = myHP;
+                            float enemyMax = UNIT_STATS[units[enemy].typeIndex].health * units[enemy].hpMultiplier;
                             if (units[i].currentHealth > unitMaxHP) units[i].currentHealth = unitMaxHP;
-                            if (units[ally].currentHealth > allyMax) units[ally].currentHealth = allyMax;
+                            if (units[enemy].currentHealth > enemyMax) units[enemy].currentHealth = enemyMax;
                             slot->triggered = true;
                             slot->cooldownRemaining = def->cooldown[slot->level];
                             EmitEvent(events, eventCount, COMBAT_EVT_ABILITY_CAST, i,

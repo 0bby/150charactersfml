@@ -97,6 +97,22 @@ int FindHighestHPAlly(Unit units[], int unitCount, int selfIndex)
     return bestIdx;
 }
 
+int FindHighestHPEnemy(Unit units[], int unitCount, int selfIndex)
+{
+    Team myTeam = units[selfIndex].team;
+    float bestHP = -1.0f;
+    int bestIdx = -1;
+    for (int j = 0; j < unitCount; j++) {
+        if (j == selfIndex || !units[j].active) continue;
+        if (units[j].team == myTeam) continue;
+        if (units[j].currentHealth > bestHP) {
+            bestHP = units[j].currentHealth;
+            bestIdx = j;
+        }
+    }
+    return bestIdx;
+}
+
 int FindFurthestEnemy(Unit units[], int unitCount, int selfIndex)
 {
     Team myTeam = units[selfIndex].team;
@@ -204,6 +220,7 @@ bool CastEarthquake(CombatState *state, int caster, AbilitySlot *slot)
     const AbilityDef *def = &ABILITY_DEFS[ABILITY_EARTHQUAKE];
     float radius = def->values[slot->level][AV_EQ_RADIUS];
     float damage = def->values[slot->level][AV_EQ_DAMAGE];
+    float stunDur = def->values[slot->level][AV_EQ_STUN_DUR];
     for (int j = 0; j < state->unitCount; j++) {
         if (j == caster || !state->units[j].active) continue;
         if (UnitHasModifier(state->modifiers, j, MOD_INVULNERABLE)) continue;
@@ -211,6 +228,9 @@ bool CastEarthquake(CombatState *state, int caster, AbilitySlot *slot)
         if (d <= radius) {
             state->units[j].currentHealth -= damage;
             state->units[j].hitFlash = 0.12f;
+            // Stun enemies only (not allies)
+            if (state->units[j].team != state->units[caster].team)
+                AddModifier(state->modifiers, j, MOD_STUN, stunDur, 0);
             if (state->units[j].currentHealth <= 0) {
                 state->units[j].active = false;
 #ifndef SERVER_BUILD
@@ -285,6 +305,7 @@ bool CastFissure(CombatState *state, int caster, AbilitySlot *slot, int target)
     float width = def->values[slot->level][AV_FI_WIDTH];
     float duration = def->values[slot->level][AV_FI_DURATION];
     float damage = def->values[slot->level][AV_FI_DAMAGE];
+    float stunDur = def->values[slot->level][AV_FI_STUN_DUR];
 
     SpawnFissure(state->fissures, state->units[caster].position,
         state->units[target].position, length, width, duration,
@@ -308,6 +329,7 @@ bool CastFissure(CombatState *state, int caster, AbilitySlot *slot, int target)
         if (perpDist <= width + 3.0f) {
             state->units[j].currentHealth -= damage;
             state->units[j].hitFlash = 0.12f;
+            AddModifier(state->modifiers, j, MOD_STUN, stunDur, 0);
             if (state->units[j].currentHealth <= 0) {
                 state->units[j].active = false;
 #ifndef SERVER_BUILD
@@ -443,15 +465,15 @@ void CheckPassiveSunder(CombatState *state, int unitIndex)
         float threshold = def->values[slot->level][AV_SU_HP_THRESH];
         float maxHP = UNIT_STATS[unit->typeIndex].health;
         if (unit->currentHealth > 0 && unit->currentHealth <= maxHP * threshold) {
-            int ally = FindHighestHPAlly(state->units, state->unitCount, unitIndex);
-            if (ally >= 0) {
+            int enemy = FindHighestHPEnemy(state->units, state->unitCount, unitIndex);
+            if (enemy >= 0) {
                 float myHP = unit->currentHealth;
-                float allyHP = state->units[ally].currentHealth;
-                unit->currentHealth = allyHP;
-                state->units[ally].currentHealth = myHP;
-                float allyMax = UNIT_STATS[state->units[ally].typeIndex].health;
+                float enemyHP = state->units[enemy].currentHealth;
+                unit->currentHealth = enemyHP;
+                state->units[enemy].currentHealth = myHP;
+                float enemyMax = UNIT_STATS[state->units[enemy].typeIndex].health * state->units[enemy].hpMultiplier;
                 if (unit->currentHealth > maxHP) unit->currentHealth = maxHP;
-                if (state->units[ally].currentHealth > allyMax) state->units[ally].currentHealth = allyMax;
+                if (state->units[enemy].currentHealth > enemyMax) state->units[enemy].currentHealth = enemyMax;
                 slot->triggered = true;
                 slot->cooldownRemaining = def->cooldown[slot->level];
                 SpawnFloatingText(state->floatingTexts, unit->position,

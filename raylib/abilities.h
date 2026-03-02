@@ -83,6 +83,7 @@ typedef enum {
 // -- Earthquake
 #define AV_EQ_DAMAGE       0
 #define AV_EQ_RADIUS       1
+#define AV_EQ_STUN_DUR     2
 // -- Spell Protect
 #define AV_SP_DURATION     0
 // -- Craggy Armor
@@ -103,6 +104,7 @@ typedef enum {
 #define AV_FI_DURATION     2
 #define AV_FI_DAMAGE       3
 #define AV_FI_RANGE        4
+#define AV_FI_STUN_DUR     5
 // -- Vlad's Aura
 #define AV_VA_LIFESTEAL    0  // % lifesteal for allies
 #define AV_VA_DURATION     1
@@ -176,7 +178,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .name = "Vacuum", .description = "Pull + stun enemies in AoE",
         .abbrev = "VC", .color = { 60, 180, 180, 255 },
         .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 5,
-        .range    = { 40.0f, 48.0f, 56.0f, 66.0f, 78.0f },
+        .range    = { 30.0f, 36.0f, 42.0f, 50.0f, 60.0f },
         .cooldown = { 16.0f, 13.0f, 10.0f, 8.0f, 6.0f },
         .values = {
             { [AV_VAC_RADIUS]=30.0f, [AV_VAC_STUN_DUR]=0.8f, [AV_VAC_PULL_DUR]=0.5f },
@@ -221,11 +223,11 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .range    = { 30.0f, 38.0f, 46.0f, 56.0f, 70.0f },
         .cooldown = { 14.0f, 12.0f, 10.0f, 8.0f, 6.0f },
         .values = {
-            { [AV_EQ_DAMAGE]=3.0f,  [AV_EQ_RADIUS]=25.0f },
-            { [AV_EQ_DAMAGE]=5.0f,  [AV_EQ_RADIUS]=32.0f },
-            { [AV_EQ_DAMAGE]=7.0f,  [AV_EQ_RADIUS]=40.0f },
-            { [AV_EQ_DAMAGE]=10.0f, [AV_EQ_RADIUS]=50.0f },
-            { [AV_EQ_DAMAGE]=15.0f, [AV_EQ_RADIUS]=65.0f },
+            { [AV_EQ_DAMAGE]=6.0f,  [AV_EQ_RADIUS]=25.0f, [AV_EQ_STUN_DUR]=0.5f },
+            { [AV_EQ_DAMAGE]=10.0f, [AV_EQ_RADIUS]=32.0f, [AV_EQ_STUN_DUR]=0.7f },
+            { [AV_EQ_DAMAGE]=15.0f, [AV_EQ_RADIUS]=40.0f, [AV_EQ_STUN_DUR]=0.9f },
+            { [AV_EQ_DAMAGE]=22.0f, [AV_EQ_RADIUS]=50.0f, [AV_EQ_STUN_DUR]=1.2f },
+            { [AV_EQ_DAMAGE]=30.0f, [AV_EQ_RADIUS]=65.0f, [AV_EQ_STUN_DUR]=1.5f },
         },
     },
     [ABILITY_SPELL_PROTECT] = {
@@ -271,7 +273,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         },
     },
     [ABILITY_SUNDER] = {
-        .name = "Sunder", .description = "Swap HP with ally at low HP",
+        .name = "Sunder", .description = "Swap HP with enemy at low HP",
         .abbrev = "SU", .color = { 180, 40, 80, 255 },
         .targetType = TARGET_NONE, .isPassive = true, .goldCost = 3,
         .range    = { 0 },
@@ -291,11 +293,11 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .range    = { 70.0f, 80.0f, 90.0f, 105.0f, 120.0f },
         .cooldown = { 14.0f, 12.0f, 10.0f, 7.0f, 5.0f },
         .values = {
-            { [AV_FI_LENGTH]=45.0f, [AV_FI_WIDTH]=8.0f,  [AV_FI_DURATION]=4.0f,  [AV_FI_DAMAGE]=2.0f,  [AV_FI_RANGE]=70.0f },
-            { [AV_FI_LENGTH]=55.0f, [AV_FI_WIDTH]=8.0f,  [AV_FI_DURATION]=5.0f,  [AV_FI_DAMAGE]=3.5f,  [AV_FI_RANGE]=80.0f },
-            { [AV_FI_LENGTH]=65.0f, [AV_FI_WIDTH]=8.0f,  [AV_FI_DURATION]=6.0f,  [AV_FI_DAMAGE]=5.0f,  [AV_FI_RANGE]=90.0f },
-            { [AV_FI_LENGTH]=80.0f, [AV_FI_WIDTH]=10.0f, [AV_FI_DURATION]=8.0f,  [AV_FI_DAMAGE]=8.0f,  [AV_FI_RANGE]=105.0f },
-            { [AV_FI_LENGTH]=100.0f,[AV_FI_WIDTH]=12.0f, [AV_FI_DURATION]=10.0f, [AV_FI_DAMAGE]=12.0f, [AV_FI_RANGE]=120.0f },
+            { [AV_FI_LENGTH]=45.0f, [AV_FI_WIDTH]=8.0f,  [AV_FI_DURATION]=4.0f,  [AV_FI_DAMAGE]=5.0f,  [AV_FI_RANGE]=70.0f,  [AV_FI_STUN_DUR]=0.8f },
+            { [AV_FI_LENGTH]=55.0f, [AV_FI_WIDTH]=8.0f,  [AV_FI_DURATION]=5.0f,  [AV_FI_DAMAGE]=8.0f,  [AV_FI_RANGE]=80.0f,  [AV_FI_STUN_DUR]=1.0f },
+            { [AV_FI_LENGTH]=65.0f, [AV_FI_WIDTH]=8.0f,  [AV_FI_DURATION]=6.0f,  [AV_FI_DAMAGE]=12.0f, [AV_FI_RANGE]=90.0f,  [AV_FI_STUN_DUR]=1.2f },
+            { [AV_FI_LENGTH]=80.0f, [AV_FI_WIDTH]=10.0f, [AV_FI_DURATION]=8.0f,  [AV_FI_DAMAGE]=18.0f, [AV_FI_RANGE]=105.0f, [AV_FI_STUN_DUR]=1.5f },
+            { [AV_FI_LENGTH]=100.0f,[AV_FI_WIDTH]=12.0f, [AV_FI_DURATION]=10.0f, [AV_FI_DAMAGE]=25.0f, [AV_FI_RANGE]=120.0f, [AV_FI_STUN_DUR]=2.0f },
         },
     },
     [ABILITY_VLAD_AURA] = {
@@ -319,11 +321,11 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .range    = { 0 },
         .cooldown = { 12.0f, 10.0f, 8.0f, 6.0f, 4.0f },
         .values = {
-            { [AV_ML_PROC_CHANCE]=0.25f, [AV_ML_DAMAGE]=25.0f,  [AV_ML_BOUNCES]=3.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=7.0f,  [AV_ML_BOUNCE_RANGE]=40.0f },
-            { [AV_ML_PROC_CHANCE]=0.30f, [AV_ML_DAMAGE]=35.0f,  [AV_ML_BOUNCES]=4.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=8.0f,  [AV_ML_BOUNCE_RANGE]=40.0f },
-            { [AV_ML_PROC_CHANCE]=0.35f, [AV_ML_DAMAGE]=50.0f,  [AV_ML_BOUNCES]=5.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=9.0f,  [AV_ML_BOUNCE_RANGE]=40.0f },
-            { [AV_ML_PROC_CHANCE]=0.45f, [AV_ML_DAMAGE]=70.0f,  [AV_ML_BOUNCES]=6.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=11.0f, [AV_ML_BOUNCE_RANGE]=45.0f },
-            { [AV_ML_PROC_CHANCE]=0.60f, [AV_ML_DAMAGE]=100.0f, [AV_ML_BOUNCES]=8.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=13.0f, [AV_ML_BOUNCE_RANGE]=50.0f },
+            { [AV_ML_PROC_CHANCE]=0.25f, [AV_ML_DAMAGE]=4.0f,  [AV_ML_BOUNCES]=3.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=7.0f,  [AV_ML_BOUNCE_RANGE]=40.0f },
+            { [AV_ML_PROC_CHANCE]=0.30f, [AV_ML_DAMAGE]=6.0f,  [AV_ML_BOUNCES]=4.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=8.0f,  [AV_ML_BOUNCE_RANGE]=40.0f },
+            { [AV_ML_PROC_CHANCE]=0.35f, [AV_ML_DAMAGE]=9.0f,  [AV_ML_BOUNCES]=5.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=9.0f,  [AV_ML_BOUNCE_RANGE]=40.0f },
+            { [AV_ML_PROC_CHANCE]=0.40f, [AV_ML_DAMAGE]=13.0f, [AV_ML_BOUNCES]=6.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=11.0f, [AV_ML_BOUNCE_RANGE]=45.0f },
+            { [AV_ML_PROC_CHANCE]=0.50f, [AV_ML_DAMAGE]=18.0f, [AV_ML_BOUNCES]=8.0f,  [AV_ML_SPEED]=30.0f, [AV_ML_DURATION]=13.0f, [AV_ML_BOUNCE_RANGE]=50.0f },
         },
     },
     [ABILITY_SWAP] = {

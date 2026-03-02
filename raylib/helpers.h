@@ -105,6 +105,7 @@ void CheckCraggyArmorRetaliation(CombatState *state, int attacker, int defender)
 
 // Shared combat helpers
 int FindHighestHPAlly(Unit units[], int unitCount, int selfIndex);
+int FindHighestHPEnemy(Unit units[], int unitCount, int selfIndex);
 int FindFurthestEnemy(Unit units[], int unitCount, int selfIndex);
 int FindLowestHPAlly(Unit units[], int unitCount, int selfIndex);
 

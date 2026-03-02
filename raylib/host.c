@@ -91,12 +91,12 @@ static void *host_thread_fn(void *arg)
 
                 if (playerCount == 0) {
                     session_init(&session, clientSock);
-                    strncpy(session.players[0].name, playerName, 31);
+                    snprintf(session.players[0].name, sizeof(session.players[0].name), "%s", playerName);
                     sessionActive = true;
                     playerCount = 1;
                     printf("[Host] Player 0 connected: %s\n", playerName);
                 } else if (playerCount == 1 && sessionActive) {
-                    strncpy(session.players[1].name, playerName, 31);
+                    snprintf(session.players[1].name, sizeof(session.players[1].name), "%s", playerName);
                     session_add_player(&session, clientSock);
                     playerCount = 2;
                     printf("[Host] Player 1 connected: %s\n", playerName);

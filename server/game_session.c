@@ -32,6 +32,7 @@ static void generate_lobby_code(char code[LOBBY_CODE_LEN + 1])
     code[LOBBY_CODE_LEN] = '\0';
 }
 
+__attribute__((unused))
 static void setup_pve_enemies(Unit combatUnits[], int *combatUnitCount,
                               const Unit playerUnits[], int playerUnitCount,
                               int waveIndex)

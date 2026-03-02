@@ -1165,8 +1165,7 @@ static void BattleLogAdd(BattleLog *log, BattleLogType type, float time, const c
         BattleLogEntry *e = &log->entries[log->count++];
         e->type = type;
         e->timestamp = time;
-        strncpy(e->text, text, 79);
-        e->text[79] = '\0';
+        snprintf(e->text, sizeof(e->text), "%s", text);
         e->color = color;
     }
 }

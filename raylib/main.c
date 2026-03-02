@@ -371,6 +371,7 @@ int main(void)
     Light lights[MAX_LIGHTS] = { 0 };
     lights[0] = CreateLight(LIGHT_DIRECTIONAL, (Vector3){ 40, 60, 30 }, Vector3Zero(), (Color){245, 230, 200, 255}, lightShader);
     lights[1] = CreateLight(LIGHT_POINT, (Vector3){ 0, 40, 0 }, Vector3Zero(), (Color){220, 200, 170, 255}, lightShader);
+    (void)lights;
 
     // --- SSAO post-process ---
     Shader ssaoShader = LoadShader(NULL,
@@ -1420,7 +1421,7 @@ int main(void)
                                 showMultiplayerPanel = false;
                                 phase = PHASE_LOBBY;
                             } else {
-                                strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                                snprintf(menuError, sizeof(menuError), "%s", netClient.errorMsg);
                                 host_stop();
                                 isHosting = false;
                                 isMultiplayer = false;
@@ -1442,7 +1443,7 @@ int main(void)
                             showMultiplayerPanel = false;
                             phase = PHASE_LOBBY;
                         } else {
-                            strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                            snprintf(menuError, sizeof(menuError), "%s", netClient.errorMsg);
                             isMultiplayer = false;
                         }
                     }
@@ -1683,7 +1684,7 @@ int main(void)
             net_client_poll(&netClient);
 
             if (netClient.state == NET_ERROR) {
-                strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                snprintf(menuError, sizeof(menuError), "%s", netClient.errorMsg);
                 if (isHosting) { host_stop(); isHosting = false; }
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
@@ -3562,8 +3563,7 @@ int main(void)
                 if (CheckCollisionPointRec(mouse, setBtn) && msCount > 0) {
                     // Build leaderboard entry from all blue units
                     LeaderboardEntry entry = {0};
-                    strncpy(entry.playerName, playerName, 31);
-                    entry.playerName[31] = '\0';
+                    snprintf(entry.playerName, sizeof(entry.playerName), "%s", playerName);
                     entry.highestRound = currentRound;
                     entry.unitCount = msCount;
                     for (int h = 0; h < msCount; h++) {
@@ -5452,7 +5452,7 @@ int main(void)
             {
                 // Compute synergy tiers for blue team (display only)
                 int synTier[SYNERGY_COUNT];
-                int synMatchCount[SYNERGY_COUNT];
+                int synMatchCount[SYNERGY_COUNT]; (void)synMatchCount;
                 bool unitSyn[BLUE_TEAM_MAX_SIZE][SYNERGY_COUNT];
                 for (int s = 0; s < (int)SYNERGY_COUNT; s++) synTier[s] = -1;
                 for (int s = 0; s < (int)SYNERGY_COUNT; s++) synMatchCount[s] = 0;
