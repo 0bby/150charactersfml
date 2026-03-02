@@ -68,6 +68,19 @@ static inline Color TextColorForBg(Color bg)
     return (lum > 150.0f) ? BLACK : WHITE;
 }
 
+// Key repeat: fires once on press, then continuously after a delay
+#define KEY_REPEAT_DELAY 0.35f
+#define KEY_REPEAT_RATE  0.05f
+
+static bool KeyRepeat(int key, float dt, float *timer) {
+    if (IsKeyPressed(key)) { *timer = 0.0f; return true; }
+    if (IsKeyDown(key)) {
+        *timer += dt;
+        if (*timer >= KEY_REPEAT_DELAY) { *timer -= KEY_REPEAT_RATE; return true; }
+    } else { *timer = 0.0f; }
+    return false;
+}
+
 // Draw text with auto contrast + shadow on colored backgrounds
 static inline void GameDrawTextOnColor(const char *text, int x, int y, int fontSize, Color bg)
 {
@@ -973,7 +986,9 @@ int main(void)
     int envPieceCount = 0;
     int envSelectedPiece = -1;
     bool envDragging = false;
+    Vector3 envDragOffset = {0};
     float envSaveFlashTimer = 0.0f;  // flash "SAVED" text
+    float envKeyTimers[8] = {0};     // W,A,S,D,R,F,[,]
 
     // Load env layout from file
     {
@@ -983,12 +998,25 @@ int main(void)
             while (fgets(line, sizeof(line), fp) && envPieceCount < MAX_ENV_PIECES) {
                 if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
                 int mi;
-                float x, y, z, rot, sc;
-                if (sscanf(line, "%d %f %f %f %f %f", &mi, &x, &y, &z, &rot, &sc) == 6) {
+                float x, y, z, rotX, rotY, rotZ, sc;
+                int fields = sscanf(line, "%d %f %f %f %f %f %f %f", &mi, &x, &y, &z, &rotX, &rotY, &rotZ, &sc);
+                if (fields == 8) {
                     if (mi >= 0 && mi < envModelCount) {
                         envPieces[envPieceCount] = (EnvPiece){
                             .modelIndex = mi, .position = {x, y, z},
-                            .rotationY = rot, .scale = sc, .active = true
+                            .rotationX = rotX, .rotationY = rotY, .rotationZ = rotZ,
+                            .scale = sc, .active = true
+                        };
+                        envPieceCount++;
+                    }
+                } else if (fields == 6) {
+                    // Backward compat: old 6-field format (no rotX/rotZ)
+                    float oldRot = rotX, oldSc = rotY; // fields 5,6 map to rotX,rotY vars
+                    if (mi >= 0 && mi < envModelCount) {
+                        envPieces[envPieceCount] = (EnvPiece){
+                            .modelIndex = mi, .position = {x, y, z},
+                            .rotationX = 0, .rotationY = oldRot, .rotationZ = 0,
+                            .scale = oldSc, .active = true
                         };
                         envPieceCount++;
                     }
@@ -1001,19 +1029,19 @@ int main(void)
     if (envPieceCount == 0) {
         // Ground
         envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 5, .position = {0, -10, 0},
-            .rotationY = 0, .scale = 1.0f, .active = true };
+            .rotationX = 0, .rotationY = 0, .rotationZ = 0, .scale = 1.0f, .active = true };
         // Stairs far
         envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 2, .position = {0, -1, -120},
-            .rotationY = 0, .scale = 1.0f, .active = true };
+            .rotationX = 0, .rotationY = 0, .rotationZ = 0, .scale = 1.0f, .active = true };
         // Stairs left
         envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 2, .position = {-120, -1, 0},
-            .rotationY = 90, .scale = 1.0f, .active = true };
+            .rotationX = 0, .rotationY = 90, .rotationZ = 0, .scale = 1.0f, .active = true };
         // Stairs right
         envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 2, .position = {120, -1, 0},
-            .rotationY = -90, .scale = 1.0f, .active = true };
+            .rotationX = 0, .rotationY = -90, .rotationZ = 0, .scale = 1.0f, .active = true };
         // Circle
         envPieces[envPieceCount++] = (EnvPiece){ .modelIndex = 3, .position = {0, 0, -140},
-            .rotationY = 0, .scale = 1.0f, .active = true };
+            .rotationX = 0, .rotationY = 0, .rotationZ = 0, .scale = 1.0f, .active = true };
     }
     int plazaHoverObject = 0;  // 0=none, 1=trophy, 2=door
     float plazaSparkleTimer = 0.0f;  // for sparkle effect on objects
@@ -1175,12 +1203,20 @@ int main(void)
 
             // Env piece keyboard controls (selected piece)
             if (envSelectedPiece >= 0 && envSelectedPiece < envPieceCount && envPieces[envSelectedPiece].active) {
+                if (IsKeyPressed(KEY_C)) envPieces[envSelectedPiece].rotationX -= 15.0f;
+                if (IsKeyPressed(KEY_V)) envPieces[envSelectedPiece].rotationX += 15.0f;
                 if (IsKeyPressed(KEY_Q)) envPieces[envSelectedPiece].rotationY -= 15.0f;
                 if (IsKeyPressed(KEY_E)) envPieces[envSelectedPiece].rotationY += 15.0f;
-                if (IsKeyPressed(KEY_R)) envPieces[envSelectedPiece].position.y += 1.0f;
-                if (IsKeyPressed(KEY_F)) envPieces[envSelectedPiece].position.y -= 1.0f;
-                if (IsKeyPressed(KEY_RIGHT_BRACKET)) envPieces[envSelectedPiece].scale += 0.1f;
-                if (IsKeyPressed(KEY_LEFT_BRACKET)) {
+                if (IsKeyPressed(KEY_Z)) envPieces[envSelectedPiece].rotationZ -= 15.0f;
+                if (IsKeyPressed(KEY_X)) envPieces[envSelectedPiece].rotationZ += 15.0f;
+                if (KeyRepeat(KEY_R, dt, &envKeyTimers[4])) envPieces[envSelectedPiece].position.y += 1.0f;
+                if (KeyRepeat(KEY_F, dt, &envKeyTimers[5])) envPieces[envSelectedPiece].position.y -= 1.0f;
+                if (KeyRepeat(KEY_W, dt, &envKeyTimers[0])) envPieces[envSelectedPiece].position.z -= 1.0f;
+                if (KeyRepeat(KEY_S, dt, &envKeyTimers[1])) envPieces[envSelectedPiece].position.z += 1.0f;
+                if (KeyRepeat(KEY_A, dt, &envKeyTimers[2])) envPieces[envSelectedPiece].position.x -= 1.0f;
+                if (KeyRepeat(KEY_D, dt, &envKeyTimers[3])) envPieces[envSelectedPiece].position.x += 1.0f;
+                if (KeyRepeat(KEY_RIGHT_BRACKET, dt, &envKeyTimers[6])) envPieces[envSelectedPiece].scale += 0.1f;
+                if (KeyRepeat(KEY_LEFT_BRACKET, dt, &envKeyTimers[7])) {
                     envPieces[envSelectedPiece].scale -= 0.1f;
                     if (envPieces[envSelectedPiece].scale < 0.1f) envPieces[envSelectedPiece].scale = 0.1f;
                 }
@@ -1203,8 +1239,8 @@ int main(void)
                     (Vector3){ -500, 0, -500 }, (Vector3){ -500, 0, 500 },
                     (Vector3){  500, 0,  500 }, (Vector3){  500, 0, -500 });
                 if (hit.hit) {
-                    envPieces[envSelectedPiece].position.x = hit.point.x;
-                    envPieces[envSelectedPiece].position.z = hit.point.z;
+                    envPieces[envSelectedPiece].position.x = hit.point.x + envDragOffset.x;
+                    envPieces[envSelectedPiece].position.z = hit.point.z + envDragOffset.z;
                 }
             }
             if (envDragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
@@ -1761,7 +1797,8 @@ int main(void)
                         if (CheckCollisionPointRec(mouse, er) && envPieceCount < MAX_ENV_PIECES) {
                             envPieces[envPieceCount] = (EnvPiece){
                                 .modelIndex = ei, .position = {0, 0, 0},
-                                .rotationY = 0, .scale = 1.0f, .active = true
+                                .rotationX = 0, .rotationY = 0, .rotationZ = 0,
+                                .scale = 1.0f, .active = true
                             };
                             envSelectedPiece = envPieceCount;
                             envPieceCount++;
@@ -1775,14 +1812,15 @@ int main(void)
                         if (CheckCollisionPointRec(mouse, saveBtn)) {
                             FILE *fp = fopen("env_layout.txt", "w");
                             if (fp) {
-                                fprintf(fp, "# modelIndex x y z rotationY scale\n");
+                                fprintf(fp, "# modelIndex x y z rotationX rotationY rotationZ scale\n");
                                 for (int pi = 0; pi < envPieceCount; pi++) {
                                     if (!envPieces[pi].active) continue;
-                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f\n",
+                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f %.1f %.1f\n",
                                             envPieces[pi].modelIndex,
                                             envPieces[pi].position.x, envPieces[pi].position.y,
                                             envPieces[pi].position.z,
-                                            envPieces[pi].rotationY, envPieces[pi].scale);
+                                            envPieces[pi].rotationX, envPieces[pi].rotationY,
+                                            envPieces[pi].rotationZ, envPieces[pi].scale);
                                 }
                                 fclose(fp);
                                 envSaveFlashTimer = 2.0f;
@@ -1830,13 +1868,38 @@ int main(void)
                                          tbb.max.z * ps + envPieces[ep].position.z }
                             };
                             RayCollision rc = GetRayCollisionBox(envRay, wbb);
-                            if (rc.hit && rc.distance < closestDist) {
-                                closestDist = rc.distance;
-                                closestIdx = ep;
+                            if (rc.hit) {
+                                // Build full world transform (same as draw code)
+                                EnvPiece p = envPieces[ep];
+                                float es = p.scale;
+                                Matrix matW = MatrixScale(es, es, es);
+                                matW = MatrixMultiply(matW, MatrixRotateX(p.rotationX * DEG2RAD));
+                                matW = MatrixMultiply(matW, MatrixRotateY(p.rotationY * DEG2RAD));
+                                matW = MatrixMultiply(matW, MatrixRotateZ(p.rotationZ * DEG2RAD));
+                                matW = MatrixMultiply(matW, MatrixTranslate(p.position.x, p.position.y, p.position.z));
+                                Matrix fullTransform = MatrixMultiply(emd->model.transform, matW);
+                                // Test all meshes in the model
+                                for (int mi = 0; mi < emd->model.meshCount; mi++) {
+                                    RayCollision mc = GetRayCollisionMesh(envRay, emd->model.meshes[mi], fullTransform);
+                                    if (mc.hit && mc.distance < closestDist) {
+                                        closestDist = mc.distance;
+                                        closestIdx = ep;
+                                    }
+                                }
                             }
                         }
                         envSelectedPiece = closestIdx;
                         envDragging = (closestIdx >= 0);
+                        if (closestIdx >= 0) {
+                            Ray grabRay = GetScreenToWorldRay(mouse, camera);
+                            RayCollision grabHit = GetRayCollisionQuad(grabRay,
+                                (Vector3){-500,0,-500}, (Vector3){-500,0,500},
+                                (Vector3){ 500,0, 500}, (Vector3){ 500,0,-500});
+                            if (grabHit.hit) {
+                                envDragOffset.x = envPieces[closestIdx].position.x - grabHit.point.x;
+                                envDragOffset.z = envPieces[closestIdx].position.z - grabHit.point.z;
+                            }
+                        }
                     }
                 }
             }
@@ -2333,7 +2396,8 @@ int main(void)
                         if (CheckCollisionPointRec(mouse, er) && envPieceCount < MAX_ENV_PIECES) {
                             envPieces[envPieceCount] = (EnvPiece){
                                 .modelIndex = ei, .position = {0, 0, 0},
-                                .rotationY = 0, .scale = 1.0f, .active = true
+                                .rotationX = 0, .rotationY = 0, .rotationZ = 0,
+                                .scale = 1.0f, .active = true
                             };
                             envSelectedPiece = envPieceCount;
                             envPieceCount++;
@@ -2347,14 +2411,15 @@ int main(void)
                         if (CheckCollisionPointRec(mouse, saveBtn)) {
                             FILE *fp = fopen("env_layout.txt", "w");
                             if (fp) {
-                                fprintf(fp, "# modelIndex x y z rotationY scale\n");
+                                fprintf(fp, "# modelIndex x y z rotationX rotationY rotationZ scale\n");
                                 for (int pi = 0; pi < envPieceCount; pi++) {
                                     if (!envPieces[pi].active) continue;
-                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f\n",
+                                    fprintf(fp, "%d %.1f %.1f %.1f %.1f %.1f %.1f %.1f\n",
                                             envPieces[pi].modelIndex,
                                             envPieces[pi].position.x, envPieces[pi].position.y,
                                             envPieces[pi].position.z,
-                                            envPieces[pi].rotationY, envPieces[pi].scale);
+                                            envPieces[pi].rotationX, envPieces[pi].rotationY,
+                                            envPieces[pi].rotationZ, envPieces[pi].scale);
                                 }
                                 fclose(fp);
                                 envSaveFlashTimer = 2.0f;
@@ -2536,13 +2601,38 @@ int main(void)
                                          tbb.max.z * ps + envPieces[ep].position.z }
                             };
                             RayCollision rc = GetRayCollisionBox(envRay, wbb);
-                            if (rc.hit && rc.distance < closestDist) {
-                                closestDist = rc.distance;
-                                closestIdx = ep;
+                            if (rc.hit) {
+                                // Build full world transform (same as draw code)
+                                EnvPiece p = envPieces[ep];
+                                float es = p.scale;
+                                Matrix matW = MatrixScale(es, es, es);
+                                matW = MatrixMultiply(matW, MatrixRotateX(p.rotationX * DEG2RAD));
+                                matW = MatrixMultiply(matW, MatrixRotateY(p.rotationY * DEG2RAD));
+                                matW = MatrixMultiply(matW, MatrixRotateZ(p.rotationZ * DEG2RAD));
+                                matW = MatrixMultiply(matW, MatrixTranslate(p.position.x, p.position.y, p.position.z));
+                                Matrix fullTransform = MatrixMultiply(emd->model.transform, matW);
+                                // Test all meshes in the model
+                                for (int mi = 0; mi < emd->model.meshCount; mi++) {
+                                    RayCollision mc = GetRayCollisionMesh(envRay, emd->model.meshes[mi], fullTransform);
+                                    if (mc.hit && mc.distance < closestDist) {
+                                        closestDist = mc.distance;
+                                        closestIdx = ep;
+                                    }
+                                }
                             }
                         }
                         envSelectedPiece = closestIdx;
                         envDragging = (closestIdx >= 0);
+                        if (closestIdx >= 0) {
+                            Ray grabRay = GetScreenToWorldRay(mouse, camera);
+                            RayCollision grabHit = GetRayCollisionQuad(grabRay,
+                                (Vector3){-500,0,-500}, (Vector3){-500,0,500},
+                                (Vector3){ 500,0, 500}, (Vector3){ 500,0,-500});
+                            if (grabHit.hit) {
+                                envDragOffset.x = envPieces[closestIdx].position.x - grabHit.point.x;
+                                envDragOffset.z = envPieces[closestIdx].position.z - grabHit.point.z;
+                            }
+                        }
                     }
                 }
             }
@@ -3997,8 +4087,17 @@ int main(void)
                 EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
                 if (!emd->loaded) continue;
                 float es = envPieces[ep].scale;
-                DrawModelEx(emd->model, envPieces[ep].position, (Vector3){0,1,0},
-                            envPieces[ep].rotationY, (Vector3){es,es,es}, WHITE);
+                EnvPiece p = envPieces[ep];
+                Vector3 pos = p.position;
+                Matrix matS = MatrixScale(es, es, es);
+                Matrix matTransform = MatrixMultiply(matS, MatrixRotateX(p.rotationX * DEG2RAD));
+                matTransform = MatrixMultiply(matTransform, MatrixRotateY(p.rotationY * DEG2RAD));
+                matTransform = MatrixMultiply(matTransform, MatrixRotateZ(p.rotationZ * DEG2RAD));
+                matTransform = MatrixMultiply(matTransform, MatrixTranslate(pos.x, pos.y, pos.z));
+                Matrix oldTransform = emd->model.transform;
+                emd->model.transform = MatrixMultiply(oldTransform, matTransform);
+                DrawModel(emd->model, (Vector3){0,0,0}, 1.0f, WHITE);
+                emd->model.transform = oldTransform;
             }
             for (int i = 0; i < unitCount; i++) {
                 if (!units[i].active) continue;
@@ -4128,8 +4227,17 @@ int main(void)
                 } else {
                     SetShaderValue(lightShader, useNormalMapLoc, (int[]){0}, SHADER_UNIFORM_INT);
                 }
-                DrawModelEx(emd->model, envPieces[ep].position, (Vector3){0,1,0},
-                            envPieces[ep].rotationY, (Vector3){es,es,es}, eTint);
+                EnvPiece p = envPieces[ep];
+                Vector3 pos = p.position;
+                Matrix matS = MatrixScale(es, es, es);
+                Matrix matTransform = MatrixMultiply(matS, MatrixRotateX(p.rotationX * DEG2RAD));
+                matTransform = MatrixMultiply(matTransform, MatrixRotateY(p.rotationY * DEG2RAD));
+                matTransform = MatrixMultiply(matTransform, MatrixRotateZ(p.rotationZ * DEG2RAD));
+                matTransform = MatrixMultiply(matTransform, MatrixTranslate(pos.x, pos.y, pos.z));
+                Matrix oldTransform = emd->model.transform;
+                emd->model.transform = MatrixMultiply(oldTransform, matTransform);
+                DrawModel(emd->model, (Vector3){0,0,0}, 1.0f, eTint);
+                emd->model.transform = oldTransform;
             }
             // Reset normal map after env pieces so other models don't use it
             SetShaderValue(lightShader, useNormalMapLoc, (int[]){0}, SHADER_UNIFORM_INT);
@@ -4823,9 +4931,10 @@ int main(void)
                         GameDrawText(TextFormat("%s  [X:%.1f Y:%.1f Z:%.1f]", infoName,
                                  sp->position.x, sp->position.y, sp->position.z),
                                  envColX, infoY, 12, WHITE);
-                        GameDrawText(TextFormat("Rot: %.0f deg  Scale: %.1fx", sp->rotationY, sp->scale),
+                        GameDrawText(TextFormat("RotX: %.0f  Y: %.0f  Z: %.0f  Scale: %.1fx",
+                                 sp->rotationX, sp->rotationY, sp->rotationZ, sp->scale),
                                  envColX, infoY + 14, 12, WHITE);
-                        GameDrawText("[Q/E] Rot  [R/F] Y  [[ / ]] Scale  [DEL] Remove", envColX, infoY + 28, 10, (Color){180,180,180,200});
+                        GameDrawText("[Q/E] RotY  [X/C] RotX  [\\/ Z] RotZ  [R/F] Y  [[ / ]] Scale  [DEL] Remove", envColX, infoY + 28, 10, (Color){180,180,180,200});
                     }
                 }
             }
