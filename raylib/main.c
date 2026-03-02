@@ -4633,7 +4633,7 @@ int main(void)
             if (hpRatio < 0) hpRatio = 0;
             if (hpRatio > 1) hpRatio = 1;
             DrawRectangle(bx, by, bw, bh, DARKGRAY);
-            Color hpC = (hpRatio > 0.5f) ? GREEN : (hpRatio > 0.25f) ? ORANGE : RED;
+            Color hpC = (units[i].team == TEAM_BLUE) ? (Color){80,200,80,255} : (Color){220,50,50,255};
             DrawRectangle(bx, by, (int)(bw * hpRatio), bh, hpC);
             // Shield bar (blue) extending rightward from HP
             if (units[i].shieldHP > 0) {
@@ -4643,6 +4643,14 @@ int main(void)
                 int shieldX = bx + (int)(bw * hpRatio);
                 if (shieldX + shieldW > bx + bw) shieldW = bx + bw - shieldX;
                 DrawRectangle(shieldX, by, shieldW, bh, (Color){80, 160, 255, 200});
+            }
+            // 25 HP separator notches (Dota-style)
+            {
+                int notches = (int)(maxHP / 25.0f);
+                for (int n = 1; n < notches; n++) {
+                    int nx = bx + (int)(bw * (n * 25.0f / maxHP));
+                    DrawRectangle(nx, by, 1, bh, (Color){0,0,0,140});
+                }
             }
             DrawRectangleLines(bx, by, bw, bh, BLACK);
 
@@ -5868,7 +5876,7 @@ int main(void)
 
             switch (hoverAbilityId) {
             case ABILITY_MAGIC_MISSILE:
-                statLines[numStatLines++] = (StatLine){ "Damage", AV_MM_DAMAGE, true };
+                statLines[numStatLines++] = (StatLine){ "% Max HP", AV_MM_DAMAGE, true };
                 statLines[numStatLines++] = (StatLine){ "Stun", AV_MM_STUN_DUR, false };
                 break;
             case ABILITY_DIG:

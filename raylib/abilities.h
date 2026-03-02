@@ -147,9 +147,9 @@ typedef struct {
 
 static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_MAGIC_MISSILE] = {
-        .name = "Magic Missile", .description = "Ranged stun projectile",
+        .name = "Magic Missile", .description = "Stun projectile, deals %maxHP",
         .abbrev = "MM", .color = { 120, 80, 255, 255 },
-        .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 3,
+        .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 2,
         .range    = { 50.0f, 58.0f, 66.0f, 76.0f, 88.0f },
         .cooldown = { 7.0f, 6.0f, 5.0f, 4.0f, 3.0f },
         .values = {
@@ -163,7 +163,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_DIG] = {
         .name = "Dig", .description = "Invuln + heal at low HP",
         .abbrev = "DG", .color = { 160, 120, 60, 255 },
-        .targetType = TARGET_NONE, .isPassive = true, .goldCost = 4,
+        .targetType = TARGET_NONE, .isPassive = true, .goldCost = 3,
         .range    = { 0 },
         .cooldown = { 22.0f, 18.0f, 14.0f, 11.0f, 8.0f },
         .values = {
@@ -177,7 +177,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_VACUUM] = {
         .name = "Vacuum", .description = "Pull + stun enemies in AoE",
         .abbrev = "VC", .color = { 60, 180, 180, 255 },
-        .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 5,
+        .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 4,
         .range    = { 30.0f, 36.0f, 42.0f, 50.0f, 60.0f },
         .cooldown = { 16.0f, 13.0f, 10.0f, 8.0f, 6.0f },
         .values = {
@@ -191,7 +191,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_CHAIN_FROST] = {
         .name = "Chain Frost", .description = "Bouncing projectile, gains dmg per bounce",
         .abbrev = "CF", .color = { 80, 140, 255, 255 },
-        .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 5,
+        .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 4,
         .range    = { 50.0f, 58.0f, 66.0f, 78.0f, 92.0f },
         .cooldown = { 14.0f, 12.0f, 10.0f, 8.0f, 6.0f },
         .values = {
@@ -205,7 +205,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_BLOOD_RAGE] = {
         .name = "Blood Rage", .description = "Grants lifesteal on attacks",
         .abbrev = "BR", .color = { 220, 40, 40, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 2,
         .range    = { 0 },
         .cooldown = { 12.0f, 10.0f, 8.0f, 6.0f, 4.0f },
         .values = {
@@ -219,7 +219,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_EARTHQUAKE] = {
         .name = "Earthquake", .description = "AoE damage (hits allies!)",
         .abbrev = "EQ", .color = { 180, 120, 40, 255 },
-        .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 5,
+        .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 4,
         .range    = { 30.0f, 38.0f, 46.0f, 56.0f, 70.0f },
         .cooldown = { 14.0f, 12.0f, 10.0f, 8.0f, 6.0f },
         .values = {
@@ -233,7 +233,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_SPELL_PROTECT] = {
         .name = "Spell Protect", .description = "Blocks stuns & debuffs",
         .abbrev = "SP", .color = { 200, 240, 255, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
         .range    = { 0 },
         .cooldown = { 14.0f, 12.0f, 10.0f, 7.0f, 5.0f },
         .values = {
@@ -247,7 +247,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_CRAGGY_ARMOR] = {
         .name = "Craggy Armor", .description = "Armor + stun attackers",
         .abbrev = "CA", .color = { 140, 140, 160, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
         .range    = { 0 },
         .cooldown = { 14.0f, 12.0f, 10.0f, 8.0f, 6.0f },
         .values = {
@@ -261,7 +261,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_STONE_GAZE] = {
         .name = "Stone Gaze", .description = "Stuns enemies facing you",
         .abbrev = "SG", .color = { 160, 80, 200, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 5,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
         .range    = { 0 },
         .cooldown = { 16.0f, 14.0f, 12.0f, 9.0f, 6.0f },
         .values = {
@@ -275,7 +275,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_SUNDER] = {
         .name = "Sunder", .description = "Swap HP with enemy at low HP",
         .abbrev = "SU", .color = { 180, 40, 80, 255 },
-        .targetType = TARGET_NONE, .isPassive = true, .goldCost = 3,
+        .targetType = TARGET_NONE, .isPassive = true, .goldCost = 2,
         .range    = { 0 },
         .cooldown = { 22.0f, 18.0f, 14.0f, 10.0f, 7.0f },
         .values = {
@@ -289,7 +289,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_FISSURE] = {
         .name = "Fissure", .description = "Impassable terrain + damage",
         .abbrev = "FI", .color = { 120, 110, 100, 255 },
-        .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 5,
+        .targetType = TARGET_CLOSEST_ENEMY, .isPassive = false, .goldCost = 4,
         .range    = { 70.0f, 80.0f, 90.0f, 105.0f, 120.0f },
         .cooldown = { 14.0f, 12.0f, 10.0f, 7.0f, 5.0f },
         .values = {
@@ -303,7 +303,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_VLAD_AURA] = {
         .name = "Vlad's Aura", .description = "Grants lifesteal to allies",
         .abbrev = "VA", .color = { 180, 30, 30, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
         .range    = { 0 },
         .cooldown = { 14.0f, 12.0f, 10.0f, 7.0f, 5.0f },
         .values = {
@@ -317,7 +317,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_MAELSTROM] = {
         .name = "Maelstrom", .description = "Attacks proc chain lightning",
         .abbrev = "ML", .color = { 255, 230, 50, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
         .range    = { 0 },
         .cooldown = { 12.0f, 10.0f, 8.0f, 6.0f, 4.0f },
         .values = {
@@ -331,7 +331,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_SWAP] = {
         .name = "Swap Me", .description = "Swap pos with furthest enemy + shield",
         .abbrev = "SW", .color = { 200, 100, 255, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 5,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
         .range    = { 0 },
         .cooldown = { 18.0f, 15.0f, 12.0f, 9.0f, 6.0f },
         .values = {
@@ -345,7 +345,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_APHOTIC_SHIELD] = {
         .name = "Aphotic Shield", .description = "Shield ally + purge debuffs",
         .abbrev = "AS", .color = { 80, 160, 255, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
         .range    = { 0 },
         .cooldown = { 14.0f, 12.0f, 10.0f, 7.0f, 5.0f },
         .values = {
@@ -359,7 +359,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_HOOK] = {
         .name = "Dendi Hook", .description = "Hook furthest enemy, dmg by distance",
         .abbrev = "HK", .color = { 200, 60, 60, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 5,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
         .range    = { 0 },
         .cooldown = { 12.0f, 10.0f, 8.0f, 6.0f, 4.0f },
         .values = {
@@ -373,7 +373,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
     [ABILITY_PRIMAL_CHARGE] = {
         .name = "Primal Charge", .description = "Charge at furthest enemy, AoE impact",
         .abbrev = "PC", .color = { 255, 140, 0, 255 },
-        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 5,
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
         .range    = { 0 },
         .cooldown = { 16.0f, 14.0f, 12.0f, 9.0f, 6.0f },
         .values = {
