@@ -16,8 +16,9 @@ ifeq ($(UNAME),Darwin)
   GAME_CFLAGS += $(shell pkg-config --cflags raylib)
   GAME_LDFLAGS = $(shell pkg-config --libs raylib) -lm -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
 else
+  RAYLIB_LINUX = deps/raylib-linux
   GAME_CFLAGS += -I/usr/local/include
-  GAME_LDFLAGS = -lraylib -lm -lGL -lpthread -ldl -lrt
+  GAME_LDFLAGS = $(RAYLIB_LINUX)/lib/libraylib.a -lm -lGL -lpthread -ldl -lrt
 endif
 
 # --- Asset files to bundle with exports ---
