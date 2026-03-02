@@ -133,10 +133,7 @@ void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[], int *snapCo
         snaps[i].team     = units[i].team;
         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
             snaps[i].abilities[a] = units[i].abilities[a];
-        memcpy(snaps[i].nfcUid, units[i].nfcUid, sizeof(units[i].nfcUid));
-        snaps[i].nfcUidLen = units[i].nfcUidLen;
         snaps[i].rarity = units[i].rarity;
-        memcpy(snaps[i].nfcName, units[i].nfcName, sizeof(units[i].nfcName));
         snaps[i].hpMultiplier = units[i].hpMultiplier;
         snaps[i].dmgMultiplier = units[i].dmgMultiplier;
         snaps[i].speedMultiplier = units[i].speedMultiplier;
@@ -173,10 +170,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
         };
         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
             units[i].abilities[a] = snaps[i].abilities[a];
-        memcpy(units[i].nfcUid, snaps[i].nfcUid, sizeof(units[i].nfcUid));
-        units[i].nfcUidLen = snaps[i].nfcUidLen;
         units[i].rarity = snaps[i].rarity;
-        memcpy(units[i].nfcName, snaps[i].nfcName, sizeof(units[i].nfcName));
     }
 }
 
@@ -1049,7 +1043,7 @@ void SpawnMeleeImpact(Particle particles[], Vector3 pos)
 }
 
 //------------------------------------------------------------------------------------
-// NFC Unit Code Parse / Format
+// Unit Code Parse / Format (debug spawn codes)
 //------------------------------------------------------------------------------------
 
 // Look up ability ID by 2-char abbreviation, returns -1 if not found

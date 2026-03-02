@@ -40,6 +40,7 @@ static bool  cgDebugOverlay  = false;
 #include "helpers.h"
 #include "leaderboard.h"
 #include "net_client.h"
+#include "host.h"
 
 // Global font — loaded in main(), used by GameDrawText/GameMeasureText
 static Font g_gameFont = { 0 };
@@ -1046,22 +1047,14 @@ int main(void)
     int playerNameLen = 6;
     bool nameInputActive = false;
 
-    // NFC emulation input
-    char nfcInputBuf[32] = "";
-    int nfcInputLen = 0;
-    bool nfcInputActive = false;
-    char nfcInputError[64] = "";
-    float nfcInputErrorTimer = 0.0f;
-
     // --- Multiplayer state ---
     NetClient netClient;
     net_client_init(&netClient);
     bool isMultiplayer = false;
     bool playerReady = false;
-    bool mpNameFieldFocused = true;
-    char joinCodeInput[LOBBY_CODE_LEN + 1] = {0};
-    int joinCodeLen = 0;
-    const char *serverHost = "autochess.kenzhiyilin.com";
+    char joinIpAddress[64] = "127.0.0.1";
+    int joinIpLen = 9;
+    bool isHosting = false;
     bool waitingForOpponent = false;
     char menuError[128] = {0};
     bool currentRoundIsPve = false;
@@ -1078,40 +1071,7 @@ int main(void)
 
     SetTargetFPS(60);
 
-    // --- NFC Bridge Subprocess (POSIX only) ---
-#ifdef _WIN32
-    FILE *nfcPipe = NULL;
-    int nfcFd = -1;
-    char nfcLineBuf[128];
-    int nfcLinePos = 0;
     float easterEggTimer = 0.0f;
-    printf("[NFC] Bridge not available on Windows\n");
-#else
-    FILE *nfcPipe = popen("../nfc/build/bridge", "r");
-    int nfcFd = -1;
-    char nfcLineBuf[128];
-    int nfcLinePos = 0;
-    float easterEggTimer = 0.0f;
-    if (nfcPipe) {
-        nfcFd = fileno(nfcPipe);
-        int flags = fcntl(nfcFd, F_GETFL, 0);
-        fcntl(nfcFd, F_SETFL, flags | O_NONBLOCK);
-        printf("[NFC] Bridge launched\n");
-    } else {
-        printf("[NFC] Failed to launch bridge\n");
-    }
-#endif
-
-    // NFC UID is now stored directly in Unit.nfcUid / Unit.nfcUidLen
-    // Naming state for first-time scans
-    int namingUnitIndex = -1;  // >= 0 = unit awaiting name input
-    char namingBuf[32] = {0};
-    int namingPos = 0;
-    char nfcNameBuf[32] = {0};  // temp buffer for lookup response
-
-    // Prefetch known NFC UIDs from server (local authority for existence checks)
-    NfcUidCache nfcCache = {0};
-    net_nfc_prefetch(serverHost, NET_PORT, &nfcCache);
 
     //==================================================================================
     // MAIN LOOP
@@ -1365,160 +1325,6 @@ int main(void)
         float cameraPos[3] = { camera.position.x, camera.position.y, camera.position.z };
         SetShaderValue(lightShader, lightShader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
 
-        // Poll NFC bridge for tag scans (raw read to avoid stdio buffering issues)
-#ifndef _WIN32
-        if (nfcFd >= 0) {
-            // Drain bytes from pipe into line buffer
-            char rdBuf[64];
-            int n = read(nfcFd, rdBuf, sizeof(rdBuf));
-            if (n > 0) {
-                for (int bi = 0; bi < n; bi++) {
-                    char c = rdBuf[bi];
-                    if (c == '\n' || c == '\r') {
-                        if (nfcLinePos > 0) {
-                            nfcLineBuf[nfcLinePos] = '\0';
-                            // Process complete line (only when in valid phase)
-                            if ((phase == PHASE_PLAZA || phase == PHASE_PREP) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
-                                // Parse reader prefix and hex UID: "N:<hex_uid>"
-                                int nfcReader = 0;
-                                const char *nfcHex = nfcLineBuf;
-                                if (nfcLineBuf[0] >= '1' && nfcLineBuf[0] <= '9' && nfcLineBuf[1] == ':') {
-                                    nfcReader = nfcLineBuf[0] - '0';
-                                    nfcHex = nfcLineBuf + 2;
-                                }
-
-                                int hexLen = (int)strlen(nfcHex);
-                                int nfcUidLen = hexLen / 2;
-                                uint8_t nfcUid[NFC_UID_MAX_LEN] = {0};
-                                if (nfcUidLen >= 4 && nfcUidLen <= NFC_UID_MAX_LEN) {
-                                    for (int i = 0; i < nfcUidLen; i++) {
-                                        unsigned int byte;
-                                        sscanf(nfcHex + i * 2, "%2x", &byte);
-                                        nfcUid[i] = (uint8_t)byte;
-                                    }
-
-                                    uint8_t nfcStatus, nfcTypeIdx, nfcRarity;
-                                    AbilitySlot nfcAbilities[MAX_ABILITIES_PER_UNIT];
-                                    // Dedup: skip if this UID is already on the blue team
-                                    // Check ALL units (not just active) — dead units still count
-                                    bool uidAlreadySpawned = false;
-                                    for (int u = 0; u < unitCount; u++) {
-                                        if (units[u].team == TEAM_BLUE &&
-                                            units[u].nfcUidLen == nfcUidLen &&
-                                            memcmp(units[u].nfcUid, nfcUid, nfcUidLen) == 0) {
-                                            uidAlreadySpawned = true;
-                                            break;
-                                        }
-                                    }
-                                    if (uidAlreadySpawned) {
-                                        // Tag still on scanner — ignore
-                                    } else if (strcmp(nfcHex, "CA31A80C") == 0 || strcmp(nfcHex, "644477EE") == 0) {
-                                        easterEggTimer = 4.0f;
-                                    } else if (!nfc_cache_contains(&nfcCache, nfcHex)) {
-                                        printf("[NFC] Reader %d: UID %s -> unknown (not in local cache)\n", nfcReader, nfcHex);
-                                    } else if (namingUnitIndex < 0 && net_nfc_lookup(serverHost, NET_PORT, nfcUid, nfcUidLen,
-                                                       &nfcStatus, &nfcTypeIdx, &nfcRarity, nfcAbilities,
-                                                       nfcNameBuf, sizeof(nfcNameBuf)) == 0) {
-                                        if (nfcStatus == NFC_STATUS_OK && nfcTypeIdx < unitTypeCount) {
-                                            if (SpawnUnit(units, &unitCount, nfcTypeIdx, TEAM_BLUE)) {
-                                                PlaySound(sfxNewCharacter);
-                                                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
-                                                    units[unitCount - 1].abilities[a] = nfcAbilities[a];
-                                                memcpy(units[unitCount - 1].nfcUid, nfcUid, nfcUidLen);
-                                                units[unitCount - 1].nfcUidLen = nfcUidLen;
-                                                units[unitCount - 1].rarity = nfcRarity;
-                                                strncpy(units[unitCount - 1].nfcName, nfcNameBuf, sizeof(units[unitCount - 1].nfcName) - 1);
-                                                ApplyUnitRarity(&units[unitCount - 1]);
-                                                printf("[NFC] Reader %d: UID %s -> Spawning %s name=\"%s\" (rarity=%d)\n",
-                                                    nfcReader, nfcHex, unitTypes[nfcTypeIdx].name, nfcNameBuf, nfcRarity);
-                                                // If unnamed, prompt for name first (intro plays after)
-                                                if (nfcNameBuf[0] == '\0') {
-                                                    namingUnitIndex = unitCount - 1;
-                                                    namingBuf[0] = '\0';
-                                                    namingPos = 0;
-                                                } else {
-                                                    intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                                                        .typeIndex = nfcTypeIdx, .unitIndex = unitCount - 1, .animFrame = 0 };
-                                                }
-                                            } else {
-                                                printf("[NFC] Reader %d: UID %s -> Blue team full\n", nfcReader, nfcHex);
-                                            }
-                                        } else if (nfcStatus == NFC_STATUS_NOT_FOUND) {
-                                            printf("[NFC] Reader %d: UID %s -> not registered on server\n", nfcReader, nfcHex);
-                                        }
-                                    } else {
-                                        printf("[NFC] Reader %d: UID %s -> server connection failed\n", nfcReader, nfcHex);
-                                    }
-                                } else {
-                                    printf("[NFC] Invalid hex UID: '%s'\n", nfcLineBuf);
-                                }
-                            }
-                            nfcLinePos = 0;
-                        }
-                    } else if (nfcLinePos < (int)sizeof(nfcLineBuf) - 1) {
-                        nfcLineBuf[nfcLinePos++] = c;
-                    }
-                }
-            }
-        }
-#endif // !_WIN32
-
-        // NFC debug input handling (shared for plaza + prep)
-        if (debugMode && (phase == PHASE_PLAZA || phase == PHASE_PREP)) {
-            // NFC input error timer countdown
-            if (nfcInputErrorTimer > 0.0f) {
-                nfcInputErrorTimer -= dt;
-                if (nfcInputErrorTimer <= 0.0f) nfcInputError[0] = '\0';
-            }
-
-            // NFC emulation text input handling
-            if (nfcInputActive && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
-                int key = GetCharPressed();
-                while (key > 0) {
-                    // Uppercase the character
-                    if (key >= 'a' && key <= 'z') key = key - 'a' + 'A';
-                    if (((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9')) && nfcInputLen < 13) {
-                        nfcInputBuf[nfcInputLen] = (char)key;
-                        nfcInputLen++;
-                        nfcInputBuf[nfcInputLen] = '\0';
-                    }
-                    key = GetCharPressed();
-                }
-                if (IsKeyPressed(KEY_BACKSPACE) && nfcInputLen > 0) {
-                    nfcInputLen--;
-                    nfcInputBuf[nfcInputLen] = '\0';
-                }
-                if (IsKeyPressed(KEY_ESCAPE)) {
-                    nfcInputActive = false;
-                }
-                if (IsKeyPressed(KEY_ENTER) && nfcInputLen > 0) {
-                    int emTypeIndex;
-                    AbilitySlot emAbilities[MAX_ABILITIES_PER_UNIT];
-                    if (ParseUnitCode(nfcInputBuf, &emTypeIndex, emAbilities)) {
-                        if (emTypeIndex >= unitTypeCount) {
-                            snprintf(nfcInputError, sizeof(nfcInputError), "Unknown unit type %d", emTypeIndex);
-                            nfcInputErrorTimer = 2.0f;
-                        } else if (!SpawnUnit(units, &unitCount, emTypeIndex, TEAM_BLUE)) {
-                            snprintf(nfcInputError, sizeof(nfcInputError), "Team full (%d/%d)", BLUE_TEAM_MAX_SIZE, BLUE_TEAM_MAX_SIZE);
-                            nfcInputErrorTimer = 2.0f;
-                        } else {
-                            PlaySound(sfxNewCharacter);
-                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
-                                units[unitCount - 1].abilities[a] = emAbilities[a];
-                            intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                                .typeIndex = emTypeIndex, .unitIndex = unitCount - 1, .animFrame = 0 };
-                            nfcInputBuf[0] = '\0';
-                            nfcInputLen = 0;
-                            nfcInputActive = false;
-                        }
-                    } else {
-                        snprintf(nfcInputError, sizeof(nfcInputError), "Bad format: %s", nfcInputBuf);
-                        nfcInputErrorTimer = 2.0f;
-                    }
-                }
-            }
-        }
-
         //------------------------------------------------------------------------------
         // PHASE: PLAZA — 3D plaza with roaming enemies, interactive objects
         //------------------------------------------------------------------------------
@@ -1599,30 +1405,38 @@ int main(void)
                     else
                         nameInputActive = false;
 
-                    // CREATE LOBBY button
-                    Rectangle createBtn = { (float)(panelX + 50), (float)(panelY + 120), (float)(panelW - 100), 40 };
-                    if (CheckCollisionPointRec(mouse, createBtn)) {
+                    // HOST GAME button
+                    Rectangle hostBtn = { (float)(panelX + 50), (float)(panelY + 120), (float)(panelW - 100), 40 };
+                    if (CheckCollisionPointRec(mouse, hostBtn)) {
                         PlaySound(sfxUiClick);
                         menuError[0] = '\0';
-                        isMultiplayer = true;
-                        playerReady = false;
-                        if (net_client_connect(&netClient, serverHost, NET_PORT, NULL, playerName) == 0) {
-                            showMultiplayerPanel = false;
-                            phase = PHASE_LOBBY;
+                        if (host_start(NET_PORT) == 0) {
+                            isHosting = true;
+                            isMultiplayer = true;
+                            playerReady = false;
+                            if (net_client_connect(&netClient, "127.0.0.1", NET_PORT, NULL, playerName) == 0) {
+                                showMultiplayerPanel = false;
+                                phase = PHASE_LOBBY;
+                            } else {
+                                strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                                host_stop();
+                                isHosting = false;
+                                isMultiplayer = false;
+                            }
                         } else {
-                            strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
-                            isMultiplayer = false;
+                            strncpy(menuError, "Failed to start server", sizeof(menuError) - 1);
                         }
                     }
 
-                    // JOIN LOBBY button
+                    // JOIN GAME button
                     Rectangle joinBtn = { (float)(panelX + 50), (float)(panelY + 180), (float)(panelW - 100), 40 };
-                    if (joinCodeLen == LOBBY_CODE_LEN && CheckCollisionPointRec(mouse, joinBtn)) {
+                    if (joinIpLen > 0 && CheckCollisionPointRec(mouse, joinBtn)) {
                         PlaySound(sfxUiClick);
                         menuError[0] = '\0';
                         isMultiplayer = true;
+                        isHosting = false;
                         playerReady = false;
-                        if (net_client_connect(&netClient, serverHost, NET_PORT, joinCodeInput, playerName) == 0) {
+                        if (net_client_connect(&netClient, joinIpAddress, NET_PORT, NULL, playerName) == 0) {
                             showMultiplayerPanel = false;
                             phase = PHASE_LOBBY;
                         } else {
@@ -1634,11 +1448,6 @@ int main(void)
                     // 3D object clicks
                     if (plazaHoverObject == 1) {
                         PlaySound(sfxUiClick);
-                        // Try fetching global leaderboard, fall back to local
-                        Leaderboard serverLb = {0};
-                        if (net_leaderboard_fetch(serverHost, NET_PORT, &serverLb) == 0) {
-                            leaderboard = serverLb;
-                        }
                         showLeaderboard = true;
                         leaderboardScroll = 0;
                     } else if (plazaHoverObject == 2) {
@@ -1666,21 +1475,20 @@ int main(void)
                 if (IsKeyPressed(KEY_ENTER)) nameInputActive = false;
             }
 
-            // Multiplayer join code text input
+            // IP address text input
             if (showMultiplayerPanel && !nameInputActive) {
                 int key = GetCharPressed();
                 while (key > 0) {
-                    if (joinCodeLen < LOBBY_CODE_LEN && ((key >= 'A' && key <= 'Z') ||
-                        (key >= 'a' && key <= 'z') || (key >= '0' && key <= '9'))) {
-                        joinCodeInput[joinCodeLen] = (key >= 'a' && key <= 'z') ? (key - 32) : (char)key;
-                        joinCodeLen++;
-                        joinCodeInput[joinCodeLen] = '\0';
+                    if (joinIpLen < 63 && ((key >= '0' && key <= '9') || key == '.')) {
+                        joinIpAddress[joinIpLen] = (char)key;
+                        joinIpLen++;
+                        joinIpAddress[joinIpLen] = '\0';
                     }
                     key = GetCharPressed();
                 }
-                if (IsKeyPressed(KEY_BACKSPACE) && joinCodeLen > 0) {
-                    joinCodeLen--;
-                    joinCodeInput[joinCodeLen] = '\0';
+                if (IsKeyPressed(KEY_BACKSPACE) && joinIpLen > 0) {
+                    joinIpLen--;
+                    joinIpAddress[joinIpLen] = '\0';
                 }
             }
 
@@ -1710,19 +1518,6 @@ int main(void)
                 int plazaValidCount = 0;
                 for (int i = 0; i < unitTypeCount; i++) if (unitTypes[i].name) plazaValidCount++;
                 int btnYStart = dHudTop - (plazaValidCount * (btnHeight + btnMargin)) - btnMargin;
-
-                // NFC input box click check
-                {
-                    int nfcBoxW = 200, nfcBoxH = 28;
-                    int nfcBoxX = sw/2 - nfcBoxW/2;
-                    int nfcBoxY = btnYStart - 55;
-                    Rectangle nfcRect = { (float)nfcBoxX, (float)nfcBoxY, (float)nfcBoxW, (float)nfcBoxH };
-                    if (CheckCollisionPointRec(mouse, nfcRect)) {
-                        nfcInputActive = true;
-                    } else if (nfcInputActive) {
-                        nfcInputActive = false;
-                    }
-                }
 
                 bool plazaClickedBtn = false;
                 int btnXBlue = btnMargin;
@@ -1886,6 +1681,7 @@ int main(void)
 
             if (netClient.state == NET_ERROR) {
                 strncpy(menuError, netClient.errorMsg, sizeof(menuError) - 1);
+                if (isHosting) { host_stop(); isHosting = false; }
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
                 unitCount = 0;
@@ -1925,6 +1721,7 @@ int main(void)
             }
 
             if (IsKeyPressed(KEY_ESCAPE)) {
+                if (isHosting) { host_stop(); isHosting = false; }
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
                 unitCount = 0;
@@ -1943,6 +1740,7 @@ int main(void)
             if (isMultiplayer) {
                 net_client_poll(&netClient);
                 if (netClient.state == NET_ERROR) {
+                    if (isHosting) { host_stop(); isHosting = false; }
                     net_client_disconnect(&netClient);
                     isMultiplayer = false;
                     unitCount = 0;
@@ -1967,46 +1765,10 @@ int main(void)
                 // Combat started — server sends serialized units
                 if (netClient.combatStarted) {
                     netClient.combatStarted = false;
-                    // Save NFC UID data from blue units before server overwrite
-                    // (NetUnit doesn't carry NFC fields, so deserialize loses them)
-                    // Saved in order — server preserves blue unit ordering.
-                    struct { uint8_t uid[7]; int uidLen; char name[32]; } nfcSave[MAX_UNITS];
-                    int nfcSaveCount = 0;
-                    for (int i = 0; i < unitCount; i++) {
-                        if (units[i].active && units[i].team == TEAM_BLUE) {
-                            if (units[i].nfcUidLen > 0) {
-                                memcpy(nfcSave[nfcSaveCount].uid, units[i].nfcUid, sizeof(units[i].nfcUid));
-                                nfcSave[nfcSaveCount].uidLen = units[i].nfcUidLen;
-                                memcpy(nfcSave[nfcSaveCount].name, units[i].nfcName, sizeof(units[i].nfcName));
-                            } else {
-                                nfcSave[nfcSaveCount].uidLen = 0;
-                            }
-                            nfcSaveCount++;
-                        }
-                    }
                     unitCount = deserialize_units(netClient.combatNetUnits,
                         netClient.combatNetUnitCount, units, MAX_UNITS);
-                    // Re-apply NFC UIDs to blue units by order (N-th blue = N-th saved)
-                    int blueIdx = 0;
-                    for (int i = 0; i < unitCount && blueIdx < nfcSaveCount; i++) {
-                        if (units[i].team != TEAM_BLUE) continue;
-                        if (nfcSave[blueIdx].uidLen > 0) {
-                            memcpy(units[i].nfcUid, nfcSave[blueIdx].uid, sizeof(units[i].nfcUid));
-                            units[i].nfcUidLen = nfcSave[blueIdx].uidLen;
-                            memcpy(units[i].nfcName, nfcSave[blueIdx].name, sizeof(units[i].nfcName));
-                        }
-                        blueIdx++;
-                    }
                     ApplyRarityBuffs(units, unitCount);
                     SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
-                    // Sync NFC-tagged units' abilities to server before combat
-                    for (int u2 = 0; u2 < unitCount; u2++) {
-                        if (units[u2].active && units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
-                            net_nfc_update_abilities(serverHost, NET_PORT,
-                                units[u2].nfcUid, units[u2].nfcUidLen,
-                                units[u2].abilities, MAX_ABILITIES_PER_UNIT);
-                        }
-                    }
                     ApplySynergies(units, unitCount);
                     phase = PHASE_COMBAT;
                     fightBannerTimer = 0.0f;
@@ -2077,7 +1839,7 @@ int main(void)
             }
 
             // Quick-buy: keys 1, 2, 3 for shop slots
-            if (!(isMultiplayer && playerReady) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE && !nfcInputActive) {
+            if (!(isMultiplayer && playerReady) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
                 int quickBuyKeys[3] = { KEY_ONE, KEY_TWO, KEY_THREE };
                 for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
                     if (IsKeyPressed(quickBuyKeys[s]) && shopSlots[s].abilityId >= 0) {
@@ -2140,7 +1902,7 @@ int main(void)
             }
 
             // Quick-roll: R key
-            if (!(isMultiplayer && playerReady) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE && !nfcInputActive) {
+            if (!(isMultiplayer && playerReady) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE) {
                 if (IsKeyPressed(KEY_R) && playerGold >= rollCost) {
                     usedRollHotkey = true;
                     PlaySound(sfxUiReroll);
@@ -2169,20 +1931,6 @@ int main(void)
                 Rectangle playBtn = { (float)(20), (float)(hudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 bool clickedButton = false;
 
-                // NFC input box click check (debug only)
-                if (debugMode) {
-                    int nfcBoxW = 200, nfcBoxH = 28;
-                    int nfcBoxX = sw/2 - nfcBoxW/2;
-                    int nfcBoxY = btnYStart - 55;
-                    Rectangle nfcRect = { (float)nfcBoxX, (float)nfcBoxY, (float)nfcBoxW, (float)nfcBoxH };
-                    if (CheckCollisionPointRec(mouse, nfcRect)) {
-                        nfcInputActive = true;
-                        clickedButton = true;
-                    } else if (nfcInputActive) {
-                        nfcInputActive = false;
-                    }
-                }
-
                 // Confirm removal popup (takes priority over everything)
                 if (removeConfirmUnit >= 0) {
                     int popW = 280, popH = 110;
@@ -2192,16 +1940,8 @@ int main(void)
                     Rectangle yesBtn = { (float)(popX + 24), (float)(popY + popH - rmBtnH - 12), (float)rmBtnW, (float)rmBtnH };
                     Rectangle noBtn  = { (float)(popX + popW - rmBtnW - 24), (float)(popY + popH - rmBtnH - 12), (float)rmBtnW, (float)rmBtnH };
                     if (CheckCollisionPointRec(mouse, yesBtn)) {
-                        // Remove the unit: sync NFC abilities to server, deactivate
-                        // Abilities stay on the figurine (server-side), NOT returned to inventory
-                        // (returning to inventory would be a duplication glitch)
+                        // Remove the unit: deactivate
                         int ri = removeConfirmUnit;
-                        if (units[ri].nfcUidLen > 0) {
-                            net_nfc_update_abilities(serverHost, NET_PORT,
-                                units[ri].nfcUid, units[ri].nfcUidLen,
-                                units[ri].abilities, MAX_ABILITIES_PER_UNIT);
-                            units[ri].nfcUidLen = 0;
-                        }
                         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
                             units[ri].abilities[a].abilityId = -1;
                         units[ri].active = false;
@@ -2250,14 +1990,6 @@ int main(void)
                         {
                             CompactBlueUnits(units, &unitCount);
                             SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
-                            // Sync NFC-tagged units' abilities to server before combat
-                            for (int u2 = 0; u2 < unitCount; u2++) {
-                                if (units[u2].active && units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
-                                    net_nfc_update_abilities(serverHost, NET_PORT,
-                                        units[u2].nfcUid, units[u2].nfcUidLen,
-                                        units[u2].abilities, MAX_ABILITIES_PER_UNIT);
-                                }
-                            }
                             ApplySynergies(units, unitCount);
                             phase = PHASE_COMBAT;
                             fightBannerTimer = 0.0f;
@@ -3783,9 +3515,6 @@ int main(void)
                     InsertLeaderboardEntry(&leaderboard, &entry);
                     SaveLeaderboard(&leaderboard, LEADERBOARD_FILE);
 
-                    // Submit to global leaderboard server (best-effort, non-fatal)
-                    net_leaderboard_submit(serverHost, NET_PORT, &entry);
-
                     lastMilestoneRound = currentRound;
                     deathPenalty = false;
                     lastOutcomeWin = true;
@@ -3826,9 +3555,10 @@ int main(void)
         {
             // Multiplayer: press R to return to menu
             if (isMultiplayer && IsKeyPressed(KEY_R)) {
+                if (isHosting) { host_stop(); isHosting = false; }
                 net_client_disconnect(&netClient);
                 isMultiplayer = false;
-                for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].nfcUidLen = 0; units[u2].active = false; }
+                for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].active = false; }
                 unitCount = 0;
                 snapshotCount = 0;
                 currentRound = 0;
@@ -3843,8 +3573,6 @@ int main(void)
                 playerGold = 20;
                 for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
                 dragState.dragging = false;
-                joinCodeLen = 0;
-                joinCodeInput[0] = '\0';
                 unitCount = 0;
                 memset(plazaData, 0, sizeof(plazaData));
                 PlazaSpawnEnemies(units, &unitCount, unitTypeCount, plazaData);
@@ -3873,14 +3601,8 @@ int main(void)
                     int cx = startX + h * (cardW + cardGap);
                     Rectangle wdBtn = { (float)(cx + 10), (float)(cardY + cardH - 34), (float)(cardW - 20), 28 };
                     if (CheckCollisionPointRec(mouse, wdBtn)) {
-                        // Withdraw — sync NFC abilities before removing
+                        // Withdraw unit
                         int wi = goBlue[h];
-                        if (units[wi].nfcUidLen > 0) {
-                            net_nfc_update_abilities(serverHost, NET_PORT,
-                                units[wi].nfcUid, units[wi].nfcUidLen,
-                                units[wi].abilities, MAX_ABILITIES_PER_UNIT);
-                            units[wi].nfcUidLen = 0;
-                        }
                         printf("[WITHDRAW] Unit %d (%s) withdrawn\n",
                                wi, unitTypes[units[wi].typeIndex].name);
                         units[wi].active = false;
@@ -3889,17 +3611,14 @@ int main(void)
                     }
                 }
 
-                // RESET button (only clickable when no NFC units remain)
-                bool hasNfcUnits = false;
-                for (int h = 0; h < goCount; h++)
-                    if (units[goBlue[h]].nfcUidLen > 0) { hasNfcUnits = true; break; }
+                // RESET button
                 int resetBtnW = 180, resetBtnH = 44;
                 int resetBtnY = cardY + cardH + 30;
                 Rectangle resetBtn = { (float)(sw/2 - resetBtnW/2), (float)resetBtnY, (float)resetBtnW, (float)resetBtnH };
-                if (!hasNfcUnits && CheckCollisionPointRec(mouse, resetBtn)) {
+                if (CheckCollisionPointRec(mouse, resetBtn)) {
                     PlaySound(sfxUiClick);
                     // Full reset — go to menu
-                    for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].nfcUidLen = 0; units[u2].active = false; }
+                    for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].active = false; }
                     unitCount = 0;
                     snapshotCount = 0;
                     currentRound = 0;
@@ -3929,14 +3648,8 @@ int main(void)
 
             // Death penalty: just press R (no withdraw possible)
             if (deathPenalty && IsKeyPressed(KEY_R)) {
-                // Reset NFC-tagged units' abilities on server (include dead units)
-                for (int u2 = 0; u2 < unitCount; u2++) {
-                    if (units[u2].team == TEAM_BLUE && units[u2].nfcUidLen > 0) {
-                        net_nfc_reset_abilities(serverHost, NET_PORT, units[u2].nfcUid, units[u2].nfcUidLen);
-                    }
-                }
                 // Full reset — clear all units
-                for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].nfcUidLen = 0; units[u2].active = false; }
+                for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].active = false; }
                 unitCount = 0;
                 snapshotCount = 0;
                 currentRound = 0;
@@ -4733,8 +4446,7 @@ int main(void)
                 GameDrawText(stars, (int)sp.x - starsW/2, (int)sp.y - S(26), S(14), starColor);
             }
 
-            const char *label = (units[i].nfcUidLen > 0 && units[i].nfcName[0])
-                ? units[i].nfcName : type->name;
+            const char *label = type->name;
             int nameFontSize = S(16);
             int tw = GameMeasureText(label, nameFontSize);
             // Drop shadow for readability
@@ -5036,48 +4748,6 @@ int main(void)
                     DrawRectangleLinesEx((Rectangle){(float)(dhX - 8), (float)(dhY - 4),
                         (float)(dhW + 16), (float)(dhSz + 8)}, 1, (Color){255, 220, 100, dhAlpha});
                     GameDrawText(dhint, dhX, dhY, dhSz, (Color){255, 230, 120, dhAlpha});
-                }
-            }
-
-            // NFC emulation input box (debug only)
-            if (debugMode) {
-                int nfcBoxW = 200, nfcBoxH = 28;
-                int nfcBoxX = sw/2 - nfcBoxW/2;
-                int nfcBoxY = dBtnYStart - 55;
-                int labelW = GameMeasureText("NFC Code:", 14);
-
-                // Label
-                GameDrawText("NFC Code:", nfcBoxX - labelW - 8, nfcBoxY + 6, 14, (Color){180,180,200,255});
-
-                // Input field background
-                Color boxBg = nfcInputActive ? (Color){50,50,70,255} : (Color){30,30,45,255};
-                Color boxBorder = nfcInputActive ? (Color){100,140,255,255} : (Color){70,70,90,255};
-                DrawRectangle(nfcBoxX, nfcBoxY, nfcBoxW, nfcBoxH, boxBg);
-                DrawRectangleLinesEx((Rectangle){(float)nfcBoxX,(float)nfcBoxY,(float)nfcBoxW,(float)nfcBoxH}, 1, boxBorder);
-
-                // Text content or placeholder
-                if (nfcInputLen > 0) {
-                    GameDrawText(nfcInputBuf, nfcBoxX + 6, nfcBoxY + 6, 14, WHITE);
-                    // Blinking cursor when active
-                    if (nfcInputActive && ((int)(GetTime() * 2.0) % 2 == 0)) {
-                        int tw = GameMeasureText(nfcInputBuf, 14);
-                        GameDrawText("|", nfcBoxX + 6 + tw, nfcBoxY + 5, 14, (Color){200,200,255,255});
-                    }
-                } else {
-                    if (nfcInputActive) {
-                        // Blinking cursor
-                        if ((int)(GetTime() * 2.0) % 2 == 0)
-                            GameDrawText("|", nfcBoxX + 6, nfcBoxY + 5, 14, (Color){200,200,255,255});
-                    } else {
-                        GameDrawText("e.g. 1MM1DG2XXCF3", nfcBoxX + 6, nfcBoxY + 6, 12, (Color){100,100,120,255});
-                    }
-                }
-
-                // Error message below
-                if (nfcInputErrorTimer > 0.0f) {
-                    float alpha = nfcInputErrorTimer > 1.0f ? 1.0f : nfcInputErrorTimer;
-                    Color errColor = { 255, 80, 80, (unsigned char)(255 * alpha) };
-                    GameDrawText(nfcInputError, nfcBoxX, nfcBoxY + nfcBoxH + 4, 12, errColor);
                 }
             }
 
@@ -6296,7 +5966,7 @@ int main(void)
             {
                 DrawRectangle(0, 0, msw, msh, (Color){0,0,0,140});
 
-                int panelW = 400, panelH = 300;
+                int panelW = 400, panelH = 340;
                 int panelX = msw/2 - panelW/2;
                 int panelY = msh/2 - panelH/2;
                 DrawRectangle(panelX, panelY, panelW, panelH, (Color){24,24,32,240});
@@ -6329,35 +5999,41 @@ int main(void)
                     }
                 }
 
-                // CREATE LOBBY button
-                Rectangle createBtn = { (float)(panelX + 50), (float)(panelY + 120), (float)(panelW - 100), 40 };
-                Color cBg = (Color){40,130,60,255};
-                if (CheckCollisionPointRec(GetMousePosition(), createBtn)) cBg = (Color){50,170,70,255};
-                DrawRectangleRec(createBtn, cBg);
-                DrawRectangleLinesEx(createBtn, 2, (Color){30,100,40,255});
-                const char *cText = "CREATE LOBBY";
-                int ctw = GameMeasureText(cText, 16);
-                GameDrawText(cText, (int)(createBtn.x + (panelW-100)/2 - ctw/2), (int)(createBtn.y + 12), 16, WHITE);
+                // HOST GAME button
+                Rectangle hostBtn = { (float)(panelX + 50), (float)(panelY + 120), (float)(panelW - 100), 40 };
+                Color hBg = (Color){40,130,60,255};
+                if (CheckCollisionPointRec(GetMousePosition(), hostBtn)) hBg = (Color){50,170,70,255};
+                DrawRectangleRec(hostBtn, hBg);
+                DrawRectangleLinesEx(hostBtn, 2, (Color){30,100,40,255});
+                const char *hText = "HOST GAME";
+                int htw = GameMeasureText(hText, 16);
+                GameDrawText(hText, (int)(hostBtn.x + (panelW-100)/2 - htw/2), (int)(hostBtn.y + 12), 16, WHITE);
 
-                // JOIN LOBBY button
-                bool codeReady = (joinCodeLen == LOBBY_CODE_LEN);
+                // JOIN GAME button
+                bool ipReady = (joinIpLen > 0);
                 Rectangle joinBtn = { (float)(panelX + 50), (float)(panelY + 180), (float)(panelW - 100), 40 };
-                Color jBg = codeReady ? (Color){160,100,30,255} : (Color){80,80,80,255};
-                if (codeReady && CheckCollisionPointRec(GetMousePosition(), joinBtn)) jBg = (Color){200,130,40,255};
+                Color jBg = ipReady ? (Color){160,100,30,255} : (Color){80,80,80,255};
+                if (ipReady && CheckCollisionPointRec(GetMousePosition(), joinBtn)) jBg = (Color){200,130,40,255};
                 DrawRectangleRec(joinBtn, jBg);
                 DrawRectangleLinesEx(joinBtn, 2, (Color){100,70,20,255});
-                const char *jText = "JOIN LOBBY";
+                const char *jText = "JOIN GAME";
                 int jtw = GameMeasureText(jText, 16);
                 GameDrawText(jText, (int)(joinBtn.x + (panelW-100)/2 - jtw/2), (int)(joinBtn.y + 12), 16, WHITE);
 
-                // Lobby code input
-                GameDrawText("Lobby Code:", panelX + 50, panelY + 230, 12, (Color){150,150,170,255});
-                Rectangle codeBox = { (float)(panelX + 50), (float)(panelY + 248), 120, 30 };
-                DrawRectangleRec(codeBox, (Color){35,35,50,255});
-                DrawRectangleLinesEx(codeBox, 2, (Color){80,80,100,255});
-                char codeBuf[8];
-                snprintf(codeBuf, sizeof(codeBuf), "%s_", joinCodeInput);
-                GameDrawText(codeBuf, panelX + 58, panelY + 254, 18, WHITE);
+                // IP address input
+                GameDrawText("Host IP Address:", panelX + 50, panelY + 230, 12, (Color){150,150,170,255});
+                Rectangle ipBox = { (float)(panelX + 50), (float)(panelY + 248), 200, 30 };
+                DrawRectangleRec(ipBox, (Color){35,35,50,255});
+                DrawRectangleLinesEx(ipBox, 2, (Color){80,80,100,255});
+                GameDrawText(joinIpAddress, panelX + 58, panelY + 254, 18, WHITE);
+                // Blinking cursor
+                if (!nameInputActive) {
+                    float blinkTime = (float)GetTime();
+                    if ((int)(blinkTime * 2) % 2 == 0) {
+                        int ipw = GameMeasureText(joinIpAddress, 18);
+                        DrawRectangle(panelX + 58 + ipw + 2, panelY + 254, 2, 18, WHITE);
+                    }
+                }
 
                 // Error message
                 if (menuError[0]) {
@@ -6380,13 +6056,15 @@ int main(void)
             int wtw = GameMeasureText(waitText, 30);
             GameDrawText(waitText, lsw/2 - wtw/2, lsh/2 - 60, 30, (Color){200, 180, 255, 255});
 
-            // Show lobby code
-            if (netClient.lobbyCode[0]) {
-                const char *codeLabel = "Share this code:";
-                int clw = GameMeasureText(codeLabel, 16);
-                GameDrawText(codeLabel, lsw/2 - clw/2, lsh/2, 16, (Color){150,150,170,255});
-                int ccw = GameMeasureText(netClient.lobbyCode, 40);
-                GameDrawText(netClient.lobbyCode, lsw/2 - ccw/2, lsh/2 + 25, 40, WHITE);
+            // Show hosting info
+            if (isHosting) {
+                char portInfo[64];
+                snprintf(portInfo, sizeof(portInfo), "Hosting on port %d", NET_PORT);
+                int piw = GameMeasureText(portInfo, 16);
+                GameDrawText(portInfo, lsw/2 - piw/2, lsh/2, 16, (Color){150,150,170,255});
+                const char *shareText = "Share your IP with your opponent";
+                int stw = GameMeasureText(shareText, 14);
+                GameDrawText(shareText, lsw/2 - stw/2, lsh/2 + 25, 14, (Color){120,120,140,255});
             }
 
             // Animated dots
@@ -6561,17 +6239,8 @@ int main(void)
             for (int i = 0; i < unitCount && goCount < BLUE_TEAM_MAX_SIZE; i++)
                 if (units[i].active && units[i].team == TEAM_BLUE) goBlue[goCount++] = i;
 
-            // Check if any NFC units still need withdrawing
-            bool hasNfcUnits = false;
-            for (int i = 0; i < goCount; i++)
-                if (units[goBlue[i]].nfcUidLen > 0) { hasNfcUnits = true; break; }
-
             // Subtitle
-            if (hasNfcUnits) {
-                const char *goSub = "Remove all units from sensors before resetting";
-                int gosub = GameMeasureText(goSub, 14);
-                GameDrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){255,120,120,220});
-            } else if (goCount > 0) {
+            if (goCount > 0) {
                 const char *goSub = "Withdraw your units or reset";
                 int gosub = GameMeasureText(goSub, 14);
                 GameDrawText(goSub, gosw/2 - gosub/2, 115, 14, (Color){180,180,200,180});
@@ -6642,17 +6311,11 @@ int main(void)
                 GameDrawText(wdText, (int)(wdBtn.x + (goCardW - 20)/2 - wdw/2), (int)(wdBtn.y + 8), 12, WHITE);
             }
 
-            // RESET button (disabled while NFC units remain)
+            // RESET button
             int resetBtnW = 180, resetBtnH = 44;
             int resetBtnY = goCardY + goCardH + 30;
             Rectangle resetBtn = { (float)(gosw/2 - resetBtnW/2), (float)resetBtnY, (float)resetBtnW, (float)resetBtnH };
-            if (hasNfcUnits) {
-                DrawRectangleRec(resetBtn, (Color){60,50,50,255});
-                DrawRectangleLinesEx(resetBtn, 2, (Color){80,60,60,255});
-                const char *resetText = "RESET";
-                int rstw = GameMeasureText(resetText, 18);
-                GameDrawText(resetText, (int)(resetBtn.x + resetBtnW/2 - rstw/2), (int)(resetBtn.y + 13), 18, (Color){100,90,90,255});
-            } else {
+            {
                 Color resetBg = (Color){180,50,50,255};
                 if (CheckCollisionPointRec(GetMousePosition(), resetBtn))
                     resetBg = (Color){220,70,70,255};
@@ -6787,11 +6450,9 @@ int main(void)
                 if (textT > 1.0f) textT = 1.0f;
                 textSlide = 1.0f - (1.0f - textT) * (1.0f - textT);
             }
-            // Determine display name: custom name if set, class name as fallback
+            // Determine display name
             const char *className = unitTypes[intro.typeIndex].name;
-            bool hasCustomName = (intro.unitIndex >= 0 && intro.unitIndex < unitCount &&
-                                  units[intro.unitIndex].nfcName[0] != '\0');
-            const char *introName = hasCustomName ? units[intro.unitIndex].nfcName : className;
+            const char *introName = className;
             int nameFontSize = ish / 8;
             int nameW = GameMeasureText(introName, nameFontSize);
             float nameFinalX = isw * 0.08f;
@@ -6807,12 +6468,10 @@ int main(void)
             nameColor.a = alpha;
             GameDrawText(introName, (int)nameX, (int)nameY, nameFontSize, nameColor);
 
-            // Subtitle: class name if custom named, otherwise "joins the battle!"
+            // Subtitle
             int subSize = nameFontSize / 3;
             if (subSize < 12) subSize = 12;
-            const char *subText = hasCustomName
-                ? TextFormat("%s joins the battle!", className)
-                : "joins the battle!";
+            const char *subText = "joins the battle!";
             GameDrawText(subText, (int)nameX + 4, (int)nameY + nameFontSize + 4, subSize,
                 (Color){ 200, 200, 220, (unsigned char)(alpha * 0.8f) });
 
@@ -6878,64 +6537,6 @@ int main(void)
             GameDrawText("Shadow Color RT", (int)dstRec.x, (int)dstRec.y + (int)previewSize + 4, 16, YELLOW);
         }
 
-        // Naming prompt overlay
-        if (namingUnitIndex >= 0) {
-            // Handle text input
-            int key = GetCharPressed();
-            while (key > 0) {
-                if (key >= 32 && key <= 126 && namingPos < 30) {
-                    namingBuf[namingPos++] = (char)key;
-                    namingBuf[namingPos] = '\0';
-                }
-                key = GetCharPressed();
-            }
-            if (IsKeyPressed(KEY_BACKSPACE) && namingPos > 0) {
-                namingBuf[--namingPos] = '\0';
-            }
-            if (IsKeyPressed(KEY_ENTER) && namingPos > 0) {
-                // Save name to unit (explicit copy + null terminate)
-                int ni = namingUnitIndex;
-                if (ni >= 0 && ni < unitCount) {
-                    memcpy(units[ni].nfcName, namingBuf, namingPos);
-                    units[ni].nfcName[namingPos] = '\0';
-                    printf("[NFC] Named unit %d: \"%s\" (nfcName set to \"%s\")\n", ni, namingBuf, units[ni].nfcName);
-                    // Persist to server
-                    if (units[ni].nfcUidLen > 0) {
-                        net_nfc_set_name(serverHost, NET_PORT,
-                            units[ni].nfcUid, units[ni].nfcUidLen, namingBuf);
-                    }
-                    // Start intro cutscene now that naming is done
-                    intro = (UnitIntro){ .active = true, .timer = 0.0f,
-                        .typeIndex = units[ni].typeIndex, .unitIndex = ni, .animFrame = 0 };
-                }
-                namingUnitIndex = -1;
-            }
-            // Draw overlay
-            int sw = GetScreenWidth(), sh = GetScreenHeight();
-            DrawRectangle(0, 0, sw, sh, (Color){0, 0, 0, 120});
-            int boxW = S(400), boxH = S(80);
-            int boxX = (sw - boxW) / 2, boxY = (sh - boxH) / 2;
-            DrawRectangle(boxX, boxY, boxW, boxH, (Color){30, 30, 45, 240});
-            DrawRectangleLinesEx((Rectangle){(float)boxX, (float)boxY, (float)boxW, (float)boxH}, 2, (Color){100, 200, 100, 255});
-            const char *prompt = "Name your creature:";
-            int promptW = GameMeasureText(prompt, S(18));
-            GameDrawText(prompt, (sw - promptW) / 2, boxY + S(8), S(18), WHITE);
-            // Input field
-            int fieldW = boxW - S(40), fieldH = S(28);
-            int fieldX = boxX + S(20), fieldY = boxY + S(38);
-            DrawRectangle(fieldX, fieldY, fieldW, fieldH, (Color){50, 50, 70, 255});
-            DrawRectangleLines(fieldX, fieldY, fieldW, fieldH, (Color){100, 200, 100, 255});
-            if (namingPos > 0) {
-                GameDrawText(namingBuf, fieldX + S(6), fieldY + S(4), S(18), WHITE);
-            }
-            // Blinking cursor
-            if ((int)(GetTime() * 2.0) % 2 == 0) {
-                int cursorX = fieldX + S(6) + GameMeasureText(namingBuf, S(18));
-                GameDrawText("|", cursorX, fieldY + S(4), S(18), (Color){200, 255, 200, 255});
-            }
-            GameDrawText("[Enter] Confirm", boxX + S(20), boxY + boxH + S(4), S(12), (Color){160, 160, 180, 200});
-        }
-
         // Easter egg overlay
         if (easterEggTimer > 0.0f) {
             easterEggTimer -= rawDt;
@@ -6971,13 +6572,8 @@ int main(void)
     }
 
     // Cleanup
+    if (isHosting) host_stop();
     if (isMultiplayer) net_client_disconnect(&netClient);
-#ifndef _WIN32
-    if (nfcPipe) {
-        pclose(nfcPipe);
-        printf("[NFC] Bridge closed\n");
-    }
-#endif
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     UnloadRenderTexture(introModelRT);
     UnloadRenderTexture(fxaaRT);

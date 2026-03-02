@@ -210,11 +210,7 @@ typedef struct {
     float mushroomSpawnThresh; // 0 = disabled
     bool  hasSpawnedMushling;
     bool  isMushling;          // spawned mushling (no further spawns)
-    // NFC tag UID (travels with unit during array compaction)
-    unsigned char nfcUid[7];
-    int nfcUidLen;         // 0 = not from NFC
     uint8_t rarity;        // 0=common, 1=rare, 2=legendary
-    char nfcName[32];      // custom creature name (empty = use class name)
 } Unit;
 
 //------------------------------------------------------------------------------------
@@ -225,10 +221,7 @@ typedef struct {
     Vector3 position;
     Team team;
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
-    unsigned char nfcUid[7];
-    int nfcUidLen;
     uint8_t rarity;
-    char nfcName[32];
     float hpMultiplier;
     float dmgMultiplier;
     float speedMultiplier;

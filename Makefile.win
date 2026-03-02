@@ -15,11 +15,11 @@ CFLAGS = -Wall -Wextra -O2
 GAME_DIR = raylib
 RAYLIB_WIN = deps/raylib-win
 
-GAME_SRCS = $(filter-out $(GAME_DIR)/screenpicker.c, $(wildcard $(GAME_DIR)/*.c))
-GAME_HDRS = $(wildcard $(GAME_DIR)/*.h)
+GAME_SRCS = $(filter-out $(GAME_DIR)/screenpicker.c, $(wildcard $(GAME_DIR)/*.c)) server/game_session.c
+GAME_HDRS = $(wildcard $(GAME_DIR)/*.h) server/game_session.h
 GAME_TARGET = $(GAME_DIR)/game.exe
 
-GAME_CFLAGS = $(CFLAGS) -I$(GAME_DIR) -I$(RAYLIB_WIN)/include
+GAME_CFLAGS = $(CFLAGS) -I$(GAME_DIR) -Iserver -I$(RAYLIB_WIN)/include
 GAME_LDFLAGS = -L$(RAYLIB_WIN)/lib -lraylib -lopengl32 -lgdi32 -lwinmm -lws2_32 -lm -lpthread -static
 
 .PHONY: all clean

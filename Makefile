@@ -6,11 +6,11 @@ UNAME := $(shell uname -s)
 
 # --- Game client ---
 GAME_DIR = raylib
-GAME_SRCS = $(filter-out $(GAME_DIR)/screenpicker.c, $(wildcard $(GAME_DIR)/*.c))
-GAME_HDRS = $(wildcard $(GAME_DIR)/*.h)
+GAME_SRCS = $(filter-out $(GAME_DIR)/screenpicker.c, $(wildcard $(GAME_DIR)/*.c)) server/game_session.c
+GAME_HDRS = $(wildcard $(GAME_DIR)/*.h) server/game_session.h
 GAME_TARGET = $(GAME_DIR)/game
 
-GAME_CFLAGS = $(CFLAGS) -I$(GAME_DIR)
+GAME_CFLAGS = $(CFLAGS) -I$(GAME_DIR) -Iserver
 
 ifeq ($(UNAME),Darwin)
   GAME_CFLAGS += $(shell pkg-config --cflags raylib)
@@ -19,12 +19,6 @@ else
   GAME_CFLAGS += -I/usr/local/include
   GAME_LDFLAGS = -lraylib -lm -lGL -lpthread -ldl -lrt
 endif
-
-# --- NFC bridge ---
-NFC_DIR = nfc
-NFC_SRC = $(NFC_DIR)/nfc_bridge.c
-NFC_TARGET = $(NFC_DIR)/build/bridge
-NFC_CFLAGS = $(CFLAGS)
 
 # --- Asset files to bundle with exports ---
 GAME_ASSETS = $(GAME_DIR)/env_layout.txt \
@@ -38,22 +32,17 @@ GAME_NAME = relic-rivals
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 # --- Targets ---
-.PHONY: all game bridge clean run export release
+.PHONY: all game clean run export release
 
-all: game bridge
+all: game
 
 game: $(GAME_TARGET)
-bridge: $(NFC_TARGET)
 
-run: game bridge
+run: game
 	cd $(GAME_DIR) && ./game
 
 $(GAME_TARGET): $(GAME_SRCS) $(GAME_HDRS)
 	$(CC) $(GAME_CFLAGS) -o $@ $(GAME_SRCS) $(GAME_LDFLAGS)
-
-$(NFC_TARGET): $(NFC_SRC)
-	@mkdir -p $(NFC_DIR)/build
-	$(CC) $(NFC_CFLAGS) -o $@ $^
 
 export: game
 	@echo "=== Building Windows ==="
@@ -90,7 +79,7 @@ release: export
 	@echo "=== Released $(VERSION) ==="
 
 clean:
-	rm -f $(GAME_TARGET) $(NFC_TARGET)
+	rm -f $(GAME_TARGET)
 	$(MAKE) -f Makefile.win clean
 	rm -rf export
 	rm -f $(GAME_NAME)-*.zip

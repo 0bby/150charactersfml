@@ -5,10 +5,21 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <errno.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
+
+#ifdef _WIN32
+  #define WIN32_LEAN_AND_MEAN
+  #define NOGDI
+  #define NOUSER
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #define close_socket closesocket
+#else
+  #include <unistd.h>
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #define close_socket close
+#endif
 
 //------------------------------------------------------------------------------------
 // Internal helpers
@@ -339,12 +350,16 @@ int session_tick(GameSession *s, float dt)
         if (!s->players[p].connected) continue;
         // Quick check if socket is still alive
         char peek;
+#ifdef _WIN32
+        int r = recv(s->players[p].sockfd, &peek, 1, MSG_PEEK);
+#else
         int r = recv(s->players[p].sockfd, &peek, 1, MSG_PEEK | MSG_DONTWAIT);
+#endif
         if (r == 0) {
             // Disconnected
             printf("[Session %s] Player %d disconnected\n", s->lobbyCode, p);
             s->players[p].connected = false;
-            close(s->players[p].sockfd);
+            close_socket(s->players[p].sockfd);
             // Notify other player they win
             int other = 1 - p;
             if (s->players[other].connected) {
@@ -376,7 +391,7 @@ int session_tick(GameSession *s, float dt)
             if (r == 1) session_handle_msg(s, p, &msg);
             else if (r < 0) {
                 s->players[p].connected = false;
-                close(s->players[p].sockfd);
+                close_socket(s->players[p].sockfd);
             }
         }
     } break;
@@ -444,7 +459,7 @@ int session_tick(GameSession *s, float dt)
             int r = net_recv_msg_nonblock(s->players[0].sockfd, &msg);
             if (r < 0) {
                 s->players[0].connected = false;
-                close(s->players[0].sockfd);
+                close_socket(s->players[0].sockfd);
                 s->state = SESSION_DEAD;
                 return 1;
             }
