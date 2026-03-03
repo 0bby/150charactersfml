@@ -79,6 +79,8 @@ static bool                  g_eosAltDeleteDone = false;
 // Host state
 static GameSession           g_hostSession;
 static bool                  g_hostSessionActive = false;
+static double                g_hostTickAccum = 0.0;  // accumulated time for decoupled tick
+static double                g_hostLastTime = 0.0;   // last timestamp for decoupled tick
 static int                   g_hostLocalSock[2]  = {-1, -1};  // host's own read/write pair
 static int                   g_hostRemoteSock[2] = {-1, -1};  // remote player's read/write pair
 static EOS_ProductUserId     g_hostRemoteUserId  = NULL;
@@ -599,6 +601,8 @@ static void EOS_CALL on_lobby_member_status_received(
              sizeof(g_hostSession.players[1].name), "%s", "Opponent");
     session_add_player(&g_hostSession, g_hostRemoteSock[0]);
     g_hostSessionActive = true;
+    g_hostTickAccum = 0.0;
+    g_hostLastTime = 0.0;
 
     ec->state = EOS_STATE_IN_GAME;
     printf("[EOS] Game session started (host)\n");
@@ -1086,6 +1090,23 @@ static void eos_handle_server_msg(EosClient *ec, const NetMessage *msg)
 //------------------------------------------------------------------------------------
 // Host: drain socketpair and forward messages
 //------------------------------------------------------------------------------------
+// Platform-specific high-resolution timer for decoupled tick
+#ifdef _WIN32
+static double host_get_time(void) {
+    static LARGE_INTEGER freq = {0};
+    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return (double)now.QuadPart / (double)freq.QuadPart;
+}
+#else
+#include <time.h>
+static double host_get_time(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+#endif
 static void host_drain_and_forward(EosClient *ec)
 {
     if (!g_hostSessionActive) return;
@@ -1109,8 +1130,27 @@ static void host_drain_and_forward(EosClient *ec)
         }
     }
 
-    // 3) Tick the session
-    int dead = session_tick(&g_hostSession, 1.0f / 60.0f);
+    // 3) Tick the session — decoupled from render FPS
+    //    Accumulate real elapsed time, run fixed 1/60 ticks to catch up
+    {
+        double now = host_get_time();
+        if (g_hostLastTime == 0.0) g_hostLastTime = now;
+        double elapsed = now - g_hostLastTime;
+        g_hostLastTime = now;
+        if (elapsed > 0.1) elapsed = 0.1; // cap at 100ms to prevent spiral
+        g_hostTickAccum += elapsed;
+        const double tickDt = 1.0 / 60.0;
+        int dead = 0;
+        while (g_hostTickAccum >= tickDt && !dead) {
+            g_hostTickAccum -= tickDt;
+            dead = session_tick(&g_hostSession, (float)tickDt);
+        }
+        if (dead) {
+            printf("[EOS] Host session ended (dead=%d)\n", dead);
+            fflush(stdout);
+            g_hostSessionActive = false;
+        }
+    }
 
     // 4) Drain localSock[1] — these are messages the session sent to player 0 (host)
     {
@@ -1130,12 +1170,6 @@ static void host_drain_and_forward(EosClient *ec)
                 eos_send_msg(g_hostRemoteUserId, msg.type, msg.payload, msg.size);
             }
         }
-    }
-
-    if (dead) {
-        printf("[EOS] Host session ended (dead=%d)\n", dead);
-        fflush(stdout);
-        g_hostSessionActive = false;
     }
 }
 
