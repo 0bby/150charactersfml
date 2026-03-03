@@ -22,13 +22,26 @@ GAME_TARGET = $(GAME_DIR)/game.exe
 GAME_CFLAGS = $(CFLAGS) -I$(GAME_DIR) -Iserver -I$(RAYLIB_WIN)/include
 GAME_LDFLAGS = -L$(RAYLIB_WIN)/lib -lraylib -lopengl32 -lgdi32 -lwinmm -lws2_32 -lm -lpthread -static
 
+# --- Optional EOS P2P relay (build with: make -f Makefile.win USE_EOS=1) ---
+ifdef USE_EOS
+  EOS_SDK = deps/eos-sdk
+  GAME_CFLAGS += -DUSE_EOS -I$(EOS_SDK)/include
+  # Link against EOS import lib; must ship EOSSDK-Win64-Shipping.dll alongside .exe
+  # Remove -static so the dynamic EOS lib can load
+  GAME_LDFLAGS := $(filter-out -static,$(GAME_LDFLAGS))
+  EOS_LDFLAGS = -L$(EOS_SDK)/Lib -lEOSSDK-Win64-Shipping
+endif
+
 .PHONY: all clean
 
 all: $(GAME_TARGET)
+ifdef USE_EOS
+	@cp $(EOS_SDK)/Bin/EOSSDK-Win64-Shipping.dll $(GAME_DIR)/
+endif
 	@echo "Built: $(GAME_TARGET)"
 
 $(GAME_TARGET): $(GAME_SRCS) $(GAME_HDRS)
-	$(CC) $(GAME_CFLAGS) -o $@ $(GAME_SRCS) $(GAME_LDFLAGS)
+	$(CC) $(GAME_CFLAGS) -o $@ $(GAME_SRCS) $(GAME_LDFLAGS) $(EOS_LDFLAGS)
 
 clean:
 	rm -f $(GAME_TARGET)

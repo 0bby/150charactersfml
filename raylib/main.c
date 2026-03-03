@@ -41,6 +41,9 @@ static bool  cgDebugOverlay  = false;
 #include "leaderboard.h"
 #include "net_client.h"
 #include "host.h"
+#ifdef USE_EOS
+#include "net_eos.h"
+#endif
 
 // Global font — loaded in main(), used by GameDrawText/GameMeasureText
 static Font g_gameFont = { 0 };
@@ -161,6 +164,9 @@ static float uiScale = 1.0f;
 int main(void)
 {
     net_platform_init();
+#ifdef USE_EOS
+    eos_init();
+#endif
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 720, "Relic Rivals");
     SetExitKey(0);  // Disable default ESC-to-close — we handle ESC ourselves
@@ -1178,6 +1184,13 @@ int main(void)
     bool opponentIsReady = false;
     char menuError[128] = {0};
     bool currentRoundIsPve = false;
+#ifdef USE_EOS
+    EosClient eosClient;
+    eos_client_init(&eosClient);
+    bool useEos = false;
+    char joinLobbyCode[LOBBY_CODE_LEN + 1] = {0};
+    int joinLobbyCodeLen = 0;
+#endif
 
     // UI button sizes (positions computed each frame for resize support)
     const int btnWidth = 150;
@@ -1225,6 +1238,9 @@ int main(void)
         if (IsMusicStreamPlaying(bgm) && GetMusicTimePlayed(bgm) >= GetMusicTimeLength(bgm) - 0.05f) {
             SeekMusicStream(bgm, 29.091f);
         }
+#ifdef USE_EOS
+        eos_tick();
+#endif
         // Slow-motion time scaling
         if (slowmoTimer > 0.0f) {
             slowmoTimer -= rawDt;
@@ -1585,7 +1601,7 @@ int main(void)
                     // Multiplayer panel click handling
                     int sw = GetScreenWidth();
                     int sh = GetScreenHeight();
-                    int panelW = 400, panelH = 300;
+                    int panelW = 400, panelH = 340;
                     int panelX = sw/2 - panelW/2;
                     int panelY = sh/2 - panelH/2;
                     Vector2 mouse = GetMousePosition();
@@ -1603,11 +1619,55 @@ int main(void)
                     else
                         nameInputActive = false;
 
+#ifdef USE_EOS
+                    // LAN / Online toggle tabs (click handling)
+                    {
+                        int tabW = (panelW - 100) / 2;
+                        Rectangle lanTab = { (float)(panelX + 50), (float)(panelY + 105), (float)tabW, 24 };
+                        Rectangle onlineTab = { (float)(panelX + 50 + tabW), (float)(panelY + 105), (float)tabW, 24 };
+                        bool hitLan = CheckCollisionPointRec(mouse, lanTab);
+                        bool hitOnl = CheckCollisionPointRec(mouse, onlineTab);
+                        if (hitLan || hitOnl) {
+                            printf("[UI] Tab click: lan=%d onl=%d useEos=%d eosLoggedIn=%d mouse=(%.0f,%.0f) onlRect=(%.0f,%.0f,%.0f,%.0f)\n",
+                                   hitLan, hitOnl, useEos, eos_is_logged_in(),
+                                   mouse.x, mouse.y,
+                                   onlineTab.x, onlineTab.y, onlineTab.width, onlineTab.height);
+                            fflush(stdout);
+                        }
+                        if (hitLan && useEos) {
+                            useEos = false;
+                            PlaySound(sfxUiClick);
+                        }
+                        if (hitOnl && !useEos && eos_is_logged_in()) {
+                            useEos = true;
+                            PlaySound(sfxUiClick);
+                        }
+                    }
+#endif
+
                     // HOST GAME button
-                    Rectangle hostBtn = { (float)(panelX + 50), (float)(panelY + 120), (float)(panelW - 100), 40 };
+                    Rectangle hostBtn = { (float)(panelX + 50), (float)(panelY + 140), (float)(panelW - 100), 40 };
                     if (CheckCollisionPointRec(mouse, hostBtn)) {
                         PlaySound(sfxUiClick);
                         menuError[0] = '\0';
+#ifdef USE_EOS
+                        if (useEos) {
+                            isHosting = true;
+                            isMultiplayer = true;
+                            playerReady = false;
+                            if (eos_host_lobby(&eosClient, playerName) == 0) {
+                                showMultiplayerPanel = false;
+                                mpLobby = (MpLobbySelection){ .slotTypes = {-1,-1,-1,-1}, .activeSlot = 0, .selectionComplete = false, .glowTimer = 0.0f };
+                                for (int u = 0; u < unitCount; u++) if (units[u].team == TEAM_BLUE) units[u].active = false;
+                                CompactBlueUnits(units, &unitCount);
+                                phase = PHASE_LOBBY;
+                            } else {
+                                snprintf(menuError, sizeof(menuError), "%s", eosClient.errorMsg);
+                                isHosting = false;
+                                isMultiplayer = false;
+                            }
+                        } else
+#endif
                         if (host_start(NET_PORT) == 0) {
                             isHosting = true;
                             isMultiplayer = true;
@@ -1615,7 +1675,6 @@ int main(void)
                             if (net_client_connect(&netClient, "127.0.0.1", NET_PORT, NULL, playerName) == 0) {
                                 showMultiplayerPanel = false;
                                 mpLobby = (MpLobbySelection){ .slotTypes = {-1,-1,-1,-1}, .activeSlot = 0, .selectionComplete = false, .glowTimer = 0.0f };
-                                // Clear any existing blue units for fresh lobby selection
                                 for (int u = 0; u < unitCount; u++) if (units[u].team == TEAM_BLUE) units[u].active = false;
                                 CompactBlueUnits(units, &unitCount);
                                 phase = PHASE_LOBBY;
@@ -1631,13 +1690,32 @@ int main(void)
                     }
 
                     // JOIN GAME button
-                    Rectangle joinBtn = { (float)(panelX + 50), (float)(panelY + 180), (float)(panelW - 100), 40 };
-                    if (joinIpLen > 0 && CheckCollisionPointRec(mouse, joinBtn)) {
+                    Rectangle joinBtn = { (float)(panelX + 50), (float)(panelY + 200), (float)(panelW - 100), 40 };
+#ifdef USE_EOS
+                    bool joinReady = useEos ? (joinLobbyCodeLen == LOBBY_CODE_LEN) : (joinIpLen > 0);
+#else
+                    bool joinReady = (joinIpLen > 0);
+#endif
+                    if (joinReady && CheckCollisionPointRec(mouse, joinBtn)) {
                         PlaySound(sfxUiClick);
                         menuError[0] = '\0';
                         isMultiplayer = true;
                         isHosting = false;
                         playerReady = false;
+#ifdef USE_EOS
+                        if (useEos) {
+                            if (eos_join_lobby(&eosClient, joinLobbyCode, playerName) == 0) {
+                                showMultiplayerPanel = false;
+                                mpLobby = (MpLobbySelection){ .slotTypes = {-1,-1,-1,-1}, .activeSlot = 0, .selectionComplete = false, .glowTimer = 0.0f };
+                                for (int u = 0; u < unitCount; u++) if (units[u].team == TEAM_BLUE) units[u].active = false;
+                                CompactBlueUnits(units, &unitCount);
+                                phase = PHASE_LOBBY;
+                            } else {
+                                snprintf(menuError, sizeof(menuError), "%s", eosClient.errorMsg);
+                                isMultiplayer = false;
+                            }
+                        } else
+#endif
                         if (net_client_connect(&netClient, joinIpAddress, NET_PORT, NULL, playerName) == 0) {
                             showMultiplayerPanel = false;
                             mpLobby = (MpLobbySelection){ .slotTypes = {-1,-1,-1,-1}, .activeSlot = 0, .selectionComplete = false, .glowTimer = 0.0f };
@@ -1684,20 +1762,45 @@ int main(void)
                 }
             }
 
-            // IP address text input
+            // IP address / lobby code text input
             if (showMultiplayerPanel && !nameInputActive) {
                 int key = GetCharPressed();
                 while (key > 0) {
-                    if (joinIpLen < 63 && ((key >= '0' && key <= '9') || key == '.')) {
-                        joinIpAddress[joinIpLen] = (char)key;
-                        joinIpLen++;
-                        joinIpAddress[joinIpLen] = '\0';
+#ifdef USE_EOS
+                    if (useEos) {
+                        // Lobby code: uppercase alphanumeric, max 4 chars
+                        char c = (char)key;
+                        if (c >= 'a' && c <= 'z') c -= 32; // uppercase
+                        if (joinLobbyCodeLen < LOBBY_CODE_LEN &&
+                            ((c >= 'A' && c <= 'Z') || (c >= '2' && c <= '9'))) {
+                            joinLobbyCode[joinLobbyCodeLen] = c;
+                            joinLobbyCodeLen++;
+                            joinLobbyCode[joinLobbyCodeLen] = '\0';
+                        }
+                    } else
+#endif
+                    {
+                        if (joinIpLen < 63 && ((key >= '0' && key <= '9') || key == '.')) {
+                            joinIpAddress[joinIpLen] = (char)key;
+                            joinIpLen++;
+                            joinIpAddress[joinIpLen] = '\0';
+                        }
                     }
                     key = GetCharPressed();
                 }
-                if (IsKeyPressed(KEY_BACKSPACE) && joinIpLen > 0) {
-                    joinIpLen--;
-                    joinIpAddress[joinIpLen] = '\0';
+                if (IsKeyPressed(KEY_BACKSPACE)) {
+#ifdef USE_EOS
+                    if (useEos) {
+                        if (joinLobbyCodeLen > 0) {
+                            joinLobbyCodeLen--;
+                            joinLobbyCode[joinLobbyCodeLen] = '\0';
+                        }
+                    } else
+#endif
+                    if (joinIpLen > 0) {
+                        joinIpLen--;
+                        joinIpAddress[joinIpLen] = '\0';
+                    }
                 }
             }
 
@@ -1919,12 +2022,30 @@ int main(void)
         //------------------------------------------------------------------------------
         else if (phase == PHASE_LOBBY)
         {
+#ifdef USE_EOS
+            if (useEos) eos_client_poll(&eosClient); else
+#endif
             net_client_poll(&netClient);
 
-            if (netClient.state == NET_ERROR) {
-                snprintf(menuError, sizeof(menuError), "%s", netClient.errorMsg);
-                if (isHosting) { host_stop(); isHosting = false; }
-                net_client_disconnect(&netClient);
+#ifdef USE_EOS
+            #define NC_STATE  (useEos ? (eosClient.state == EOS_STATE_ERROR) : (netClient.state == NET_ERROR))
+            #define NC_ERR    (useEos ? eosClient.errorMsg : netClient.errorMsg)
+            #define NC_FLAG(f)  (useEos ? eosClient.f : netClient.f)
+            #define NC_CLEAR(f) do { if (useEos) eosClient.f = false; else netClient.f = false; } while(0)
+#else
+            #define NC_STATE  (netClient.state == NET_ERROR)
+            #define NC_ERR    (netClient.errorMsg)
+            #define NC_FLAG(f)  (netClient.f)
+            #define NC_CLEAR(f) do { netClient.f = false; } while(0)
+#endif
+
+            if (NC_STATE) {
+                snprintf(menuError, sizeof(menuError), "%s", NC_ERR);
+#ifdef USE_EOS
+                if (useEos) { eos_client_disconnect(&eosClient); }
+                else
+#endif
+                { if (isHosting) { host_stop(); isHosting = false; } net_client_disconnect(&netClient); }
                 isMultiplayer = false;
                 unitCount = 0;
                 memset(plazaData, 0, sizeof(plazaData));
@@ -1933,18 +2054,23 @@ int main(void)
                 phase = PHASE_PLAZA;
             }
 
-            if (netClient.gameStarted) {
-                netClient.gameStarted = false;
-                playerGold = netClient.currentGold;
+            if (NC_FLAG(gameStarted)) {
+                NC_CLEAR(gameStarted);
+                playerGold = NC_FLAG(currentGold);
             }
 
-            if (netClient.prepStarted) {
-                netClient.prepStarted = false;
-                playerGold = netClient.currentGold;
-                currentRound = netClient.currentRound;
-                currentRoundIsPve = netClient.isPveRound;
-                for (int i = 0; i < MAX_SHOP_SLOTS; i++)
+            if (NC_FLAG(prepStarted)) {
+                NC_CLEAR(prepStarted);
+                playerGold = NC_FLAG(currentGold);
+                currentRound = NC_FLAG(currentRound);
+                currentRoundIsPve = NC_FLAG(isPveRound);
+                for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
+#ifdef USE_EOS
+                    shopSlots[i] = useEos ? eosClient.serverShop[i] : netClient.serverShop[i];
+#else
                     shopSlots[i] = netClient.serverShop[i];
+#endif
+                }
                 // Reset multiplayer game state — keep blue units from lobby
                 ClearRedUnits(units, &unitCount);
                 snapshotCount = 0;
@@ -2033,10 +2159,16 @@ int main(void)
             if (IsKeyPressed(KEY_ESCAPE)) { if (showHelp) showHelp = false; else showEscMenu = !showEscMenu; }
             // --- Multiplayer: poll network and handle server messages ---
             if (isMultiplayer) {
+#ifdef USE_EOS
+                if (useEos) eos_client_poll(&eosClient); else
+#endif
                 net_client_poll(&netClient);
-                if (netClient.state == NET_ERROR) {
-                    if (isHosting) { host_stop(); isHosting = false; }
-                    net_client_disconnect(&netClient);
+                if (NC_STATE) {
+#ifdef USE_EOS
+                    if (useEos) { eos_client_disconnect(&eosClient); }
+                    else
+#endif
+                    { if (isHosting) { host_stop(); isHosting = false; } net_client_disconnect(&netClient); }
                     isMultiplayer = false;
                     unitCount = 0;
                     memset(plazaData, 0, sizeof(plazaData));
@@ -2044,25 +2176,37 @@ int main(void)
                     plazaState = PLAZA_ROAMING;
                     phase = PHASE_PLAZA;
                 }
-                if (netClient.shopUpdated) {
-                    netClient.shopUpdated = false;
-                    for (int i = 0; i < MAX_SHOP_SLOTS; i++)
+                if (NC_FLAG(shopUpdated)) {
+                    NC_CLEAR(shopUpdated);
+                    for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
+#ifdef USE_EOS
+                        shopSlots[i] = useEos ? eosClient.serverShop[i] : netClient.serverShop[i];
+#else
                         shopSlots[i] = netClient.serverShop[i];
+#endif
+                    }
                 }
-                if (netClient.goldUpdated) {
-                    netClient.goldUpdated = false;
-                    playerGold = netClient.currentGold;
+                if (NC_FLAG(goldUpdated)) {
+                    NC_CLEAR(goldUpdated);
+                    playerGold = NC_FLAG(currentGold);
                 }
-                if (netClient.opponentReady) {
-                    netClient.opponentReady = false;
+                if (NC_FLAG(opponentReady)) {
+                    NC_CLEAR(opponentReady);
                     waitingForOpponent = false;
                     opponentIsReady = true;
                 }
                 // Combat started — server sends serialized units
-                if (netClient.combatStarted) {
-                    netClient.combatStarted = false;
+                if (NC_FLAG(combatStarted)) {
+                    NC_CLEAR(combatStarted);
+#ifdef USE_EOS
+                    unitCount = deserialize_units(
+                        useEos ? eosClient.combatNetUnits : netClient.combatNetUnits,
+                        useEos ? eosClient.combatNetUnitCount : netClient.combatNetUnitCount,
+                        units, MAX_UNITS);
+#else
                     unitCount = deserialize_units(netClient.combatNetUnits,
                         netClient.combatNetUnitCount, units, MAX_UNITS);
+#endif
                     ApplyRarityBuffs(units, unitCount);
                     SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
                     ApplySynergies(units, unitCount);
@@ -2141,6 +2285,9 @@ int main(void)
                     if (IsKeyPressed(quickBuyKeys[s]) && shopSlots[s].abilityId >= 0) {
                         usedShopHotkey = true;
                         if (isMultiplayer) {
+#ifdef USE_EOS
+                            if (useEos) eos_client_send_buy(&eosClient, s); else
+#endif
                             net_client_send_buy(&netClient, s);
                             // Also process locally so ability appears immediately
                             BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
@@ -2205,6 +2352,9 @@ int main(void)
                     usedRollHotkey = true;
                     PlaySound(sfxUiReroll);
                     if (isMultiplayer) {
+#ifdef USE_EOS
+                        if (useEos) eos_client_send_roll(&eosClient); else
+#endif
                         net_client_send_roll(&netClient);
                     } else {
                         RollShop(shopSlots, &playerGold, rollCost, currentRound);
@@ -2274,6 +2424,9 @@ int main(void)
                         if (!playerReady) {
                             int ba = CountTeamUnits(units, unitCount, TEAM_BLUE);
                             if (ba > 0) {
+#ifdef USE_EOS
+                                if (useEos) eos_client_send_ready(&eosClient, units, unitCount); else
+#endif
                                 net_client_send_ready(&netClient, units, unitCount);
                                 playerReady = true;
                                 waitingForOpponent = true;
@@ -2422,6 +2575,9 @@ int main(void)
                     if (CheckCollisionPointRec(mouse, rollBtn) && playerGold >= rollCost) {
                         PlaySound(sfxUiReroll);
                         if (isMultiplayer) {
+#ifdef USE_EOS
+                            if (useEos) eos_client_send_roll(&eosClient); else
+#endif
                             net_client_send_roll(&netClient);
                         } else {
                             RollShop(shopSlots, &playerGold, rollCost, currentRound);
@@ -2481,6 +2637,9 @@ int main(void)
                         if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
                             PlaySound(sfxUiBuy);
                             if (isMultiplayer) {
+#ifdef USE_EOS
+                                if (useEos) eos_client_send_buy(&eosClient, s); else
+#endif
                                 net_client_send_buy(&netClient, s);
                                 BuyAbility(&shopSlots[s], inventory, units, unitCount, &playerGold);
                             } else {
@@ -2916,8 +3075,11 @@ int main(void)
                     UpdateFloatingTexts(floatingTexts, dt);
                     combatElapsedTime += dt;
                     // Still poll server for round result
+#ifdef USE_EOS
+                    if (useEos) eos_client_poll(&eosClient); else
+#endif
                     net_client_poll(&netClient);
-                    if (netClient.roundResultReady || netClient.gameOver)
+                    if (NC_FLAG(roundResultReady) || NC_FLAG(gameOver))
                         goto combat_check_end;
                     goto combat_skip;
                 }
@@ -3747,14 +3909,18 @@ int main(void)
             combat_check_end:
             if (isMultiplayer) {
                 // In multiplayer, poll for server result
+#ifdef USE_EOS
+                if (useEos) eos_client_poll(&eosClient); else
+#endif
                 net_client_poll(&netClient);
-                if (netClient.roundResultReady) {
-                    netClient.roundResultReady = false;
-                    if (netClient.roundWinner == 0) { blueWins++; roundResultText = "YOU WIN THE ROUND!"; }
-                    else if (netClient.roundWinner == 1) { redWins++; roundResultText = "OPPONENT WINS!"; }
+                if (NC_FLAG(roundResultReady)) {
+                    NC_CLEAR(roundResultReady);
+                    int rw = NC_FLAG(roundWinner);
+                    if (rw == 0) { blueWins++; roundResultText = "YOU WIN THE ROUND!"; }
+                    else if (rw == 1) { redWins++; roundResultText = "OPPONENT WINS!"; }
                     else roundResultText = "DRAW — NO SURVIVORS!";
-                    currentRound = netClient.currentRound;
-                    lastOutcomeWin = (netClient.roundWinner == 0);
+                    currentRound = NC_FLAG(currentRound);
+                    lastOutcomeWin = (rw == 0);
                     phase = PHASE_ROUND_OVER;
                     roundOverTimer = 2.5f;
                     fightBannerTimer = -1.0f;
@@ -3772,11 +3938,12 @@ int main(void)
                         }
                     }
                 }
-                if (netClient.gameOver) {
-                    netClient.gameOver = false;
-                    if (netClient.gameWinner == 0) roundResultText = "YOU WIN THE MATCH!";
+                if (NC_FLAG(gameOver)) {
+                    NC_CLEAR(gameOver);
+                    int gw = NC_FLAG(gameWinner);
+                    if (gw == 0) roundResultText = "YOU WIN THE MATCH!";
                     else roundResultText = "OPPONENT WINS THE MATCH!";
-                    lastOutcomeWin = (netClient.gameWinner == 0);
+                    lastOutcomeWin = (gw == 0);
                     phase = PHASE_GAME_OVER;
                     ClearAllParticles(particles);
                     ClearAllFloatingTexts(floatingTexts);
@@ -3837,15 +4004,23 @@ int main(void)
         {
             // Multiplayer: poll for next prep from server
             if (isMultiplayer) {
+#ifdef USE_EOS
+                if (useEos) eos_client_poll(&eosClient); else
+#endif
                 net_client_poll(&netClient);
                 roundOverTimer -= dt;
-                if (netClient.prepStarted) {
-                    netClient.prepStarted = false;
-                    playerGold = netClient.currentGold;
-                    currentRound = netClient.currentRound;
-                    currentRoundIsPve = netClient.isPveRound;
-                    for (int i = 0; i < MAX_SHOP_SLOTS; i++)
+                if (NC_FLAG(prepStarted)) {
+                    NC_CLEAR(prepStarted);
+                    playerGold = NC_FLAG(currentGold);
+                    currentRound = NC_FLAG(currentRound);
+                    currentRoundIsPve = NC_FLAG(isPveRound);
+                    for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
+#ifdef USE_EOS
+                        shopSlots[i] = useEos ? eosClient.serverShop[i] : netClient.serverShop[i];
+#else
                         shopSlots[i] = netClient.serverShop[i];
+#endif
+                    }
                     RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
                     for (int i = 0; i < unitCount; i++)
                         if (units[i].team == TEAM_RED) units[i].active = false;
@@ -3858,11 +4033,12 @@ int main(void)
                     opponentIsReady = false;
                     phase = PHASE_PREP;
                 }
-                if (netClient.gameOver) {
-                    netClient.gameOver = false;
-                    if (netClient.gameWinner == 0) roundResultText = "YOU WIN THE MATCH!";
+                if (NC_FLAG(gameOver)) {
+                    NC_CLEAR(gameOver);
+                    int gw = NC_FLAG(gameWinner);
+                    if (gw == 0) roundResultText = "YOU WIN THE MATCH!";
                     else roundResultText = "OPPONENT WINS THE MATCH!";
-                    lastOutcomeWin = (netClient.gameWinner == 0);
+                    lastOutcomeWin = (gw == 0);
                     phase = PHASE_GAME_OVER;
                 }
             }
@@ -4054,8 +4230,11 @@ int main(void)
             }
             if (IsKeyPressed(KEY_ESCAPE)) { if (showHelp) showHelp = false; else showEscMenu = !showEscMenu; }
             if (isMultiplayer && (IsKeyPressed(KEY_R) || mpExitClicked)) {
-                if (isHosting) { host_stop(); isHosting = false; }
-                net_client_disconnect(&netClient);
+#ifdef USE_EOS
+                if (useEos) { eos_client_disconnect(&eosClient); useEos = false; }
+                else
+#endif
+                { if (isHosting) { host_stop(); isHosting = false; } net_client_disconnect(&netClient); }
                 isMultiplayer = false;
                 for (int u2 = 0; u2 < MAX_UNITS; u2++) { units[u2].active = false; }
                 unitCount = 0;
@@ -5396,7 +5575,12 @@ int main(void)
             }
             if (isMultiplayer) {
                 const char *youLabel = TextFormat("YOU (%s): %d", playerName, blueWins);
-                const char *oppLabel = TextFormat("OPP (%s): %d", netClient.opponentName[0] ? netClient.opponentName : "???", redWins);
+#ifdef USE_EOS
+                const char *oppName = useEos ? (eosClient.opponentName[0] ? eosClient.opponentName : "???") : (netClient.opponentName[0] ? netClient.opponentName : "???");
+#else
+                const char *oppName = netClient.opponentName[0] ? netClient.opponentName : "???";
+#endif
+                const char *oppLabel = TextFormat("OPP (%s): %d", oppName, redWins);
                 int mpNameSz = S(16);
                 int youW = GameMeasureText(youLabel, mpNameSz);
                 int oppW = GameMeasureText(oppLabel, mpNameSz);
@@ -6762,39 +6946,95 @@ int main(void)
                     }
                 }
 
+#ifdef USE_EOS
+                // LAN / Online toggle tabs
+                {
+                    int tabW = (panelW - 100) / 2;
+                    Rectangle lanTab = { (float)(panelX + 50), (float)(panelY + 105), (float)tabW, 24 };
+                    Rectangle onlineTab = { (float)(panelX + 50 + tabW), (float)(panelY + 105), (float)tabW, 24 };
+                    Color lanBg = useEos ? (Color){40,40,55,255} : (Color){60,100,140,255};
+                    Color onlBg = useEos ? (Color){60,100,140,255} : (Color){40,40,55,255};
+                    bool eosReady = eos_is_logged_in();
+                    // Hover highlights the inactive (clickable) tab
+                    if (useEos && CheckCollisionPointRec(GetMousePosition(), lanTab)) lanBg = (Color){70,120,160,255};
+                    if (!useEos && eosReady && CheckCollisionPointRec(GetMousePosition(), onlineTab)) onlBg = (Color){70,120,160,255};
+                    DrawRectangleRec(lanTab, lanBg);
+                    DrawRectangleRec(onlineTab, onlBg);
+                    DrawRectangleLinesEx(lanTab, 1, (Color){80,80,100,255});
+                    DrawRectangleLinesEx(onlineTab, 1, (Color){80,80,100,255});
+                    const char *lanText = "LAN";
+                    const char *onlText = eosReady ? "ONLINE" : "ONLINE ...";
+                    int lw = GameMeasureText(lanText, 12);
+                    int ow = GameMeasureText(onlText, 12);
+                    GameDrawText(lanText, (int)(lanTab.x + tabW/2 - lw/2), (int)(lanTab.y + 6), 12, WHITE);
+                    Color onlTextColor = eosReady ? WHITE : (Color){120,120,140,255};
+                    GameDrawText(onlText, (int)(onlineTab.x + tabW/2 - ow/2), (int)(onlineTab.y + 6), 12, onlTextColor);
+                }
+#endif
+
                 // HOST GAME button
-                Rectangle hostBtn = { (float)(panelX + 50), (float)(panelY + 120), (float)(panelW - 100), 40 };
+                Rectangle hostBtn = { (float)(panelX + 50), (float)(panelY + 140), (float)(panelW - 100), 40 };
                 Color hBg = (Color){40,130,60,255};
                 if (CheckCollisionPointRec(GetMousePosition(), hostBtn)) hBg = (Color){50,170,70,255};
                 DrawRectangleRec(hostBtn, hBg);
                 DrawRectangleLinesEx(hostBtn, 2, (Color){30,100,40,255});
+#ifdef USE_EOS
+                const char *hText = useEos ? "HOST ONLINE" : "HOST GAME";
+#else
                 const char *hText = "HOST GAME";
+#endif
                 int htw = GameMeasureText(hText, 16);
                 GameDrawText(hText, (int)(hostBtn.x + (panelW-100)/2 - htw/2), (int)(hostBtn.y + 12), 16, WHITE);
 
                 // JOIN GAME button
+#ifdef USE_EOS
+                bool ipReady = useEos ? (joinLobbyCodeLen == LOBBY_CODE_LEN) : (joinIpLen > 0);
+#else
                 bool ipReady = (joinIpLen > 0);
-                Rectangle joinBtn = { (float)(panelX + 50), (float)(panelY + 180), (float)(panelW - 100), 40 };
+#endif
+                Rectangle joinBtn = { (float)(panelX + 50), (float)(panelY + 200), (float)(panelW - 100), 40 };
                 Color jBg = ipReady ? (Color){160,100,30,255} : (Color){80,80,80,255};
                 if (ipReady && CheckCollisionPointRec(GetMousePosition(), joinBtn)) jBg = (Color){200,130,40,255};
                 DrawRectangleRec(joinBtn, jBg);
                 DrawRectangleLinesEx(joinBtn, 2, (Color){100,70,20,255});
+#ifdef USE_EOS
+                const char *jText = useEos ? "JOIN ONLINE" : "JOIN GAME";
+#else
                 const char *jText = "JOIN GAME";
+#endif
                 int jtw = GameMeasureText(jText, 16);
                 GameDrawText(jText, (int)(joinBtn.x + (panelW-100)/2 - jtw/2), (int)(joinBtn.y + 12), 16, WHITE);
 
-                // IP address input
-                GameDrawText("Host IP Address:", panelX + 50, panelY + 230, 12, (Color){150,150,170,255});
-                Rectangle ipBox = { (float)(panelX + 50), (float)(panelY + 248), 200, 30 };
-                DrawRectangleRec(ipBox, (Color){35,35,50,255});
-                DrawRectangleLinesEx(ipBox, 2, (Color){80,80,100,255});
-                GameDrawText(joinIpAddress, panelX + 58, panelY + 254, 18, WHITE);
-                // Blinking cursor
-                if (!nameInputActive) {
-                    float blinkTime = (float)GetTime();
-                    if ((int)(blinkTime * 2) % 2 == 0) {
-                        int ipw = GameMeasureText(joinIpAddress, 18);
-                        DrawRectangle(panelX + 58 + ipw + 2, panelY + 254, 2, 18, WHITE);
+                // IP address or Lobby Code input
+#ifdef USE_EOS
+                if (useEos) {
+                    GameDrawText("Lobby Code:", panelX + 50, panelY + 250, 12, (Color){150,150,170,255});
+                    Rectangle codeBox = { (float)(panelX + 50), (float)(panelY + 268), 120, 30 };
+                    DrawRectangleRec(codeBox, (Color){35,35,50,255});
+                    DrawRectangleLinesEx(codeBox, 2, (Color){80,80,100,255});
+                    GameDrawText(joinLobbyCode, panelX + 58, panelY + 274, 18, WHITE);
+                    if (!nameInputActive) {
+                        float blinkTime = (float)GetTime();
+                        if ((int)(blinkTime * 2) % 2 == 0) {
+                            int cw2 = GameMeasureText(joinLobbyCode, 18);
+                            DrawRectangle(panelX + 58 + cw2 + 2, panelY + 274, 2, 18, WHITE);
+                        }
+                    }
+                } else
+#endif
+                {
+                    GameDrawText("Host IP Address:", panelX + 50, panelY + 250, 12, (Color){150,150,170,255});
+                    Rectangle ipBox = { (float)(panelX + 50), (float)(panelY + 268), 200, 30 };
+                    DrawRectangleRec(ipBox, (Color){35,35,50,255});
+                    DrawRectangleLinesEx(ipBox, 2, (Color){80,80,100,255});
+                    GameDrawText(joinIpAddress, panelX + 58, panelY + 274, 18, WHITE);
+                    // Blinking cursor
+                    if (!nameInputActive) {
+                        float blinkTime = (float)GetTime();
+                        if ((int)(blinkTime * 2) % 2 == 0) {
+                            int ipw = GameMeasureText(joinIpAddress, 18);
+                            DrawRectangle(panelX + 58 + ipw + 2, panelY + 274, 2, 18, WHITE);
+                        }
                     }
                 }
 
@@ -6889,6 +7129,14 @@ int main(void)
                 char dotBuf[8] = "";
                 for (int d = 0; d < dots; d++) strcat(dotBuf, ".");
                 GameDrawText(dotBuf, lsw/2 + rtw/2 + 4, cpY + cpBtnH + 30, 20, WHITE);
+#ifdef USE_EOS
+                // Show lobby code when hosting online
+                if (useEos && eosClient.isHost && eosClient.lobbyCode[0]) {
+                    const char *codeLabel = TextFormat("LOBBY CODE: %s", eosClient.lobbyCode);
+                    int clw = GameMeasureText(codeLabel, 24);
+                    GameDrawText(codeLabel, lsw/2 - clw/2, cpY + cpBtnH + 60, 24, (Color){255, 220, 100, 255});
+                }
+#endif
             } else {
                 const char *pickText = TextFormat("Pick unit %d of %d", mpLobby.activeSlot + 1, BLUE_TEAM_MAX_SIZE);
                 int ptw = GameMeasureText(pickText, 16);
@@ -7604,8 +7852,11 @@ int main(void)
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), quitBtn)) {
                 SaveSettings(musicVolume, sfxVolume, isFullscreen, playerName);
                 if (isMultiplayer) {
-                    if (isHosting) { host_stop(); isHosting = false; }
-                    net_client_disconnect(&netClient);
+#ifdef USE_EOS
+                    if (useEos) { eos_client_disconnect(&eosClient); useEos = false; }
+                    else
+#endif
+                    { if (isHosting) { host_stop(); isHosting = false; } net_client_disconnect(&netClient); }
                     isMultiplayer = false;
                     unitCount = 0;
                     memset(plazaData, 0, sizeof(plazaData));
@@ -7663,8 +7914,17 @@ int main(void)
     }
 
     // Cleanup
-    if (isHosting) host_stop();
-    if (isMultiplayer) net_client_disconnect(&netClient);
+#ifdef USE_EOS
+    if (useEos && isMultiplayer) eos_client_disconnect(&eosClient);
+    else
+#endif
+    {
+        if (isHosting) host_stop();
+        if (isMultiplayer) net_client_disconnect(&netClient);
+    }
+#ifdef USE_EOS
+    eos_shutdown();
+#endif
     for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) UnloadRenderTexture(portraits[i]);
     UnloadRenderTexture(introModelRT);
     UnloadRenderTexture(fxaaRT);

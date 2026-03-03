@@ -9,8 +9,9 @@ server/server
 export/
 *.zip
 
-# Windows cross-compile deps
-deps/
+# Cross-compile deps (raylib-win, raylib-linux, etc.) but keep EOS SDK
+deps/*
+!deps/eos-sdk/
 
 # Object files
 *.o

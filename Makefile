@@ -13,6 +13,18 @@ GAME_TARGET = $(GAME_DIR)/game
 
 GAME_CFLAGS = $(CFLAGS) -I$(GAME_DIR) -Iserver
 
+# --- Optional EOS P2P relay (build with: make USE_EOS=1 run) ---
+ifdef USE_EOS
+  EOS_SDK = deps/eos-sdk
+  GAME_CFLAGS += -DUSE_EOS -I$(EOS_SDK)/include
+  # Link against EOS shared library (no -static when using EOS)
+  ifeq ($(UNAME),Linux)
+    EOS_LDFLAGS = -L$(EOS_SDK)/Bin -lEOSSDK-Linux-Shipping -Wl,-rpath,'$$ORIGIN'
+  else ifeq ($(UNAME),Darwin)
+    EOS_LDFLAGS = -L$(EOS_SDK)/Bin -lEOSSDK-Mac-Shipping -Wl,-rpath,@executable_path
+  endif
+endif
+
 ifeq ($(UNAME),Darwin)
   GAME_CFLAGS += $(shell pkg-config --cflags raylib)
   GAME_LDFLAGS = $(shell pkg-config --libs raylib) -lm -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
@@ -49,7 +61,7 @@ run: game
 	cd $(GAME_DIR) && ./game
 
 $(GAME_TARGET): $(GAME_SRCS) $(GAME_HDRS)
-	$(CC) $(GAME_CFLAGS) -o $@ $(GAME_SRCS) $(GAME_LDFLAGS)
+	$(CC) $(GAME_CFLAGS) -o $@ $(GAME_SRCS) $(GAME_LDFLAGS) $(EOS_LDFLAGS)
 
 deps:
 	@if [ ! -f deps/raylib-linux/lib/libraylib.a ]; then \
