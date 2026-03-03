@@ -208,9 +208,14 @@ static void handle_server_msg(NetClient *nc, const NetMessage *msg)
             nc->combatSyncTick = ((uint16_t)msg->payload[0] << 8) | msg->payload[1];
             nc->combatSyncCount = msg->payload[2];
             if (nc->combatSyncCount > NET_MAX_UNITS) nc->combatSyncCount = NET_MAX_UNITS;
-            if (msg->size >= 3 + nc->combatSyncCount * (int)sizeof(SyncUnit)) {
-                memcpy(nc->combatSyncUnits, msg->payload + 3,
-                       nc->combatSyncCount * sizeof(SyncUnit));
+            int syncDataSize = nc->combatSyncCount * (int)sizeof(SyncUnit);
+            if (msg->size >= 3 + syncDataSize) {
+                memcpy(nc->combatSyncUnits, msg->payload + 3, syncDataSize);
+            }
+            // Read state hash if present (4 bytes after sync units)
+            nc->combatSyncHash = 0;
+            if (msg->size >= 3 + syncDataSize + 4) {
+                memcpy(&nc->combatSyncHash, msg->payload + 3 + syncDataSize, 4);
             }
             nc->combatSyncReady = true;
         }

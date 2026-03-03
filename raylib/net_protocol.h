@@ -39,7 +39,7 @@ typedef enum {
     MSG_OPPONENT_READY   = 0x87,  // payload: none
     MSG_ERROR            = 0x88,  // payload: error string
     MSG_GOLD_UPDATE      = 0x89,  // payload: current gold amount
-    MSG_COMBAT_SYNC      = 0x8A,  // payload: [tickCount:2][unitCount:1][SyncUnit * N]
+    MSG_COMBAT_SYNC      = 0x8A,  // payload: [tickCount:2][unitCount:1][SyncUnit * N][stateHash:4]
 } ServerMsgType;
 
 //------------------------------------------------------------------------------------

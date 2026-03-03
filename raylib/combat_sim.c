@@ -145,6 +145,11 @@ int CombatTick(Unit units[], int *unitCountPtr,
     // === STEP 2: Update projectiles ===
     for (int p = 0; p < MAX_PROJECTILES; p++) {
         if (!projectiles[p].active) continue;
+        // Charge-up phase: stay in place and grow
+        if (projectiles[p].chargeTimer > 0) {
+            projectiles[p].chargeTimer -= dt;
+            if (projectiles[p].chargeTimer > 0) continue;
+        }
         int ti = projectiles[p].targetIndex;
         // Target gone?
         if (ti < 0 || ti >= unitCount || !units[ti].active) {
@@ -175,6 +180,8 @@ int CombatTick(Unit units[], int *unitCountPtr,
                     units[ti].hookPullSpeed = projectiles[p].speed;
                     AddModifier(modifiers, ti, MOD_STUN, 10.0f, 0); // stun during pull
                 }
+                EmitEvent(events, eventCount, COMBAT_EVT_PROJECTILE_HIT, ti,
+                          projectiles[p].type, projectiles[p].position, 0, 0);
                 if (hitDmg > 0 || rawDmg > 0)
                     EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, ti, -1,
                               units[ti].position, 6.0f, 0.3f);
@@ -183,6 +190,8 @@ int CombatTick(Unit units[], int *unitCountPtr,
             // HIT — Maelstrom: bounce like chain frost (now with Share Pain)
             else if (projectiles[p].type == PROJ_MAELSTROM) {
                 ApplyDamage(units, &unitCount, modifiers, ti, projectiles[p].damage, DMG_SINGLE_TARGET);
+                EmitEvent(events, eventCount, COMBAT_EVT_PROJECTILE_HIT, ti,
+                          projectiles[p].type, projectiles[p].position, 0, 0);
                 if (projectiles[p].bouncesRemaining > 0) {
                     projectiles[p].bouncesRemaining--;
                     projectiles[p].lastHitUnit = ti;
@@ -209,6 +218,8 @@ int CombatTick(Unit units[], int *unitCountPtr,
                         if (units[si].currentHealth > maxHP) units[si].currentHealth = maxHP;
                     }
                 }
+                EmitEvent(events, eventCount, COMBAT_EVT_PROJECTILE_HIT, ti,
+                          projectiles[p].type, projectiles[p].position, 0, 0);
                 projectiles[p].active = false;
             }
             // HIT — normal (Magic Missile / Chain Frost)
@@ -217,6 +228,8 @@ int CombatTick(Unit units[], int *unitCountPtr,
                 if (projectiles[p].type == PROJ_MAGIC_MISSILE)
                     rawDmg *= UNIT_STATS[units[ti].typeIndex].health * units[ti].hpMultiplier;
                 ApplyDamage(units, &unitCount, modifiers, ti, rawDmg, DMG_SINGLE_TARGET);
+                EmitEvent(events, eventCount, COMBAT_EVT_PROJECTILE_HIT, ti,
+                          projectiles[p].type, projectiles[p].position, 0, 0);
                 if (projectiles[p].stunDuration > 0) {
                     AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
                     EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, ti, -1,
@@ -776,6 +789,8 @@ int CombatTick(Unit units[], int *unitCountPtr,
                 {
                     float rawDmg = stats->attackDamage * units[i].dmgMultiplier;
                     float dmg = ApplyDamage(units, &unitCount, modifiers, target, rawDmg, DMG_SINGLE_TARGET);
+                    EmitEvent(events, eventCount, COMBAT_EVT_MELEE_HIT, target, -1,
+                              units[target].position, rawDmg, 0);
                     // Lifesteal
                     if (dmg > 0) {
                         float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);

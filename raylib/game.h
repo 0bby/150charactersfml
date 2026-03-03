@@ -390,6 +390,8 @@ typedef struct {
 typedef enum {
     COMBAT_EVT_ABILITY_CAST,   // unit cast an ability
     COMBAT_EVT_SHAKE,          // screen shake trigger
+    COMBAT_EVT_MELEE_HIT,      // unitIndex=target, value1=damage
+    COMBAT_EVT_PROJECTILE_HIT, // unitIndex=target, value1=projType, position=impact pos
 } CombatEventType;
 
 typedef struct {

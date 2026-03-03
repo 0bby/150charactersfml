@@ -121,7 +121,7 @@ static void send_combat_sync(GameSession *s)
 {
     for (int p = 0; p < 2; p++) {
         if (!s->players[p].connected) continue;
-        uint8_t payload[3 + sizeof(SyncUnit) * MAX_UNITS];
+        uint8_t payload[3 + sizeof(SyncUnit) * MAX_UNITS + 4]; // +4 for state hash
         payload[0] = (s->combatTickCount >> 8) & 0xFF;
         payload[1] = s->combatTickCount & 0xFF;
         int count = 0;
@@ -158,8 +158,22 @@ static void send_combat_sync(GameSession *s)
             }
         }
         payload[2] = (uint8_t)count;
+
+        // Compute state hash from the sync units (same perspective as the player)
+        uint32_t stateHash = 0;
+        for (int i = 0; i < count; i++) {
+            if (!su[i].active) continue;
+            uint32_t hx, hz, hh;
+            memcpy(&hx, &su[i].posX, 4);
+            memcpy(&hz, &su[i].posZ, 4);
+            memcpy(&hh, &su[i].currentHealth, 4);
+            stateHash ^= hx * 2654435761u ^ hz * 2246822519u ^ hh * 0x45d9f3bu;
+        }
+        int syncDataSize = count * (int)sizeof(SyncUnit);
+        memcpy(payload + 3 + syncDataSize, &stateHash, 4);
+
         net_send_msg(s->players[p].sockfd, MSG_COMBAT_SYNC,
-                     payload, 3 + count * sizeof(SyncUnit));
+                     payload, 3 + syncDataSize + 4);
     }
 }
 
@@ -473,7 +487,7 @@ int session_tick(GameSession *s, float dt)
 
         // Periodic sync broadcast every 30 ticks (~0.5s)
         s->combatTickCount++;
-        if (s->combatTickCount % 30 == 0) {
+        if (s->combatTickCount % 10 == 0) {
             send_combat_sync(s);
         }
 

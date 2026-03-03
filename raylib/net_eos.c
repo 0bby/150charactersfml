@@ -1065,9 +1065,14 @@ static void eos_handle_server_msg(EosClient *ec, const NetMessage *msg)
             ec->combatSyncTick = ((uint16_t)msg->payload[0] << 8) | msg->payload[1];
             ec->combatSyncCount = msg->payload[2];
             if (ec->combatSyncCount > NET_MAX_UNITS) ec->combatSyncCount = NET_MAX_UNITS;
-            if (msg->size >= 3 + ec->combatSyncCount * (int)sizeof(SyncUnit)) {
-                memcpy(ec->combatSyncUnits, msg->payload + 3,
-                       ec->combatSyncCount * sizeof(SyncUnit));
+            int syncDataSize = ec->combatSyncCount * (int)sizeof(SyncUnit);
+            if (msg->size >= 3 + syncDataSize) {
+                memcpy(ec->combatSyncUnits, msg->payload + 3, syncDataSize);
+            }
+            // Read state hash if present (4 bytes after sync units)
+            ec->combatSyncHash = 0;
+            if (msg->size >= 3 + syncDataSize + 4) {
+                memcpy(&ec->combatSyncHash, msg->payload + 3 + syncDataSize, 4);
             }
             ec->combatSyncReady = true;
         }

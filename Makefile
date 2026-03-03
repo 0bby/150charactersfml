@@ -13,8 +13,8 @@ GAME_TARGET = $(GAME_DIR)/game
 
 GAME_CFLAGS = $(CFLAGS) -I$(GAME_DIR) -Iserver
 
-# --- Optional EOS P2P relay (build with: make USE_EOS=1 run) ---
-ifdef USE_EOS
+# --- EOS P2P relay (enabled by default, disable with: make USE_EOS=0) ---
+ifneq ($(USE_EOS),0)
   EOS_SDK = deps/eos-sdk
   GAME_CFLAGS += -DUSE_EOS -I$(EOS_SDK)/include
   # Link against EOS shared library (no -static when using EOS)
@@ -64,7 +64,7 @@ run: game
 
 $(GAME_TARGET): $(GAME_SRCS) $(GAME_HDRS)
 	$(CC) $(GAME_CFLAGS) -o $@ $(GAME_SRCS) $(GAME_LDFLAGS) $(EOS_LDFLAGS)
-ifdef USE_EOS
+ifneq ($(USE_EOS),0)
 	@ln -sf ../$(EOS_SDK)/Bin/$(EOS_LIB_NAME) $(GAME_DIR)/$(EOS_LIB_NAME)
 endif
 

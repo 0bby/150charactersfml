@@ -62,6 +62,7 @@ typedef struct {
     SyncUnit combatSyncUnits[NET_MAX_UNITS];
     int combatSyncCount;
     uint16_t combatSyncTick;
+    uint32_t combatSyncHash;   // state hash for desync detection
 
     // Shop
     ShopSlot serverShop[MAX_SHOP_SLOTS];

@@ -38,6 +38,10 @@ static bool  cgDebugOverlay  = false;
 #include "game.h"
 #include "synergies.h"
 #include "helpers.h"
+#include "combat_sim.h"
+
+// Must match server's COMBAT_DT exactly (game_session.h)
+#define COMBAT_DT (1.0f / 60.0f)
 #include "leaderboard.h"
 #include "net_client.h"
 #include "host.h"
@@ -3079,15 +3083,16 @@ int main(int argc, char *argv[])
                 if (!cHitAny) for (int j = 0; j < unitCount; j++) units[j].selected = false;
             }
 
-            // Fixed-timestep accumulator for multiplayer to match server's 1/60s tick
+            // === MULTIPLAYER: deterministic CombatTick with visual feedback ===
             if (isMultiplayer) {
-                combatAccum += dt;
-                if (combatAccum < (1.0f / 60.0f)) {
-                    // Not enough time for a sim tick; update visual-only things
-                    UpdateParticles(particles, dt);
-                    UpdateFloatingTexts(floatingTexts, dt);
-                    combatElapsedTime += dt;
-                    // Still poll server for round result
+                float realDt = dt; // preserve real dt for visual updates
+                combatAccum += realDt;
+
+                // Sub-tick: visual-only updates + poll
+                if (combatAccum < COMBAT_DT) {
+                    UpdateParticles(particles, realDt);
+                    UpdateFloatingTexts(floatingTexts, realDt);
+                    combatElapsedTime += realDt;
 #ifdef USE_EOS
                     if (useEos) eos_client_poll(&eosClient); else
 #endif
@@ -3096,33 +3101,218 @@ int main(int argc, char *argv[])
                         goto combat_check_end;
                     goto combat_skip;
                 }
-                dt = 1.0f / 60.0f;
-                combatAccum -= dt;
-                if (combatAccum > 4.0f * dt) combatAccum = 4.0f * dt; // prevent spiral
 
-                // Apply server combat sync snapshot
+                // Death spiral prevention: if >1s behind, reset to 1 tick
+                if (combatAccum > 1.0f) combatAccum = COMBAT_DT;
+
+                // Apply server sync correction BEFORE ticking
                 if (NC_FLAG(combatSyncReady)) {
                     NC_CLEAR(combatSyncReady);
                     int syncCount;
                     SyncUnit *syncUnits;
+                    uint32_t serverHash;
 #ifdef USE_EOS
                     if (useEos) {
                         syncCount = eosClient.combatSyncCount;
                         syncUnits = eosClient.combatSyncUnits;
+                        serverHash = eosClient.combatSyncHash;
                     } else
 #endif
                     {
                         syncCount = netClient.combatSyncCount;
                         syncUnits = netClient.combatSyncUnits;
+                        serverHash = netClient.combatSyncHash;
                     }
                     for (int i = 0; i < syncCount && i < unitCount; i++) {
-                        units[i].position.x = syncUnits[i].posX;
-                        units[i].position.z = syncUnits[i].posZ;
+                        float dx = syncUnits[i].posX - units[i].position.x;
+                        float dz = syncUnits[i].posZ - units[i].position.z;
+                        float dist = sqrtf(dx*dx + dz*dz);
+                        if (dist > 2.0f) {
+                            // Large difference: teleport
+                            units[i].position.x = syncUnits[i].posX;
+                            units[i].position.z = syncUnits[i].posZ;
+                        } else if (dist > 0.01f) {
+                            // Small difference: lerp toward sync position
+                            units[i].position.x += dx * 0.5f;
+                            units[i].position.z += dz * 0.5f;
+                        }
+                        // HP/shield/active always hard-set
                         units[i].currentHealth = syncUnits[i].currentHealth;
                         units[i].shieldHP = syncUnits[i].shieldHP;
                         units[i].active = syncUnits[i].active;
                     }
+
+                    // Desync detection: compute local state hash and compare
+                    if (serverHash != 0) {
+                        uint32_t localHash = 0;
+                        for (int i = 0; i < unitCount; i++) {
+                            if (!units[i].active) continue;
+                            uint32_t hx, hz, hh;
+                            memcpy(&hx, &units[i].position.x, 4);
+                            memcpy(&hz, &units[i].position.z, 4);
+                            memcpy(&hh, &units[i].currentHealth, 4);
+                            localHash ^= hx * 2654435761u ^ hz * 2246822519u ^ hh * 0x45d9f3bu;
+                        }
+                        if (localHash != serverHash)
+                            printf("[DESYNC] local=0x%08X server=0x%08X\n", localHash, serverHash);
+                    }
                 }
+
+                // Count ticks to catch up (cap at 4)
+                int ticksToRun = 0;
+                float tempAccum = combatAccum;
+                while (tempAccum >= COMBAT_DT) { tempAccum -= COMBAT_DT; ticksToRun++; }
+                if (ticksToRun > 4) ticksToRun = 4;
+
+                // Full struct snapshots BEFORE all ticks (for visual effect diffing)
+                Unit unitsBefore[MAX_UNITS];
+                Projectile projBefore[MAX_PROJECTILES];
+                memcpy(unitsBefore, units, sizeof(Unit) * unitCount);
+                memcpy(projBefore, projectiles, sizeof(Projectile) * MAX_PROJECTILES);
+
+                // Run all catch-up ticks — only the LAST tick emits CombatEvents
+                CombatEvent combatEvents[MAX_COMBAT_EVENTS];
+                int combatEventCount = 0;
+                for (int tick = 0; tick < ticksToRun; tick++) {
+                    combatAccum -= COMBAT_DT;
+                    if (tick == ticksToRun - 1) {
+                        CombatTick(units, &unitCount, modifiers, projectiles, fissures,
+                                   COMBAT_DT, combatEvents, &combatEventCount);
+                    } else {
+                        CombatTick(units, &unitCount, modifiers, projectiles, fissures,
+                                   COMBAT_DT, NULL, NULL);
+                    }
+                }
+                if (combatAccum > 4.0f * COMBAT_DT) combatAccum = 4.0f * COMBAT_DT;
+
+                // === Process CombatEvents (from last tick only) ===
+                for (int e = 0; e < combatEventCount; e++) {
+                    switch (combatEvents[e].type) {
+                    case COMBAT_EVT_SHAKE:
+                        TriggerShake(&shake, combatEvents[e].value1, combatEvents[e].value2);
+                        break;
+                    case COMBAT_EVT_ABILITY_CAST: {
+                        int ui = combatEvents[e].unitIndex;
+                        int ai = combatEvents[e].abilityId;
+                        if (ui >= 0 && ui < unitCount && ai >= 0 && ai < ABILITY_COUNT) {
+                            BattleLogAddCast(&battleLog, combatElapsedTime,
+                                units[ui].team, units[ui].typeIndex, ai);
+                            PlaySound(shoutSfxByType[units[ui].typeIndex]);
+                            SpawnFloatingText(floatingTexts,
+                                units[ui].position,
+                                ABILITY_DEFS[ai].name,
+                                (Color){255, 220, 100, 255}, 1.2f);
+                        }
+                    } break;
+                    case COMBAT_EVT_MELEE_HIT:
+                        PlaySound(sfxMeleeHit);
+                        if (combatEvents[e].unitIndex >= 0 && combatEvents[e].unitIndex < unitCount)
+                            SpawnMeleeImpact(particles, units[combatEvents[e].unitIndex].position);
+                        break;
+                    case COMBAT_EVT_PROJECTILE_HIT:
+                        PlaySound(sfxProjectileHit);
+                        // Spawn explosion particles at impact position
+                        if (combatEvents[e].unitIndex >= 0 && combatEvents[e].unitIndex < unitCount) {
+                            Vector3 impactPos = combatEvents[e].position;
+                            for (int ep = 0; ep < PROJ_EXPLODE_COUNT; ep++) {
+                                float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                                float spd = (float)GetRandomValue(100, 250) / 10.0f;
+                                Vector3 ev = { cosf(angle)*spd, (float)GetRandomValue(40,150)/10.0f, sinf(angle)*spd };
+                                // Color based on projectile type (stored in abilityId field)
+                                Color ec;
+                                switch (combatEvents[e].abilityId) {
+                                    case PROJ_HOOK: ec = (Color){200, 160, 100, 255}; break;
+                                    case PROJ_MAELSTROM: ec = (Color){100, 180, 255, 255}; break;
+                                    case PROJ_DEVIL_BOLT: ec = (Color){200, 50, 50, 255}; break;
+                                    case PROJ_MAGIC_MISSILE: ec = (Color){120, 80, 255, 255}; break;
+                                    case PROJ_CHAIN_FROST: ec = (Color){80, 200, 255, 255}; break;
+                                    default: ec = (Color){255, 200, 100, 255}; break;
+                                }
+                                SpawnParticle(particles, impactPos, ev, 0.3f + (float)GetRandomValue(0,3)/10.0f,
+                                    (float)GetRandomValue(3,8)/10.0f, ec);
+                            }
+                        }
+                        break;
+                    default: break;
+                    }
+                }
+
+                // === State diff (snapshot vs current) for visual effects ===
+                for (int i = 0; i < unitCount; i++) {
+                    float dmg = unitsBefore[i].currentHealth - units[i].currentHealth;
+                    if (dmg > 0.5f) {
+                        SpawnDamageNumber(floatingTexts, units[i].position, dmg, false);
+                        units[i].hitFlash = HIT_FLASH_DURATION;
+                    }
+                    if (unitsBefore[i].active && !units[i].active) {
+                        // Unit died
+                        PlaySound(dieSfxByType[units[i].typeIndex]);
+                        SpawnDeathExplosion(particles, units[i].position, units[i].team);
+                        TriggerShake(&shake, 6.0f, 0.3f);
+                        // Kill feed
+                        { Team killerTeam = (units[i].team == TEAM_BLUE) ? TEAM_RED : TEAM_BLUE;
+                        if (killerTeam != lastKillTeam) multiKillCount = 0;
+                        lastKillTeam = killerTeam; }
+                        killCount++; multiKillCount++; multiKillTimer = 2.0f;
+                        if (killCount == 1) { snprintf(killFeedText, sizeof(killFeedText), "FIRST BLOOD!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                        else if (multiKillCount == 2) { snprintf(killFeedText, sizeof(killFeedText), "DOUBLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                        else if (multiKillCount == 3) { snprintf(killFeedText, sizeof(killFeedText), "TRIPLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                        else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
+                        // Slow-mo on last kill
+                        int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
+                        if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                    }
+                }
+
+                // Projectile whoosh sound (chargeTimer crossed from >0 to <=0)
+                for (int pp = 0; pp < MAX_PROJECTILES; pp++) {
+                    if (projBefore[pp].chargeTimer > 0 && projectiles[pp].chargeTimer <= 0
+                        && projectiles[pp].active)
+                        PlaySound(sfxProjectileWhoosh);
+                }
+
+                // Dig particles (visual only)
+                for (int i = 0; i < unitCount; i++) {
+                    if (!units[i].active) continue;
+                    if (UnitHasModifier(modifiers, i, MOD_DIG_HEAL)) {
+                        UnitType *dtype = &unitTypes[units[i].typeIndex];
+                        float modelH = (dtype->baseBounds.max.y - dtype->baseBounds.min.y) * dtype->scale;
+                        float modelR = (dtype->baseBounds.max.x - dtype->baseBounds.min.x) * dtype->scale * 0.6f;
+                        for (int pp = 0; pp < 3; pp++) {
+                            float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                            float r = modelR + (float)GetRandomValue(5, 20) / 10.0f;
+                            Vector3 pos = {
+                                units[i].position.x + cosf(angle) * r,
+                                units[i].position.y + (float)GetRandomValue(0, (int)(modelH * 10.0f)) / 10.0f,
+                                units[i].position.z + sinf(angle) * r
+                            };
+                            Vector3 vel = {
+                                cosf(angle) * 3.0f,
+                                (float)GetRandomValue(20, 60) / 10.0f,
+                                sinf(angle) * 3.0f
+                            };
+                            int shade = GetRandomValue(100, 180);
+                            Color brown = { (unsigned char)shade, (unsigned char)(shade * 0.6f),
+                                            (unsigned char)(shade * 0.3f), 255 };
+                            float sz = (float)GetRandomValue(3, 8) / 10.0f;
+                            SpawnParticle(particles, pos, vel, 0.5f + (float)GetRandomValue(0, 3) / 10.0f, sz, brown);
+                        }
+                    }
+                }
+
+                // Update visual effects with REAL dt for smooth particles
+                UpdateParticles(particles, realDt);
+                UpdateFloatingTexts(floatingTexts, realDt);
+                combatElapsedTime += realDt;
+
+                // Smooth Y toward ground
+                for (int i = 0; i < unitCount; i++) {
+                    if (!units[i].active) continue;
+                    units[i].position.y += (0.0f - units[i].position.y) * 0.1f;
+                }
+
+                // Poll + check round end (server-authoritative)
+                goto combat_check_end;
             }
             // Pause combat in single-player when ESC menu is open
             if (showEscMenu && !isMultiplayer) {
