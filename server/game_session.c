@@ -178,7 +178,7 @@ void session_start_prep(GameSession *s)
         if (!s->players[p].connected) continue;
 
         // Free shop roll
-        RollShop(s->players[p].shop, &s->players[p].gold, 0);
+        RollShop(s->players[p].shop, &s->players[p].gold, 0, s->currentRound);
 
         // Send prep start: round number, gold
         uint8_t payload[16];
@@ -263,7 +263,7 @@ void session_handle_msg(GameSession *s, int playerIdx, const NetMessage *msg)
         if (s->state != SESSION_PREP) break;
         int rollCost = 2;
         if (player->gold >= rollCost) {
-            RollShop(player->shop, &player->gold, rollCost);
+            RollShop(player->shop, &player->gold, rollCost, s->currentRound);
             session_send_shop(s, playerIdx);
             // Send gold update
             uint8_t goldBuf[2] = { (player->gold >> 8) & 0xFF, player->gold & 0xFF };

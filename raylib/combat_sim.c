@@ -19,6 +19,82 @@ static float det_roll(int a, int b, float hp)
     return (float)(h & 0xFFFF) / 65535.0f;
 }
 
+// Damage pipeline flags
+#define DMG_SINGLE_TARGET (1 << 0)  // apply Share Pain (melee + single-target projectiles)
+
+// Forward-declare ApplySharePain (used by ApplyDamage)
+static float ApplySharePain(Unit units[], int unitCount, Modifier modifiers[], int target, float dmg);
+
+// Unified damage pipeline: invuln → armor → share pain → shield → HP reduce → mushroom → death
+// Returns actual damage dealt after all reductions.
+static float ApplyDamage(Unit units[], int *unitCount, Modifier modifiers[],
+                         int target, float rawDmg, int flags)
+{
+    if (UnitHasModifier(modifiers, target, MOD_INVULNERABLE)) return 0;
+    // Armor reduction
+    float armor = GetModifierValue(modifiers, target, MOD_ARMOR);
+    float dmg = rawDmg - armor;
+    if (dmg < 0) dmg = 0;
+    // Share Pain (single-target only)
+    if (flags & DMG_SINGLE_TARGET)
+        dmg = ApplySharePain(units, *unitCount, modifiers, target, dmg);
+    // Shield absorption
+    if (units[target].shieldHP > 0) {
+        if (dmg <= units[target].shieldHP) { units[target].shieldHP -= dmg; dmg = 0; }
+        else { dmg -= units[target].shieldHP; units[target].shieldHP = 0; }
+    }
+    // HP reduction
+    units[target].currentHealth -= dmg;
+    CheckMushroomSpawn(units, unitCount, target, dmg);
+    // Death check
+    if (units[target].currentHealth <= 0) units[target].active = false;
+    return dmg;
+}
+
+// Share Pain: if target has MOD_SHARE_PAIN, redistribute a portion of damage to nearby allies.
+// Only applies to single-target damage (melee, projectile hits), NOT AoE.
+// Returns the damage the original target should take (reduced by shared amount).
+static float ApplySharePain(Unit units[], int unitCount, Modifier modifiers[], int target, float dmg)
+{
+    static bool inSharePain = false; // recursion guard
+    if (inSharePain) return dmg;
+    if (!UnitHasModifier(modifiers, target, MOD_SHARE_PAIN)) return dmg;
+
+    float sharePct = GetModifierValue(modifiers, target, MOD_SHARE_PAIN);
+    // Look up radius from equipped ability level
+    int spLvl = GetUnitAbilityLevel(units, target, ABILITY_SHARE_PAIN);
+    float radius = (spLvl >= 0) ? ABILITY_DEFS[ABILITY_SHARE_PAIN].values[spLvl][AV_SPP_RADIUS] : 30.0f;
+
+    // Find nearby allies
+    int allies[MAX_UNITS];
+    int allyCount = 0;
+    for (int j = 0; j < unitCount; j++) {
+        if (j == target || !units[j].active || units[j].team != units[target].team) continue;
+        if (DistXZ(units[target].position, units[j].position) <= radius)
+            allies[allyCount++] = j;
+    }
+    if (allyCount == 0) return dmg;
+
+    float sharedDmg = dmg * sharePct;
+    float selfDmg = dmg - sharedDmg;
+    float perAlly = sharedDmg / (float)allyCount;
+
+    inSharePain = true;
+    for (int a = 0; a < allyCount; a++) {
+        int ai = allies[a];
+        if (units[ai].shieldHP > 0) {
+            if (perAlly <= units[ai].shieldHP) { units[ai].shieldHP -= perAlly; }
+            else { float rem = perAlly - units[ai].shieldHP; units[ai].shieldHP = 0; units[ai].currentHealth -= rem; }
+        } else {
+            units[ai].currentHealth -= perAlly;
+        }
+        if (units[ai].currentHealth <= 0) units[ai].active = false;
+    }
+    inSharePain = false;
+
+    return selfDmg;
+}
+
 static void EmitEvent(CombatEvent events[], int *eventCount, CombatEventType type,
                       int unitIndex, int abilityId, Vector3 position, float v1, float v2)
 {
@@ -90,40 +166,23 @@ int CombatTick(Unit units[], int *unitCountPtr,
         if (pdist <= pstep) {
             // HIT — Hook: damage by distance, then pull target to caster
             if (projectiles[p].type == PROJ_HOOK) {
-                if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
-                    float hookDist = DistXZ(units[ti].position, units[projectiles[p].sourceIndex].position);
-                    float hitDmg = hookDist * projectiles[p].damage;
-                    if (units[ti].shieldHP > 0) {
-                        if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
-                        else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
-                    }
-                    units[ti].currentHealth -= hitDmg;
-                    CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
-                    if (units[ti].currentHealth <= 0) {
-                        units[ti].active = false;
-                    } else {
-                        // Start pulling target to caster
-                        units[ti].hookPullDest = units[projectiles[p].sourceIndex].position;
-                        units[ti].hookPullSpeed = projectiles[p].speed;
-                        AddModifier(modifiers, ti, MOD_STUN, 10.0f, 0); // stun during pull
-                    }
+                float hookDist = DistXZ(units[ti].position, units[projectiles[p].sourceIndex].position);
+                float rawDmg = hookDist * projectiles[p].damage;
+                float hitDmg = ApplyDamage(units, &unitCount, modifiers, ti, rawDmg, DMG_SINGLE_TARGET);
+                if (hitDmg > 0 && units[ti].active) {
+                    // Start pulling target to caster
+                    units[ti].hookPullDest = units[projectiles[p].sourceIndex].position;
+                    units[ti].hookPullSpeed = projectiles[p].speed;
+                    AddModifier(modifiers, ti, MOD_STUN, 10.0f, 0); // stun during pull
+                }
+                if (hitDmg > 0 || rawDmg > 0)
                     EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, ti, -1,
                               units[ti].position, 6.0f, 0.3f);
-                }
                 projectiles[p].active = false;
             }
-            // HIT — Maelstrom: bounce like chain frost
+            // HIT — Maelstrom: bounce like chain frost (now with Share Pain)
             else if (projectiles[p].type == PROJ_MAELSTROM) {
-                if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
-                    float hitDmg = projectiles[p].damage;
-                    if (units[ti].shieldHP > 0) {
-                        if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
-                        else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
-                    }
-                    units[ti].currentHealth -= hitDmg;
-                    CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
-                    if (units[ti].currentHealth <= 0) units[ti].active = false;
-                }
+                ApplyDamage(units, &unitCount, modifiers, ti, projectiles[p].damage, DMG_SINGLE_TARGET);
                 if (projectiles[p].bouncesRemaining > 0) {
                     projectiles[p].bouncesRemaining--;
                     projectiles[p].lastHitUnit = ti;
@@ -140,64 +199,44 @@ int CombatTick(Unit units[], int *unitCountPtr,
             // HIT — Devil Bolt: flat damage ranged auto-attack
             else if (projectiles[p].type == PROJ_DEVIL_BOLT) {
                 int si = projectiles[p].sourceIndex;
-                if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
-                    float hitDmg = projectiles[p].damage;
-                    float armor = GetModifierValue(modifiers, ti, MOD_ARMOR);
-                    hitDmg -= armor;
-                    if (hitDmg < 0) hitDmg = 0;
-                    if (units[ti].shieldHP > 0) {
-                        if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
-                        else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
+                float hitDmg = ApplyDamage(units, &unitCount, modifiers, ti, projectiles[p].damage, DMG_SINGLE_TARGET);
+                // Lifesteal from devil bolt
+                if (hitDmg > 0 && si >= 0 && si < unitCount && units[si].active) {
+                    float ls = GetModifierValue(modifiers, si, MOD_LIFESTEAL);
+                    if (ls > 0) {
+                        float maxHP = UNIT_STATS[units[si].typeIndex].health * units[si].hpMultiplier;
+                        units[si].currentHealth += hitDmg * ls;
+                        if (units[si].currentHealth > maxHP) units[si].currentHealth = maxHP;
                     }
-                    units[ti].currentHealth -= hitDmg;
-                    CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
-                    // Lifesteal from devil bolt
-                    if (si >= 0 && si < unitCount && units[si].active) {
-                        float ls = GetModifierValue(modifiers, si, MOD_LIFESTEAL);
-                        if (ls > 0) {
-                            float maxHP = UNIT_STATS[units[si].typeIndex].health * units[si].hpMultiplier;
-                            units[si].currentHealth += hitDmg * ls;
-                            if (units[si].currentHealth > maxHP) units[si].currentHealth = maxHP;
-                        }
-                    }
-                    if (units[ti].currentHealth <= 0) units[ti].active = false;
                 }
                 projectiles[p].active = false;
             }
             // HIT — normal (Magic Missile / Chain Frost)
             else {
-            if (!UnitHasModifier(modifiers, ti, MOD_INVULNERABLE)) {
-                float hitDmg = projectiles[p].damage;
+                float rawDmg = projectiles[p].damage;
                 if (projectiles[p].type == PROJ_MAGIC_MISSILE)
-                    hitDmg *= UNIT_STATS[units[ti].typeIndex].health * units[ti].hpMultiplier;
-                if (units[ti].shieldHP > 0) {
-                    if (hitDmg <= units[ti].shieldHP) { units[ti].shieldHP -= hitDmg; hitDmg = 0; }
-                    else { hitDmg -= units[ti].shieldHP; units[ti].shieldHP = 0; }
-                }
-                units[ti].currentHealth -= hitDmg;
-                CheckMushroomSpawn(units, &unitCount, ti, hitDmg);
+                    rawDmg *= UNIT_STATS[units[ti].typeIndex].health * units[ti].hpMultiplier;
+                ApplyDamage(units, &unitCount, modifiers, ti, rawDmg, DMG_SINGLE_TARGET);
                 if (projectiles[p].stunDuration > 0) {
                     AddModifier(modifiers, ti, MOD_STUN, projectiles[p].stunDuration, 0);
                     EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, ti, -1,
                               units[ti].position, 5.0f, 0.25f);
                 }
-                if (units[ti].currentHealth <= 0) units[ti].active = false;
+                // Chain Frost bounce
+                if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
+                    projectiles[p].bouncesRemaining--;
+                    projectiles[p].damage += projectiles[p].damageIncrease;
+                    projectiles[p].lastHitUnit = ti;
+                    projectiles[p].position = units[ti].position;
+                    projectiles[p].position.y += 3.0f;
+                    int next = FindChainFrostTarget(units, unitCount, units[ti].position,
+                        projectiles[p].sourceTeam, ti, projectiles[p].bounceRange);
+                    if (next >= 0) projectiles[p].targetIndex = next;
+                    else projectiles[p].active = false;
+                } else {
+                    projectiles[p].active = false;
+                }
             }
-            // Chain Frost bounce
-            if (projectiles[p].type == PROJ_CHAIN_FROST && projectiles[p].bouncesRemaining > 0) {
-                projectiles[p].bouncesRemaining--;
-                projectiles[p].damage += projectiles[p].damageIncrease;
-                projectiles[p].lastHitUnit = ti;
-                projectiles[p].position = units[ti].position;
-                projectiles[p].position.y += 3.0f;
-                int next = FindChainFrostTarget(units, unitCount, units[ti].position,
-                    projectiles[p].sourceTeam, ti, projectiles[p].bounceRange);
-                if (next >= 0) projectiles[p].targetIndex = next;
-                else projectiles[p].active = false;
-            } else {
-                projectiles[p].active = false;
-            }
-            } // end else (normal projectile hit)
         } else {
             projectiles[p].position.x += (pdx / pdist) * pstep;
             projectiles[p].position.y += (pdy / pdist) * pstep;
@@ -390,13 +429,9 @@ int CombatTick(Unit units[], int *unitCountPtr,
                 float damage = def->values[slot->level][AV_EQ_DAMAGE];
                 for (int j = 0; j < unitCount; j++) {
                     if (j == i || !units[j].active) continue;
-                    if (UnitHasModifier(modifiers, j, MOD_INVULNERABLE)) continue;
                     float d = DistXZ(units[i].position, units[j].position);
-                    if (d <= radius) {
-                        units[j].currentHealth -= damage;
-                        CheckMushroomSpawn(units, &unitCount, j, damage);
-                        if (units[j].currentHealth <= 0) units[j].active = false;
-                    }
+                    if (d <= radius)
+                        ApplyDamage(units, &unitCount, modifiers, j, damage, 0);
                 }
                 EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, i, -1,
                           units[i].position, 10.0f, 0.5f);
@@ -443,7 +478,6 @@ int CombatTick(Unit units[], int *unitCountPtr,
                 float fnorm = (fdist > 0.001f) ? 1.0f / fdist : 0.0f;
                 for (int j = 0; j < unitCount; j++) {
                     if (j == i || !units[j].active) continue;
-                    if (UnitHasModifier(modifiers, j, MOD_INVULNERABLE)) continue;
                     float ux = units[j].position.x - units[i].position.x;
                     float uz = units[j].position.z - units[i].position.z;
                     float proj = (ux * fdx + uz * fdz) * fnorm * fnorm;
@@ -451,11 +485,8 @@ int CombatTick(Unit units[], int *unitCountPtr,
                     float perpX = ux - fdx * fnorm * proj;
                     float perpZ = uz - fdz * fnorm * proj;
                     float perpDist = sqrtf(perpX * perpX + perpZ * perpZ);
-                    if (perpDist <= width + 3.0f) {
-                        units[j].currentHealth -= damage;
-                        CheckMushroomSpawn(units, &unitCount, j, damage);
-                        if (units[j].currentHealth <= 0) units[j].active = false;
-                    }
+                    if (perpDist <= width + 3.0f)
+                        ApplyDamage(units, &unitCount, modifiers, j, damage, 0);
                 }
                 EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, i, -1,
                           units[i].position, 6.0f, 0.3f);
@@ -544,12 +575,95 @@ int CombatTick(Unit units[], int *unitCountPtr,
                 slot->cooldownRemaining = pcDef->cooldown[slot->level];
                 castThisFrame = true;
             } break;
+            case ABILITY_MULTICAST: {
+                const AbilityDef *mcDef = &ABILITY_DEFS[ABILITY_MULTICAST];
+                float dur = mcDef->values[slot->level][AV_MC_DURATION];
+                float chance2x = mcDef->values[slot->level][AV_MC_CHANCE_2X];
+                AddModifier(modifiers, i, MOD_MULTICAST, dur, chance2x);
+                slot->cooldownRemaining = mcDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
+            case ABILITY_SHARE_PAIN: {
+                const AbilityDef *spDef = &ABILITY_DEFS[ABILITY_SHARE_PAIN];
+                float dur = spDef->values[slot->level][AV_SPP_DURATION];
+                float pct = spDef->values[slot->level][AV_SPP_SHARE_PCT];
+                AddModifier(modifiers, i, MOD_SHARE_PAIN, dur, pct);
+                slot->cooldownRemaining = spDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
             default: break;
             }
             if (castThisFrame) {
                 EmitEvent(events, eventCount, COMBAT_EVT_ABILITY_CAST, i,
                           slot->abilityId, units[i].position, 0, 0);
                 units[i].abilityCastDelay = 0.75f;
+                // Multicast: chance to re-execute the same ability (not Multicast itself)
+                if (slot->abilityId != ABILITY_MULTICAST && slot->abilityId != ABILITY_SHARE_PAIN
+                    && UnitHasModifier(modifiers, i, MOD_MULTICAST)) {
+                    float chance2x = GetModifierValue(modifiers, i, MOD_MULTICAST);
+                    float chance3x = 0.0f;
+                    int mcLvl = GetUnitAbilityLevel(units, i, ABILITY_MULTICAST);
+                    if (mcLvl >= 0) chance3x = ABILITY_DEFS[ABILITY_MULTICAST].values[mcLvl][AV_MC_CHANCE_3X];
+                    float roll2x = det_roll(i, slotIdx + 100, units[i].currentHealth);
+                    int extraCasts = 0;
+                    if (roll2x < chance2x) {
+                        extraCasts = 1;
+                        float roll3x = det_roll(i, slotIdx + 200, units[i].currentHealth);
+                        if (roll3x < chance3x) extraCasts = 2;
+                    }
+                    // Re-execute the cast logic (reset cooldown was already set, just re-trigger effects)
+                    for (int mc = 0; mc < extraCasts; mc++) {
+                        EmitEvent(events, eventCount, COMBAT_EVT_ABILITY_CAST, i,
+                                  slot->abilityId, units[i].position, 0, 0);
+                        // Re-trigger the same ability's effect (projectiles/modifiers)
+                        switch (slot->abilityId) {
+                        case ABILITY_MAGIC_MISSILE:
+                            if (target >= 0)
+                                SpawnProjectile(projectiles, PROJ_MAGIC_MISSILE,
+                                    units[i].position, target, i, units[i].team, slot->level,
+                                    def->values[slot->level][AV_MM_PROJ_SPEED],
+                                    def->values[slot->level][AV_MM_DAMAGE],
+                                    def->values[slot->level][AV_MM_STUN_DUR],
+                                    (Color){120, 80, 255, 255});
+                            break;
+                        case ABILITY_CHAIN_FROST:
+                            if (target >= 0)
+                                SpawnChainFrostProjectile(projectiles,
+                                    units[i].position, target, i, units[i].team, slot->level,
+                                    def->values[slot->level][AV_CF_PROJ_SPEED],
+                                    def->values[slot->level][AV_CF_DAMAGE],
+                                    (int)def->values[slot->level][AV_CF_BOUNCES],
+                                    def->values[slot->level][AV_CF_BOUNCE_RANGE],
+                                    def->values[slot->level][AV_CF_DMG_INCREASE]);
+                            break;
+                        case ABILITY_HOOK: {
+                            const AbilityDef *hkDef2 = &ABILITY_DEFS[ABILITY_HOOK];
+                            int hkT2 = FindFurthestEnemy(units, unitCount, i);
+                            if (hkT2 >= 0)
+                                SpawnHookProjectile(projectiles, units[i].position,
+                                    hkT2, i, units[i].team, slot->level,
+                                    hkDef2->values[slot->level][AV_HK_SPEED],
+                                    hkDef2->values[slot->level][AV_HK_DMG_PER_DIST],
+                                    hkDef2->values[slot->level][AV_HK_RANGE]);
+                        } break;
+                        case ABILITY_BLOOD_RAGE:
+                            AddModifier(modifiers, i, MOD_LIFESTEAL,
+                                def->values[slot->level][AV_BR_DURATION],
+                                def->values[slot->level][AV_BR_LIFESTEAL]);
+                            break;
+                        case ABILITY_EARTHQUAKE: {
+                            float eqR = def->values[slot->level][AV_EQ_RADIUS];
+                            float eqD = def->values[slot->level][AV_EQ_DAMAGE];
+                            for (int j = 0; j < unitCount; j++) {
+                                if (j == i || !units[j].active) continue;
+                                if (DistXZ(units[i].position, units[j].position) <= eqR)
+                                    ApplyDamage(units, &unitCount, modifiers, j, eqD, 0);
+                            }
+                        } break;
+                        default: break; // non-repeatable abilities just get extra event
+                        }
+                    }
+                }
             }
         }
 
@@ -564,29 +678,18 @@ int CombatTick(Unit units[], int *unitCountPtr,
                 if (chargeSpeed <= 0) chargeSpeed = 80.0f;
                 if (chargeDist <= ATTACK_RANGE) {
                     // IMPACT — AoE damage + knockback
-                    int chargeLvl = 0;
-                    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                        if (units[i].abilities[a].abilityId == ABILITY_PRIMAL_CHARGE) {
-                            chargeLvl = units[i].abilities[a].level; break;
-                        }
-                    }
+                    int chargeLvl = GetUnitAbilityLevel(units, i, ABILITY_PRIMAL_CHARGE);
+                    if (chargeLvl < 0) chargeLvl = 0;
                     const AbilityDef *pcDef = &ABILITY_DEFS[ABILITY_PRIMAL_CHARGE];
                     float pcDmg = pcDef->values[chargeLvl][AV_PC_DAMAGE];
                     float pcKnock = pcDef->values[chargeLvl][AV_PC_KNOCKBACK];
                     float pcRadius = pcDef->values[chargeLvl][AV_PC_AOE_RADIUS];
                     for (int j = 0; j < unitCount; j++) {
                         if (!units[j].active || units[j].team == units[i].team) continue;
-                        if (UnitHasModifier(modifiers, j, MOD_INVULNERABLE)) continue;
                         float dd = DistXZ(units[ct].position, units[j].position);
                         if (dd <= pcRadius) {
-                            float dmgHit = pcDmg;
-                            if (units[j].shieldHP > 0) {
-                                if (dmgHit <= units[j].shieldHP) { units[j].shieldHP -= dmgHit; dmgHit = 0; }
-                                else { dmgHit -= units[j].shieldHP; units[j].shieldHP = 0; }
-                            }
-                            units[j].currentHealth -= dmgHit;
-                            CheckMushroomSpawn(units, &unitCount, j, dmgHit);
-                            if (units[j].currentHealth <= 0) units[j].active = false;
+                            ApplyDamage(units, &unitCount, modifiers, j, pcDmg, 0);
+                            // Knockback
                             float kx = units[j].position.x - units[ct].position.x;
                             float kz = units[j].position.z - units[ct].position.z;
                             float klen = sqrtf(kx*kx + kz*kz);
@@ -670,54 +773,37 @@ int CombatTick(Unit units[], int *unitCountPtr,
                         (Color){200, 50, 50, 255});
                     units[i].attackCooldown = stats->attackSpeed;
                 } else {
-                if (!UnitHasModifier(modifiers, target, MOD_INVULNERABLE)) {
-                    float dmg = stats->attackDamage * units[i].dmgMultiplier;
-                    float armor = GetModifierValue(modifiers, target, MOD_ARMOR);
-                    dmg -= armor;
-                    if (dmg < 0) dmg = 0;
-                    // Shield absorption
-                    if (units[target].shieldHP > 0) {
-                        if (dmg <= units[target].shieldHP) { units[target].shieldHP -= dmg; dmg = 0; }
-                        else { dmg -= units[target].shieldHP; units[target].shieldHP = 0; }
-                    }
-                    units[target].currentHealth -= dmg;
-                    CheckMushroomSpawn(units, &unitCount, target, dmg);
+                {
+                    float rawDmg = stats->attackDamage * units[i].dmgMultiplier;
+                    float dmg = ApplyDamage(units, &unitCount, modifiers, target, rawDmg, DMG_SINGLE_TARGET);
                     // Lifesteal
-                    float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
-                    if (ls > 0) {
-                        units[i].currentHealth += dmg * ls;
-                        if (units[i].currentHealth > unitMaxHP)
-                            units[i].currentHealth = unitMaxHP;
+                    if (dmg > 0) {
+                        float ls = GetModifierValue(modifiers, i, MOD_LIFESTEAL);
+                        if (ls > 0) {
+                            units[i].currentHealth += dmg * ls;
+                            if (units[i].currentHealth > unitMaxHP)
+                                units[i].currentHealth = unitMaxHP;
+                        }
                     }
                     // Craggy Armor retaliation — chance to stun attacker
-                    if (UnitHasModifier(modifiers, target, MOD_CRAGGY_ARMOR)) {
+                    if (dmg > 0 && UnitHasModifier(modifiers, target, MOD_CRAGGY_ARMOR)) {
                         float stunChance = GetModifierValue(modifiers, target, MOD_CRAGGY_ARMOR);
                         float roll = det_roll(i, target, units[i].currentHealth);
                         if (roll < stunChance) {
-                            float stunDur = 1.0f;
-                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                                if (units[target].abilities[a].abilityId == ABILITY_CRAGGY_ARMOR) {
-                                    int lvl = units[target].abilities[a].level;
-                                    stunDur = ABILITY_DEFS[ABILITY_CRAGGY_ARMOR].values[lvl][AV_CA_STUN_DUR];
-                                    break;
-                                }
-                            }
+                            int caLvl = GetUnitAbilityLevel(units, target, ABILITY_CRAGGY_ARMOR);
+                            float stunDur = (caLvl >= 0) ? ABILITY_DEFS[ABILITY_CRAGGY_ARMOR].values[caLvl][AV_CA_STUN_DUR] : 1.0f;
                             AddModifier(modifiers, i, MOD_STUN, stunDur, 0);
                             EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, i, -1,
                                       units[i].position, 3.0f, 0.15f);
                         }
                     }
                     // Maelstrom on-hit proc (deterministic)
-                    if (UnitHasModifier(modifiers, i, MOD_MAELSTROM)) {
+                    if (dmg > 0 && UnitHasModifier(modifiers, i, MOD_MAELSTROM)) {
                         float procChance = GetModifierValue(modifiers, i, MOD_MAELSTROM);
                         float roll = det_roll(i, target, units[target].currentHealth);
                         if (roll < procChance) {
-                            int mlLvl = 0;
-                            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                                if (units[i].abilities[a].abilityId == ABILITY_MAELSTROM) {
-                                    mlLvl = units[i].abilities[a].level; break;
-                                }
-                            }
+                            int mlLvl = GetUnitAbilityLevel(units, i, ABILITY_MAELSTROM);
+                            if (mlLvl < 0) mlLvl = 0;
                             const AbilityDef *mlDef = &ABILITY_DEFS[ABILITY_MAELSTROM];
                             SpawnMaelstromProjectile(projectiles,
                                 units[target].position, target, i, units[i].team, mlLvl,
@@ -727,7 +813,6 @@ int CombatTick(Unit units[], int *unitCountPtr,
                                 mlDef->values[mlLvl][AV_ML_BOUNCE_RANGE]);
                         }
                     }
-                    if (units[target].currentHealth <= 0) units[target].active = false;
                 }
                 units[i].attackCooldown = stats->attackSpeed;
                 } // end else (non-devil melee)
@@ -751,32 +836,22 @@ int CombatTick(Unit units[], int *unitCountPtr,
             float faceDirX = sinf(facingRad);
             float faceDirZ = cosf(facingRad);
             float dot = (dx/distToGazer) * faceDirX + (dz/distToGazer) * faceDirZ;
-            float coneAngle = 45.0f;
-            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                if (units[g].abilities[a].abilityId == ABILITY_STONE_GAZE) {
-                    int lvl = units[g].abilities[a].level;
-                    coneAngle = ABILITY_DEFS[ABILITY_STONE_GAZE].values[lvl][AV_SG_CONE_ANGLE];
-                    break;
-                }
-            }
+            int sgLvl = GetUnitAbilityLevel(units, g, ABILITY_STONE_GAZE);
+            float coneAngle = (sgLvl >= 0) ? ABILITY_DEFS[ABILITY_STONE_GAZE].values[sgLvl][AV_SG_CONE_ANGLE] : 45.0f;
             float coneThresh = cosf(coneAngle * (PI / 180.0f));
             if (dot >= coneThresh) {
                 units[i].gazeAccum += dt;
                 beingGazed = true;
-                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                    if (units[g].abilities[a].abilityId == ABILITY_STONE_GAZE) {
-                        int lvl = units[g].abilities[a].level;
-                        float thresh = ABILITY_DEFS[ABILITY_STONE_GAZE].values[lvl][AV_SG_GAZE_THRESH];
-                        float stunDur = ABILITY_DEFS[ABILITY_STONE_GAZE].values[lvl][AV_SG_STUN_DUR];
-                        if (units[i].gazeAccum >= thresh) {
-                            AddModifier(modifiers, i, MOD_STUN, stunDur, 0);
-                            units[i].gazeAccum = 0;
-                            EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, i, -1,
-                                      units[i].position, 3.0f, 0.2f);
-                            EmitEvent(events, eventCount, COMBAT_EVT_ABILITY_CAST, i,
-                                      ABILITY_STONE_GAZE, units[i].position, 0, 0);
-                        }
-                        break;
+                if (sgLvl >= 0) {
+                    float thresh = ABILITY_DEFS[ABILITY_STONE_GAZE].values[sgLvl][AV_SG_GAZE_THRESH];
+                    float stunDur = ABILITY_DEFS[ABILITY_STONE_GAZE].values[sgLvl][AV_SG_STUN_DUR];
+                    if (units[i].gazeAccum >= thresh) {
+                        AddModifier(modifiers, i, MOD_STUN, stunDur, 0);
+                        units[i].gazeAccum = 0;
+                        EmitEvent(events, eventCount, COMBAT_EVT_SHAKE, i, -1,
+                                  units[i].position, 3.0f, 0.2f);
+                        EmitEvent(events, eventCount, COMBAT_EVT_ABILITY_CAST, i,
+                                  ABILITY_STONE_GAZE, units[i].position, 0, 0);
                     }
                 }
                 break; // only accumulate from one gazer at a time

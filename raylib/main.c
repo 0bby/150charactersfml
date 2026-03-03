@@ -710,6 +710,7 @@ int main(void)
     int hoverAbilityId = -1;
     int hoverAbilityLevel = 0;
     int hoverAbilityUnitIndex = -1;
+    bool hoverFromInventory = false;
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
     bool usedShopHotkey = false;  // hides hotkey hint after first use
@@ -1423,6 +1424,7 @@ int main(void)
         hoverAbilityId = -1;
         hoverAbilityLevel = 0;
         hoverAbilityUnitIndex = -1;
+        hoverFromInventory = false;
         int prevHoverSynergyIdx = hoverSynergyIdx;
         hoverSynergyIdx = -1;
 
@@ -1493,7 +1495,7 @@ int main(void)
                     statueSpawn.phase = SSPAWN_INACTIVE;
                     playerGold = 20;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
-                    RollShop(shopSlots, &playerGold, 0);
+                    RollShop(shopSlots, &playerGold, 0, currentRound);
                     rollCost = rollCostBase;
                     dragState.dragging = false;
                     SpawnWave(units, &unitCount, 0, unitTypeCount);
@@ -2076,7 +2078,7 @@ int main(void)
                     if (isMultiplayer) {
                         net_client_send_roll(&netClient);
                     } else {
-                        RollShop(shopSlots, &playerGold, rollCost);
+                        RollShop(shopSlots, &playerGold, rollCost, currentRound);
                     }
                     rollCost += rollCostIncrement;
                     TriggerShake(&shake, 2.0f, 0.15f);
@@ -2292,7 +2294,7 @@ int main(void)
                         if (isMultiplayer) {
                             net_client_send_roll(&netClient);
                         } else {
-                            RollShop(shopSlots, &playerGold, rollCost);
+                            RollShop(shopSlots, &playerGold, rollCost, currentRound);
                         }
                         rollCost += rollCostIncrement;
                         TriggerShake(&shake, 2.0f, 0.15f);
@@ -2301,6 +2303,7 @@ int main(void)
                 }
                 // --- Shop: Right-click to toggle lock ---
                 if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && !(isMultiplayer && playerReady)) {
+                    bool rightClickHandled = false;
                     int shopY = hudTop + 2;
                     int shopCardW = S(160), shopCardH = S(38), shopCardGap = 10;
                     int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
@@ -2311,7 +2314,28 @@ int main(void)
                         if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
                             shopSlots[s].locked = !shopSlots[s].locked;
                             PlaySound(sfxUiBuy);
+                            rightClickHandled = true;
                             break;
+                        }
+                    }
+                    // --- Inventory: Right-click to sell ability ---
+                    if (!rightClickHandled) {
+                        int totalCardsW2 = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
+                        int cardsStartX2 = (sw - totalCardsW2) / 2;
+                        int invStartX2 = cardsStartX2 - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
+                        int invStartY2 = hudTop + hudShopH + 15;
+                        for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
+                            int col = inv % HUD_INVENTORY_COLS;
+                            int row = inv / HUD_INVENTORY_COLS;
+                            int ix = invStartX2 + col * (hudAbilSlotSize + hudAbilSlotGap);
+                            int iy = invStartY2 + row * (hudAbilSlotSize + hudAbilSlotGap);
+                            Rectangle r = { (float)ix, (float)iy, (float)hudAbilSlotSize, (float)hudAbilSlotSize };
+                            if (CheckCollisionPointRec(mouse, r) && inventory[inv].abilityId >= 0) {
+                                SellAbility(inventory[inv].abilityId, inventory[inv].level, &playerGold);
+                                inventory[inv].abilityId = -1;
+                                PlaySound(sfxUiBuy);
+                                break;
+                            }
                         }
                     }
                 }
@@ -3716,7 +3740,7 @@ int main(void)
                         else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
                     }
                     { int interest = playerGold / 5; playerGold += roundGoldReward + interest; }
-                    RollShop(shopSlots, &playerGold, 0);
+                    RollShop(shopSlots, &playerGold, 0, currentRound);
                     rollCost = rollCostBase;
                     phase = PHASE_PREP;
                 }
@@ -3799,7 +3823,7 @@ int main(void)
                         else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
                     }
                     { int interest = playerGold / 5; playerGold += roundGoldReward + interest; }
-                    RollShop(shopSlots, &playerGold, 0);
+                    RollShop(shopSlots, &playerGold, 0, currentRound);
                     rollCost = rollCostBase;
                     phase = PHASE_PREP;
                 }
@@ -4848,6 +4872,8 @@ int main(void)
                     case MOD_MAELSTROM:     modLabel = "MAELSTROM";    modColor = (Color){255,230,50,255};  break;
                     case MOD_VLAD_AURA:     modLabel = "VLAD AURA";    modColor = (Color){180,30,30,255};   break;
                     case MOD_CHARGING:      modLabel = "CHARGING";     modColor = (Color){255,140,0,255};   break;
+                    case MOD_MULTICAST:     modLabel = "MULTICAST";    modColor = (Color){255,180,60,255};  break;
+                    case MOD_SHARE_PAIN:    modLabel = "SHARE PAIN";   modColor = (Color){180,60,180,255};  break;
                 }
                 if (modLabel) {
                     int totalLen = (int)strlen(modLabel);
@@ -5672,7 +5698,7 @@ int main(void)
                         // Hover detection
                         bool invHovered = CheckCollisionPointRec(GetMousePosition(),
                             (Rectangle){(float)ix,(float)iy,(float)hudAbilSlotSize,(float)hudAbilSlotSize});
-                        if (invHovered) { hoverAbilityId = inventory[inv].abilityId; hoverAbilityLevel = inventory[inv].level; }
+                        if (invHovered) { hoverAbilityId = inventory[inv].abilityId; hoverAbilityLevel = inventory[inv].level; hoverFromInventory = true; }
                         int invAbbrSize = S(13);
                         if (invHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
                             invAbbrSize = S(13) + (int)(3.0f * (hoverTimer / tooltipDelay));
@@ -6063,6 +6089,16 @@ int main(void)
                 statLines[numStatLines++] = (StatLine){ "Damage", AV_PC_DAMAGE, false };
                 statLines[numStatLines++] = (StatLine){ "Knockback", AV_PC_KNOCKBACK, false };
                 break;
+            case ABILITY_MULTICAST:
+                statLines[numStatLines++] = (StatLine){ "2x Chance", AV_MC_CHANCE_2X, true };
+                statLines[numStatLines++] = (StatLine){ "3x Chance", AV_MC_CHANCE_3X, true };
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_MC_DURATION, false };
+                break;
+            case ABILITY_SHARE_PAIN:
+                statLines[numStatLines++] = (StatLine){ "Share %", AV_SPP_SHARE_PCT, true };
+                statLines[numStatLines++] = (StatLine){ "Radius", AV_SPP_RADIUS, false };
+                statLines[numStatLines++] = (StatLine){ "Duration", AV_SPP_DURATION, false };
+                break;
             default: break;
             }
             // Always add cooldown as last line
@@ -6070,7 +6106,8 @@ int main(void)
             numStatLines++; // reserve a line for cooldown
 
             int tipW = S(300);
-            int tipH = S(50) + numStatLines * S(18);
+            bool showSellHint = hoverFromInventory && phase == PHASE_PREP;
+            int tipH = S(50) + numStatLines * S(18) + (showSellHint ? S(18) : 0);
             int tipX = (int)mpos.x + 14;
             int tipY = (int)mpos.y - tipH - 4;
             if (tipX + tipW > GetScreenWidth()) tipX = (int)mpos.x - tipW - 4;
@@ -6135,6 +6172,13 @@ int main(void)
                     }
                 }
                 lineY += S(18);
+            }
+            // Sell hint for inventory slots
+            if (showSellHint) {
+                int sellValue = ABILITY_DEFS[hoverAbilityId].goldCost / 2 + hoverAbilityLevel;
+                if (sellValue < 1) sellValue = 1;
+                const char *sellText = TextFormat("Right-click to sell (+%dg)", sellValue);
+                GameDrawText(sellText, tipX + S(6), lineY, S(12), (Color){255, 230, 120, 200});
             }
         }
 

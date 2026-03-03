@@ -39,7 +39,8 @@ void SpawnParticle(Particle particles[], Vector3 pos, Vector3 vel, float life, f
 void UpdateParticles(Particle particles[], float dt);
 
 // Shop & inventory helpers
-void RollShop(ShopSlot shopSlots[], int *gold, int cost);
+void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round);
+void SellAbility(int abilityId, int level, int *gold);
 void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold);
 void AssignRandomAbilities(Unit *unit, int numAbilities);
 
@@ -102,6 +103,9 @@ void CheckPassiveSunder(CombatState *state, int unitIndex);
 
 // On-hit checks
 void CheckCraggyArmorRetaliation(CombatState *state, int attacker, int defender);
+
+// Ability lookup helpers
+int GetUnitAbilityLevel(Unit units[], int unitIndex, int abilityId);
 
 // Shared combat helpers
 int FindHighestHPAlly(Unit units[], int unitCount, int selfIndex);

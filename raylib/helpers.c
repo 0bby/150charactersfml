@@ -109,6 +109,16 @@ int FindClosestEnemy(Unit units[], int unitCount, int selfIndex)
     return bestIdx;
 }
 
+// Get ability level for a unit (-1 if not found)
+int GetUnitAbilityLevel(Unit units[], int unitIndex, int abilityId)
+{
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+        if (units[unitIndex].abilities[a].abilityId == abilityId)
+            return units[unitIndex].abilities[a].level;
+    }
+    return -1;
+}
+
 // Count active units per team
 void CountTeams(Unit units[], int unitCount, int *blueAlive, int *redAlive)
 {
@@ -187,11 +197,15 @@ bool UnitHasModifier(Modifier modifiers[], int unitIndex, ModifierType type)
 
 float GetModifierValue(Modifier modifiers[], int unitIndex, ModifierType type)
 {
-    float best = 0.0f;
-    for (int m = 0; m < MAX_MODIFIERS; m++)
-        if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type)
-            if (modifiers[m].value > best) best = modifiers[m].value;
-    return best;
+    bool stacks = ModifierTypeStacks(type);
+    float result = 0.0f;
+    for (int m = 0; m < MAX_MODIFIERS; m++) {
+        if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type) {
+            if (stacks) result += modifiers[m].value;
+            else if (modifiers[m].value > result) result = modifiers[m].value;
+        }
+    }
+    return result;
 }
 
 void AddModifier(Modifier modifiers[], int unitIndex, ModifierType type, float duration, float value)
@@ -201,15 +215,18 @@ void AddModifier(Modifier modifiers[], int unitIndex, ModifierType type, float d
         return;
 
     // Dedup: if same (type, unitIndex) already active, refresh duration to max
-    for (int m = 0; m < MAX_MODIFIERS; m++) {
-        if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type) {
-            if (duration > modifiers[m].duration)
-                modifiers[m].duration = duration;
-            if (duration > modifiers[m].maxDuration)
-                modifiers[m].maxDuration = duration;
-            if (value > modifiers[m].value)
-                modifiers[m].value = value;
-            return;
+    // Skip dedup for stacking modifier types (they allow multiple instances)
+    if (!ModifierTypeStacks(type)) {
+        for (int m = 0; m < MAX_MODIFIERS; m++) {
+            if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type) {
+                if (duration > modifiers[m].duration)
+                    modifiers[m].duration = duration;
+                if (duration > modifiers[m].maxDuration)
+                    modifiers[m].maxDuration = duration;
+                if (value > modifiers[m].value)
+                    modifiers[m].value = value;
+                return;
+            }
         }
     }
 
@@ -295,15 +312,32 @@ void UpdateParticles(Particle particles[], float dt)
 //------------------------------------------------------------------------------------
 // Shop & Inventory Helpers
 //------------------------------------------------------------------------------------
-void RollShop(ShopSlot shopSlots[], int *gold, int cost)
+void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round)
 {
     if (*gold < cost) return;
     *gold -= cost;
     for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
         if (shopSlots[i].locked) continue;
-        shopSlots[i].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
+        if (round < 3) {
+            // Early rounds: bias toward cheaper abilities (cost 2-3)
+            // Re-roll expensive abilities with 70% chance
+            int id = GetRandomValue(0, ABILITY_COUNT - 1);
+            if (ABILITY_DEFS[id].goldCost >= 4 && GetRandomValue(0, 99) < 70)
+                id = GetRandomValue(0, ABILITY_COUNT - 1);
+            shopSlots[i].abilityId = id;
+        } else {
+            shopSlots[i].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
+        }
         shopSlots[i].level = 0;
     }
+}
+
+void SellAbility(int abilityId, int level, int *gold)
+{
+    if (abilityId < 0) return;
+    int sellValue = ABILITY_DEFS[abilityId].goldCost / 2 + level;
+    if (sellValue < 1) sellValue = 1;
+    *gold += sellValue;
 }
 
 void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold)
@@ -672,6 +706,33 @@ static void AssignAbilitiesAtLevel(Unit *unit, int numAbilities, int level)
     }
 }
 
+// Assign N random non-duplicate abilities, distributing totalLevelBudget points randomly
+// Each point adds +1 level to a random ability (capped at max level)
+static void AssignAbilitiesWithBudget(Unit *unit, int numAbilities, int totalLevelBudget)
+{
+    if (numAbilities > MAX_ABILITIES_PER_UNIT) numAbilities = MAX_ABILITIES_PER_UNIT;
+    int used[ABILITY_COUNT] = {0};
+    for (int a = 0; a < numAbilities; a++) {
+        int id;
+        int attempts = 0;
+        do {
+            id = GetRandomValue(0, ABILITY_COUNT - 1);
+            attempts++;
+        } while (used[id] && attempts < 50);
+        used[id] = 1;
+        unit->abilities[a].abilityId = id;
+        unit->abilities[a].level = 0;
+        unit->abilities[a].cooldownRemaining = 0;
+        unit->abilities[a].triggered = false;
+    }
+    // Distribute budget points randomly across abilities
+    for (int p = 0; p < totalLevelBudget; p++) {
+        int slot = GetRandomValue(0, numAbilities - 1);
+        if (unit->abilities[slot].level < ABILITY_MAX_LEVELS - 1)
+            unit->abilities[slot].level++;
+    }
+}
+
 // Find a valid spawn position on the red half (Z < 0), not overlapping others
 Vector3 FindValidSpawnPos(Unit units[], int unitCount, float minDist)
 {
@@ -788,15 +849,18 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
                 Unit *u = &units[*unitCount - 1];
                 u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
                 u->scaleOverride = 1.0f;
-                u->hpMultiplier = hpScale;
-                u->dmgMultiplier = dmgScale;
-                u->currentHealth = UNIT_STATS[type].health * hpScale;
-                // Slight per-unit randomness: some get +1 ability or +1 level
+                // Per-unit HP/dmg jitter: 0.85-1.15x
+                float hpJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
+                float dmgJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
+                u->hpMultiplier = hpScale * hpJitter;
+                u->dmgMultiplier = dmgScale * dmgJitter;
+                u->currentHealth = UNIT_STATS[type].health * u->hpMultiplier;
+                // Budget-based ability assignment for varied enemy builds
                 int unitAb = numAb + (GetRandomValue(0, 1) ? 1 : 0);
                 if (unitAb > MAX_ABILITIES_PER_UNIT) unitAb = MAX_ABILITIES_PER_UNIT;
-                int unitLvl = abLevel + (GetRandomValue(0, 2) == 0 ? 1 : 0);
-                if (unitLvl > ABILITY_MAX_LEVELS - 1) unitLvl = ABILITY_MAX_LEVELS - 1;
-                AssignAbilitiesAtLevel(u, unitAb, unitLvl);
+                int totalBudget = abLevel * unitAb + GetRandomValue(-1, 1);
+                if (totalBudget < 0) totalBudget = 0;
+                AssignAbilitiesWithBudget(u, unitAb, totalBudget);
             }
         }
     }

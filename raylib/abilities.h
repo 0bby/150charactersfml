@@ -26,6 +26,8 @@ typedef enum {
     ABILITY_APHOTIC_SHIELD,
     ABILITY_HOOK,
     ABILITY_PRIMAL_CHARGE,
+    ABILITY_MULTICAST,
+    ABILITY_SHARE_PAIN,
     ABILITY_COUNT,
 } AbilityId;
 
@@ -49,7 +51,14 @@ typedef enum {
     MOD_MAELSTROM,       // value = proc chance (0-1)
     MOD_VLAD_AURA,       // value = lifesteal % granted to allies
     MOD_CHARGING,        // value = charge speed
+    MOD_MULTICAST,       // value = 2x proc chance (0-1)
+    MOD_SHARE_PAIN,      // value = share percentage (0-1)
 } ModifierType;
+
+// Returns true for modifier types that stack (SUM) instead of dedup (MAX)
+static inline bool ModifierTypeStacks(ModifierType type) {
+    return type == MOD_LIFESTEAL;
+}
 
 typedef enum {
     PROJ_MAGIC_MISSILE = 0,
@@ -131,6 +140,14 @@ typedef enum {
 #define AV_PC_KNOCKBACK    1  // push distance
 #define AV_PC_AOE_RADIUS   2
 #define AV_PC_CHARGE_SPEED 3
+// -- Multicast
+#define AV_MC_CHANCE_2X    0  // chance for 2x cast
+#define AV_MC_CHANCE_3X    1  // chance for 3x cast
+#define AV_MC_DURATION     2
+// -- Share Pain
+#define AV_SPP_SHARE_PCT   0  // damage share percentage
+#define AV_SPP_RADIUS      1  // ally search radius
+#define AV_SPP_DURATION    2
 
 typedef struct {
     const char *name;
@@ -382,6 +399,34 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
             { [AV_PC_DAMAGE]=12.0f, [AV_PC_KNOCKBACK]=25.0f, [AV_PC_AOE_RADIUS]=15.0f, [AV_PC_CHARGE_SPEED]=80.0f },
             { [AV_PC_DAMAGE]=18.0f, [AV_PC_KNOCKBACK]=32.0f, [AV_PC_AOE_RADIUS]=20.0f, [AV_PC_CHARGE_SPEED]=90.0f },
             { [AV_PC_DAMAGE]=28.0f, [AV_PC_KNOCKBACK]=40.0f, [AV_PC_AOE_RADIUS]=25.0f, [AV_PC_CHARGE_SPEED]=100.0f },
+        },
+    },
+    [ABILITY_MULTICAST] = {
+        .name = "Multicast", .description = "Chance to double/triple cast abilities",
+        .abbrev = "MC", .color = { 255, 180, 60, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
+        .range    = { 0 },
+        .cooldown = { 16.0f, 14.0f, 12.0f, 9.0f, 6.0f },
+        .values = {
+            { [AV_MC_CHANCE_2X]=0.15f, [AV_MC_CHANCE_3X]=0.00f, [AV_MC_DURATION]=8.0f },
+            { [AV_MC_CHANCE_2X]=0.25f, [AV_MC_CHANCE_3X]=0.05f, [AV_MC_DURATION]=9.0f },
+            { [AV_MC_CHANCE_2X]=0.35f, [AV_MC_CHANCE_3X]=0.10f, [AV_MC_DURATION]=10.0f },
+            { [AV_MC_CHANCE_2X]=0.50f, [AV_MC_CHANCE_3X]=0.18f, [AV_MC_DURATION]=12.0f },
+            { [AV_MC_CHANCE_2X]=0.60f, [AV_MC_CHANCE_3X]=0.25f, [AV_MC_DURATION]=14.0f },
+        },
+    },
+    [ABILITY_SHARE_PAIN] = {
+        .name = "Share Pain", .description = "Redistribute damage to nearby allies",
+        .abbrev = "SP2", .color = { 180, 60, 180, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
+        .range    = { 0 },
+        .cooldown = { 14.0f, 12.0f, 10.0f, 8.0f, 6.0f },
+        .values = {
+            { [AV_SPP_SHARE_PCT]=0.20f, [AV_SPP_RADIUS]=25.0f, [AV_SPP_DURATION]=6.0f },
+            { [AV_SPP_SHARE_PCT]=0.30f, [AV_SPP_RADIUS]=30.0f, [AV_SPP_DURATION]=7.0f },
+            { [AV_SPP_SHARE_PCT]=0.40f, [AV_SPP_RADIUS]=35.0f, [AV_SPP_DURATION]=9.0f },
+            { [AV_SPP_SHARE_PCT]=0.50f, [AV_SPP_RADIUS]=42.0f, [AV_SPP_DURATION]=10.0f },
+            { [AV_SPP_SHARE_PCT]=0.60f, [AV_SPP_RADIUS]=50.0f, [AV_SPP_DURATION]=12.0f },
         },
     },
 };
