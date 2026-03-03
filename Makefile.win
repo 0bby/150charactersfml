@@ -2,8 +2,8 @@
 #
 # Setup:
 #   1. Install mingw:  sudo pacman -S mingw-w64-gcc
-#   2. Download Windows raylib from:
-#      https://github.com/raysan5/raylib/releases  (raylib-X.X_win64_mingw-w64.zip)
+#   2. Download Windows raylib 5.5 from:
+#      https://github.com/raysan5/raylib/releases/tag/5.5  (raylib-5.5_win64_mingw-w64.zip)
 #   3. Extract to deps/raylib-win/ so you have:
 #        deps/raylib-win/lib/libraylib.a
 #        deps/raylib-win/include/raylib.h

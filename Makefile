@@ -1,5 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O2
+RAYLIB_VERSION = 5.5
 
 # Detect platform
 UNAME := $(shell uname -s)
@@ -52,9 +53,9 @@ $(GAME_TARGET): $(GAME_SRCS) $(GAME_HDRS)
 
 deps:
 	@if [ ! -f deps/raylib-linux/lib/libraylib.a ]; then \
-		echo "=== Building static raylib for Linux ==="; \
+		echo "=== Building static raylib $(RAYLIB_VERSION) for Linux ==="; \
 		rm -rf deps/raylib-src; \
-		git clone --depth 1 https://github.com/raysan5/raylib.git deps/raylib-src; \
+		git clone --depth 1 --branch $(RAYLIB_VERSION) https://github.com/raysan5/raylib.git deps/raylib-src; \
 		cd deps/raylib-src/src && $(MAKE) PLATFORM=PLATFORM_DESKTOP GRAPHICS=GRAPHICS_API_OPENGL_33; \
 		mkdir -p ../../raylib-linux/lib ../../raylib-linux/include; \
 		cp libraylib.a ../../raylib-linux/lib/; \
