@@ -161,11 +161,18 @@ static float uiScale = 1.0f;
 //------------------------------------------------------------------------------------
 // Main
 //------------------------------------------------------------------------------------
-int main(void)
+int main(int argc, char *argv[])
 {
     net_platform_init();
 #ifdef USE_EOS
-    eos_init();
+    bool eosAlt = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--eos-alt") == 0) eosAlt = true;
+    }
+    eos_init(eosAlt);
+    if (eosAlt) { printf("[EOS] Running as ALT instance (fresh device ID)\n"); fflush(stdout); }
+#else
+    (void)argc; (void)argv;
 #endif
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 720, "Relic Rivals");

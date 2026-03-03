@@ -73,6 +73,7 @@ static EOS_HLobby            g_eosLobby      = NULL;
 static EOS_ProductUserId     g_localUserId   = NULL;
 static bool                  g_eosLoggedIn   = false;
 static bool                  g_eosInitialized = false;
+static bool                  g_eosAltInstance = false;
 
 // Host state
 static GameSession           g_hostSession;
@@ -299,10 +300,24 @@ static void do_connect_login(void)
     EOS_Connect_Login(g_eosConnect, &loginOpts, NULL, on_connect_login);
 }
 
+static void EOS_CALL on_device_id_deleted(const EOS_Connect_DeleteDeviceIdCallbackInfo *data);
+
 static void EOS_CALL on_device_id_created(const EOS_Connect_CreateDeviceIdCallbackInfo *data)
 {
     printf("[EOS] on_device_id_created: result=%s\n", EOS_EResult_ToString(data->ResultCode));
     fflush(stdout);
+
+    if (data->ResultCode == EOS_DuplicateNotAllowed && g_eosAltInstance) {
+        // Alt instance: delete existing device ID and create a fresh one
+        printf("[EOS] Alt instance: deleting existing device ID to get a new identity...\n");
+        fflush(stdout);
+        EOS_Connect_DeleteDeviceIdOptions delOpts;
+        memset(&delOpts, 0, sizeof(delOpts));
+        delOpts.ApiVersion = EOS_CONNECT_DELETEDEVICEID_API_LATEST;
+        EOS_Connect_DeleteDeviceId(g_eosConnect, &delOpts, NULL, on_device_id_deleted);
+        return;
+    }
+
     if (data->ResultCode == EOS_Success ||
         data->ResultCode == EOS_DuplicateNotAllowed) {
         printf("[EOS] Device ID ready, logging in...\n");
@@ -312,6 +327,19 @@ static void EOS_CALL on_device_id_created(const EOS_Connect_CreateDeviceIdCallba
         printf("[EOS] CreateDeviceId failed: %s\n", EOS_EResult_ToString(data->ResultCode));
         fflush(stdout);
     }
+}
+
+static void EOS_CALL on_device_id_deleted(const EOS_Connect_DeleteDeviceIdCallbackInfo *data)
+{
+    printf("[EOS] on_device_id_deleted: result=%s\n", EOS_EResult_ToString(data->ResultCode));
+    fflush(stdout);
+    // Now create a fresh device ID — this gets a brand new identity
+    g_eosAltInstance = false; // prevent infinite loop
+    EOS_Connect_CreateDeviceIdOptions devOpts;
+    memset(&devOpts, 0, sizeof(devOpts));
+    devOpts.ApiVersion = EOS_CONNECT_CREATEDEVICEID_API_LATEST;
+    devOpts.DeviceModel = "PC-Alt";
+    EOS_Connect_CreateDeviceId(g_eosConnect, &devOpts, NULL, on_device_id_created);
 }
 
 static void register_p2p_notifications(void)
@@ -571,6 +599,7 @@ static void EOS_CALL on_lobby_search_find(const EOS_LobbySearch_FindCallbackInfo
     }
 
     // Get first result
+    printf("[EOS] Step 1: CopySearchResultByIndex...\n"); fflush(stdout);
     EOS_LobbySearch_CopySearchResultByIndexOptions copyOpts;
     memset(&copyOpts, 0, sizeof(copyOpts));
     copyOpts.ApiVersion = EOS_LOBBYSEARCH_COPYSEARCHRESULTBYINDEX_API_LATEST;
@@ -578,6 +607,7 @@ static void EOS_CALL on_lobby_search_find(const EOS_LobbySearch_FindCallbackInfo
 
     EOS_HLobbyDetails detailsHandle = NULL;
     EOS_EResult r = EOS_LobbySearch_CopySearchResultByIndex(g_lobbySearchHandle, &copyOpts, &detailsHandle);
+    printf("[EOS] Step 1 result: %s (handle=%p)\n", EOS_EResult_ToString(r), (void*)detailsHandle); fflush(stdout);
     EOS_LobbySearch_Release(g_lobbySearchHandle);
     g_lobbySearchHandle = NULL;
 
@@ -588,12 +618,14 @@ static void EOS_CALL on_lobby_search_find(const EOS_LobbySearch_FindCallbackInfo
     }
 
     // Get lobby info to extract lobby ID
+    printf("[EOS] Step 2: CopyInfo...\n"); fflush(stdout);
     EOS_LobbyDetails_CopyInfoOptions infoOpts;
     memset(&infoOpts, 0, sizeof(infoOpts));
     infoOpts.ApiVersion = EOS_LOBBYDETAILS_COPYINFO_API_LATEST;
 
     EOS_LobbyDetails_Info *lobbyInfo = NULL;
     r = EOS_LobbyDetails_CopyInfo(detailsHandle, &infoOpts, &lobbyInfo);
+    printf("[EOS] Step 2 result: %s (info=%p)\n", EOS_EResult_ToString(r), (void*)lobbyInfo); fflush(stdout);
     if (r != EOS_Success || !lobbyInfo) {
         snprintf(ec->errorMsg, sizeof(ec->errorMsg), "Failed to copy lobby info");
         ec->state = EOS_STATE_ERROR;
@@ -601,18 +633,40 @@ static void EOS_CALL on_lobby_search_find(const EOS_LobbySearch_FindCallbackInfo
         return;
     }
 
+    printf("[EOS] Step 2b: LobbyId=%s\n", lobbyInfo->LobbyId ? lobbyInfo->LobbyId : "(null)"); fflush(stdout);
     strncpy(g_currentLobbyId, lobbyInfo->LobbyId, sizeof(g_currentLobbyId) - 1);
 
     // Get the lobby owner (host) ProductUserId
+    printf("[EOS] Step 3: GetLobbyOwner...\n"); fflush(stdout);
     EOS_LobbyDetails_GetLobbyOwnerOptions ownerOpts;
     memset(&ownerOpts, 0, sizeof(ownerOpts));
     ownerOpts.ApiVersion = EOS_LOBBYDETAILS_GETLOBBYOWNER_API_LATEST;
     g_joinerHostUserId = EOS_LobbyDetails_GetLobbyOwner(detailsHandle, &ownerOpts);
 
+    if (g_joinerHostUserId) {
+        char ownerBuf[64]; int ownerBufLen = sizeof(ownerBuf);
+        EOS_ProductUserId_ToString(g_joinerHostUserId, ownerBuf, &ownerBufLen);
+        char localBuf[64]; int localBufLen = sizeof(localBuf);
+        EOS_ProductUserId_ToString(g_localUserId, localBuf, &localBufLen);
+        printf("[EOS] Step 3: owner=%s local=%s same=%d\n", ownerBuf, localBuf,
+               EOS_ProductUserId_IsValid(g_joinerHostUserId) && (g_joinerHostUserId == g_localUserId));
+        fflush(stdout);
+
+        // Warn if same user (same-machine testing with Device ID)
+        if (g_joinerHostUserId == g_localUserId) {
+            printf("[EOS] WARNING: Host and joiner are the same EOS user!\n");
+            printf("[EOS] Same-machine testing requires two different Epic accounts or different device IDs.\n");
+            fflush(stdout);
+        }
+    } else {
+        printf("[EOS] Step 3: owner is NULL!\n"); fflush(stdout);
+    }
+
     EOS_LobbyDetails_Info_Release(lobbyInfo);
     EOS_LobbyDetails_Release(detailsHandle);
 
     // Join the lobby using the saved lobby ID
+    printf("[EOS] Step 4: JoinLobbyById (lobbyId=%s)...\n", g_currentLobbyId); fflush(stdout);
     EOS_Lobby_JoinLobbyByIdOptions joinByIdOpts;
     memset(&joinByIdOpts, 0, sizeof(joinByIdOpts));
     joinByIdOpts.ApiVersion = EOS_LOBBY_JOINLOBBYBYID_API_LATEST;
@@ -620,37 +674,44 @@ static void EOS_CALL on_lobby_search_find(const EOS_LobbySearch_FindCallbackInfo
     joinByIdOpts.LocalUserId = g_localUserId;
 
     EOS_Lobby_JoinLobbyById(g_eosLobby, &joinByIdOpts, NULL, on_lobby_joined);
+    printf("[EOS] Step 4: JoinLobbyById call returned\n"); fflush(stdout);
 }
 
 static void EOS_CALL on_lobby_joined(const EOS_Lobby_JoinLobbyByIdCallbackInfo *data)
 {
+    printf("[EOS] on_lobby_joined callback: result=%s\n", EOS_EResult_ToString(data->ResultCode));
+    fflush(stdout);
+
     EosClient *ec = g_pendingLobbyClient;
-    if (!ec) return;
+    if (!ec) { printf("[EOS] on_lobby_joined: no pending client!\n"); fflush(stdout); return; }
 
     if (data->ResultCode != EOS_Success) {
         snprintf(ec->errorMsg, sizeof(ec->errorMsg),
                  "Join lobby failed: %s", EOS_EResult_ToString(data->ResultCode));
         ec->state = EOS_STATE_ERROR;
+        printf("[EOS] %s\n", ec->errorMsg); fflush(stdout);
         return;
     }
 
-    printf("[EOS] Joined lobby! Host will start the game.\n");
+    printf("[EOS] Joined lobby! Sending hello P2P to host...\n"); fflush(stdout);
     ec->state = EOS_STATE_IN_GAME;
     ec->playerSlot = 1;
 
     // Send a "hello" P2P packet to the host to establish the connection
     // (This triggers the host's connection request callback)
     uint8_t hello = 0;
-    eos_send_msg(g_joinerHostUserId, MSG_JOIN, &hello, 0);
+    int sendResult = eos_send_msg(g_joinerHostUserId, MSG_JOIN, &hello, 0);
+    printf("[EOS] Hello P2P send result: %d\n", sendResult); fflush(stdout);
 }
 
 //------------------------------------------------------------------------------------
 // Public API — Lifecycle
 //------------------------------------------------------------------------------------
-int eos_init(void)
+int eos_init(bool altInstance)
 {
     if (g_eosInitialized) return 0;
 
+    g_eosAltInstance = altInstance;
     net_platform_init();
 
     // Initialize EOS SDK

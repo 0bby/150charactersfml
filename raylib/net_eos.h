@@ -65,7 +65,9 @@ typedef struct {
 //------------------------------------------------------------------------------------
 
 // Initialize EOS SDK + start Device ID auth. Returns 0 on success.
-int  eos_init(void);
+// Pass altInstance=true for the second instance on the same machine
+// (deletes existing device ID and creates a fresh one).
+int  eos_init(bool altInstance);
 
 // Call every frame to drive EOS callbacks.
 void eos_tick(void);
