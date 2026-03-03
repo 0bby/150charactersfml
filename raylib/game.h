@@ -58,7 +58,7 @@ typedef enum { ANIM_IDLE = 0, ANIM_WALK, ANIM_SCARED, ANIM_ATTACK, ANIM_CAST, AN
 //------------------------------------------------------------------------------------
 typedef struct {
     int abilityId;            // -1 = empty
-    int level;                // 0-2 (displayed as 1-3)
+    int level;                // 0-9 (displayed as 1-10)
     float cooldownRemaining;
     bool triggered;           // for passives like Dig
 } AbilitySlot;

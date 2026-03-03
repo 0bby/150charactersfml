@@ -831,18 +831,18 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
         // Infinite scaling (round 6+)
         // Extra enemy only added every 5-round milestone; other rounds upgrade abilities
         int extraRounds = round - TOTAL_ROUNDS;  // 0 for round 6, 1 for round 7, etc.
-        int bonusUnits = (extraRounds + 1) / 5;  // +1 enemy every 5 rounds past scripted
+        int bonusUnits = (extraRounds + 1) / 7;  // +1 enemy every 7 rounds past scripted
         int abilityPoints = extraRounds + 1 - bonusUnits;
         int enemyCount = 3 + bonusUnits;
         if (enemyCount > MAX_WAVE_ENEMIES) enemyCount = MAX_WAVE_ENEMIES;
         // Distribute ability points: each point is either a new ability or a level-up
-        int numAb = 1 + abilityPoints / 2;
+        int numAb = 1 + abilityPoints / 3;
         if (numAb > MAX_ABILITIES_PER_UNIT) numAb = MAX_ABILITIES_PER_UNIT;
-        int abLevel = (abilityPoints > 0) ? (abilityPoints - 1) / 2 : 0;
+        int abLevel = (abilityPoints > 0) ? (abilityPoints - 1) / 3 : 0;
         if (abLevel > ABILITY_MAX_LEVELS - 1) abLevel = ABILITY_MAX_LEVELS - 1;
         // Stats scale gently
-        float hpScale = 1.5f + 0.10f * (float)(extraRounds + 1);
-        float dmgScale = 1.1f + 0.05f * (float)(extraRounds + 1);
+        float hpScale = 1.2f + 0.06f * (float)(extraRounds + 1);
+        float dmgScale = 1.0f + 0.03f * (float)(extraRounds + 1);
         for (int e = 0; e < enemyCount; e++) {
             int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
             if (SpawnUnit(units, unitCount, type, TEAM_RED)) {

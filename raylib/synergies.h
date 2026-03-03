@@ -52,12 +52,12 @@ static const SynergyDef SYNERGY_DEFS[] = {
     },
     // 1: Mushroom Fort
     {
-        .name = "Mushroom Fort",
-        .abbrev = "MF",
+        .name = "Spores",
+        .abbrev = "SP",
 #ifndef SERVER_BUILD
         .color = { 180, 100, 60, 255 },
 #endif
-        .buffDesc = { "Spawn@50% dmg", "Spawn@25% dmg", "Spawn@12.5% dmg", NULL },
+        .buffDesc = { "Mushlings @50% dmg taken", "Mushlings @25% dmg taken", "Mushlings @12.5% dmg taken", NULL },
         .requiredTypes = { 0 },       // Mushroom
         .requiredTypeCount = 1,
         .targetType = 0,              // buff goes to mushrooms
