@@ -16,9 +16,14 @@ ifeq ($(UNAME),Darwin)
   GAME_CFLAGS += $(shell pkg-config --cflags raylib)
   GAME_LDFLAGS = $(shell pkg-config --libs raylib) -lm -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
 else
-  RAYLIB_LINUX = deps/raylib-linux
-  GAME_CFLAGS += -I/usr/local/include
-  GAME_LDFLAGS = $(RAYLIB_LINUX)/lib/libraylib.a -lm -lGL -lpthread -ldl -lrt
+  ifdef STATIC_RAYLIB
+    RAYLIB_LINUX = deps/raylib-linux
+    GAME_CFLAGS += -I$(RAYLIB_LINUX)/include
+    GAME_LDFLAGS = $(RAYLIB_LINUX)/lib/libraylib.a -lm -lGL -lpthread -ldl -lrt
+  else
+    GAME_CFLAGS += $(shell pkg-config --cflags raylib 2>/dev/null || echo -I/usr/local/include)
+    GAME_LDFLAGS = -lraylib -lm -lGL -lpthread -ldl -lrt
+  endif
 endif
 
 # --- Asset files to bundle with exports ---
@@ -33,7 +38,7 @@ GAME_NAME = relic-rivals
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 # --- Targets ---
-.PHONY: all game clean run export release
+.PHONY: all game clean clean-game clean-deps run export release deps
 
 all: game
 
@@ -45,7 +50,25 @@ run: game
 $(GAME_TARGET): $(GAME_SRCS) $(GAME_HDRS)
 	$(CC) $(GAME_CFLAGS) -o $@ $(GAME_SRCS) $(GAME_LDFLAGS)
 
-export: game
+deps:
+	@if [ ! -f deps/raylib-linux/lib/libraylib.a ]; then \
+		echo "=== Building static raylib for Linux ==="; \
+		rm -rf deps/raylib-src; \
+		git clone --depth 1 https://github.com/raysan5/raylib.git deps/raylib-src; \
+		cd deps/raylib-src/src && $(MAKE) PLATFORM=PLATFORM_DESKTOP GRAPHICS=GRAPHICS_API_OPENGL_33; \
+		mkdir -p ../../raylib-linux/lib ../../raylib-linux/include; \
+		cp libraylib.a ../../raylib-linux/lib/; \
+		cp raylib.h raymath.h rlgl.h ../../raylib-linux/include/; \
+		cd ../../.. && rm -rf deps/raylib-src; \
+		echo "=== Static raylib built at deps/raylib-linux/ ==="; \
+	else \
+		echo "=== deps/raylib-linux/lib/libraylib.a already exists, skipping ==="; \
+	fi
+
+export: deps
+	@echo "=== Building Linux (static) ==="
+	$(MAKE) clean-game
+	$(MAKE) STATIC_RAYLIB=1 game
 	@echo "=== Building Windows ==="
 	$(MAKE) -f Makefile.win
 	@echo "=== Assembling export ==="
@@ -79,8 +102,13 @@ release: export
 	@rm -f $(GAME_NAME)-$(VERSION)-linux.zip $(GAME_NAME)-$(VERSION)-windows.zip
 	@echo "=== Released $(VERSION) ==="
 
-clean:
-	rm -f $(GAME_TARGET)
+clean: clean-game
 	$(MAKE) -f Makefile.win clean
 	rm -rf export
 	rm -f $(GAME_NAME)-*.zip
+
+clean-game:
+	rm -f $(GAME_TARGET)
+
+clean-deps:
+	rm -rf deps/raylib-linux deps/raylib-src
