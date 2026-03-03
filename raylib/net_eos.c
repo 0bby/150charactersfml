@@ -412,6 +412,16 @@ static void EOS_CALL on_peer_connection_closed(
 //------------------------------------------------------------------------------------
 static EosClient *g_pendingLobbyClient = NULL;
 
+static void EOS_CALL on_lobby_updated(const EOS_Lobby_UpdateLobbyCallbackInfo *data)
+{
+    if (data->ResultCode == EOS_Success) {
+        printf("[EOS] Lobby attribute update SUCCESS (lobby: %s)\n", data->LobbyId);
+    } else {
+        printf("[EOS] Lobby attribute update FAILED: %s\n", EOS_EResult_ToString(data->ResultCode));
+    }
+    fflush(stdout);
+}
+
 static void EOS_CALL on_lobby_created(const EOS_Lobby_CreateLobbyCallbackInfo *data)
 {
     EosClient *ec = g_pendingLobbyClient;
@@ -457,18 +467,21 @@ static void EOS_CALL on_lobby_created(const EOS_Lobby_CreateLobbyCallbackInfo *d
     addAttrOpts.Attribute = &attrData;
     addAttrOpts.Visibility = EOS_LAT_PUBLIC;
 
-    EOS_LobbyModification_AddAttribute(modHandle, &addAttrOpts);
+    r = EOS_LobbyModification_AddAttribute(modHandle, &addAttrOpts);
+    printf("[EOS] AddAttribute result: %s\n", EOS_EResult_ToString(r));
+    fflush(stdout);
 
     EOS_Lobby_UpdateLobbyOptions updateOpts;
     memset(&updateOpts, 0, sizeof(updateOpts));
     updateOpts.ApiVersion = EOS_LOBBY_UPDATELOBBY_API_LATEST;
     updateOpts.LobbyModificationHandle = modHandle;
 
-    EOS_Lobby_UpdateLobby(g_eosLobby, &updateOpts, NULL, NULL);
+    EOS_Lobby_UpdateLobby(g_eosLobby, &updateOpts, NULL, on_lobby_updated);
     EOS_LobbyModification_Release(modHandle);
 
     ec->state = EOS_STATE_IN_LOBBY;
-    printf("[EOS] Lobby code set: %s\n", ec->lobbyCode);
+    printf("[EOS] Lobby code attribute queued: %s\n", ec->lobbyCode);
+    fflush(stdout);
 }
 
 // Called when a new member joins the lobby (host side)
@@ -546,6 +559,8 @@ static void EOS_CALL on_lobby_search_find(const EOS_LobbySearch_FindCallbackInfo
     memset(&countOpts, 0, sizeof(countOpts));
     countOpts.ApiVersion = EOS_LOBBYSEARCH_GETSEARCHRESULTCOUNT_API_LATEST;
     uint32_t resultCount = EOS_LobbySearch_GetSearchResultCount(g_lobbySearchHandle, &countOpts);
+    printf("[EOS] Lobby search returned %u results (code: %s)\n", resultCount, ec->lobbyCode);
+    fflush(stdout);
 
     if (resultCount == 0) {
         snprintf(ec->errorMsg, sizeof(ec->errorMsg), "No lobby found with that code");
