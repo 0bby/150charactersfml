@@ -201,6 +201,19 @@ static void handle_server_msg(NetClient *nc, const NetMessage *msg)
         }
         break;
 
+    case MSG_COMBAT_SYNC:
+        if (msg->size >= 3) {
+            nc->combatSyncTick = ((uint16_t)msg->payload[0] << 8) | msg->payload[1];
+            nc->combatSyncCount = msg->payload[2];
+            if (nc->combatSyncCount > NET_MAX_UNITS) nc->combatSyncCount = NET_MAX_UNITS;
+            if (msg->size >= 3 + nc->combatSyncCount * (int)sizeof(SyncUnit)) {
+                memcpy(nc->combatSyncUnits, msg->payload + 3,
+                       nc->combatSyncCount * sizeof(SyncUnit));
+            }
+            nc->combatSyncReady = true;
+        }
+        break;
+
     case MSG_ERROR:
         if (msg->size > 0) {
             int len = msg->size < 127 ? msg->size : 127;

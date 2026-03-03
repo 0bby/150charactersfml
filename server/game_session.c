@@ -116,6 +116,53 @@ static void send_combat_start(GameSession *s, int playerIdx,
                  payload, 2 + count * sizeof(NetUnit));
 }
 
+// Send compact combat state snapshot to both players
+static void send_combat_sync(GameSession *s)
+{
+    for (int p = 0; p < 2; p++) {
+        if (!s->players[p].connected) continue;
+        uint8_t payload[3 + sizeof(SyncUnit) * MAX_UNITS];
+        payload[0] = (s->combatTickCount >> 8) & 0xFF;
+        payload[1] = s->combatTickCount & 0xFF;
+        int count = 0;
+        SyncUnit *su = (SyncUnit *)(payload + 3);
+
+        if (p == 0) {
+            // Player 0: server order matches their view
+            for (int i = 0; i < s->combatUnitCount; i++) {
+                su[count].posX = s->combatUnits[i].position.x;
+                su[count].posZ = s->combatUnits[i].position.z;
+                su[count].currentHealth = s->combatUnits[i].currentHealth;
+                su[count].shieldHP = s->combatUnits[i].shieldHP;
+                su[count].active = s->combatUnits[i].active ? 1 : 0;
+                count++;
+            }
+        } else {
+            // Player 1: their view is [p1_blue, p0_red] = [server_red, server_blue]
+            // Send red team first (their blue), then blue team (their red), Z negated
+            for (int i = s->combatBlueCount; i < s->combatUnitCount; i++) {
+                su[count].posX = s->combatUnits[i].position.x;
+                su[count].posZ = -s->combatUnits[i].position.z;
+                su[count].currentHealth = s->combatUnits[i].currentHealth;
+                su[count].shieldHP = s->combatUnits[i].shieldHP;
+                su[count].active = s->combatUnits[i].active ? 1 : 0;
+                count++;
+            }
+            for (int i = 0; i < s->combatBlueCount; i++) {
+                su[count].posX = s->combatUnits[i].position.x;
+                su[count].posZ = -s->combatUnits[i].position.z;
+                su[count].currentHealth = s->combatUnits[i].currentHealth;
+                su[count].shieldHP = s->combatUnits[i].shieldHP;
+                su[count].active = s->combatUnits[i].active ? 1 : 0;
+                count++;
+            }
+        }
+        payload[2] = (uint8_t)count;
+        net_send_msg(s->players[p].sockfd, MSG_COMBAT_SYNC,
+                     payload, 3 + count * sizeof(SyncUnit));
+    }
+}
+
 //------------------------------------------------------------------------------------
 // Public API
 //------------------------------------------------------------------------------------
@@ -212,8 +259,16 @@ void session_start_combat(GameSession *s)
     setup_pvp_combat(s->combatUnits, &s->combatUnitCount,
                      s->players[0].units, s->players[0].unitCount,
                      s->players[1].units, s->players[1].unitCount);
+
+    // Track how many blue units for sync reordering
+    s->combatBlueCount = 0;
+    for (int i = 0; i < s->combatUnitCount; i++)
+        if (s->combatUnits[i].team == TEAM_BLUE) s->combatBlueCount++;
+
     ApplyRarityBuffs(s->combatUnits, s->combatUnitCount);
     ApplySynergies(s->combatUnits, s->combatUnitCount);
+
+    s->combatTickCount = 0;
 
     // Player 0 sees: their army (blue) vs p1 mirror (red)
     send_combat_start(s, 0, s->combatUnits, s->combatUnitCount);
@@ -402,6 +457,13 @@ int session_tick(GameSession *s, float dt)
         int result = CombatTick(s->combatUnits, &s->combatUnitCount,
                                 s->combatModifiers, s->combatProjectiles,
                                 s->combatFissures, COMBAT_DT, NULL, NULL);
+
+        // Periodic sync broadcast every 30 ticks (~0.5s)
+        s->combatTickCount++;
+        if (s->combatTickCount % 30 == 0) {
+            send_combat_sync(s);
+        }
+
         if (result > 0) {
             int winner = -1; // -1 = draw
             if (result == 1) winner = 0;       // blue wins = player 0

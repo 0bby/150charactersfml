@@ -39,6 +39,7 @@ typedef enum {
     MSG_OPPONENT_READY   = 0x87,  // payload: none
     MSG_ERROR            = 0x88,  // payload: error string
     MSG_GOLD_UPDATE      = 0x89,  // payload: current gold amount
+    MSG_COMBAT_SYNC      = 0x8A,  // payload: [tickCount:2][unitCount:1][SyncUnit * N]
 } ServerMsgType;
 
 //------------------------------------------------------------------------------------
@@ -51,12 +52,23 @@ typedef struct __attribute__((packed)) {
     float   posX, posZ;
     float   currentHealth;
     float   facingAngle;
+    float   hpMultiplier;      // post-buff HP multiplier
+    float   dmgMultiplier;     // post-buff damage multiplier
+    float   speedMultiplier;   // post-buff speed multiplier
     // Abilities (4 slots)
     struct __attribute__((packed)) {
         int8_t  abilityId;  // -1 = empty
         uint8_t level;
     } abilities[4];
 } NetUnit;
+
+// Compact sync snapshot (position + HP + active only, ~17 bytes per unit)
+typedef struct __attribute__((packed)) {
+    float posX, posZ;
+    float currentHealth;
+    float shieldHP;
+    uint8_t active;       // 0 or 1
+} SyncUnit;
 
 #define NET_MAX_UNITS 64
 

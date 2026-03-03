@@ -148,6 +148,9 @@ int serialize_units(const Unit units[], int unitCount, NetUnit out[], int maxOut
         nu->posZ = units[i].position.z;
         nu->currentHealth = units[i].currentHealth;
         nu->facingAngle = units[i].facingAngle;
+        nu->hpMultiplier = units[i].hpMultiplier;
+        nu->dmgMultiplier = units[i].dmgMultiplier;
+        nu->speedMultiplier = units[i].speedMultiplier;
         for (int a = 0; a < 4; a++) {
             nu->abilities[a].abilityId = (int8_t)units[i].abilities[a].abilityId;
             nu->abilities[a].level = (uint8_t)units[i].abilities[a].level;
@@ -179,9 +182,9 @@ int deserialize_units(const NetUnit in[], int inCount, Unit units[], int maxUnit
             .animFrame = 0,
 #endif
             .scaleOverride = 1.0f,
-            .speedMultiplier = 1.0f,
-            .hpMultiplier = 1.0f,
-            .dmgMultiplier = 1.0f,
+            .speedMultiplier = nu->speedMultiplier,
+            .hpMultiplier = nu->hpMultiplier,
+            .dmgMultiplier = nu->dmgMultiplier,
             .shieldHP = 0.0f,
             .abilityCastDelay = 0.0f,
             .chargeTarget = -1,

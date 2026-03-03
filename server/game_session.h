@@ -51,6 +51,10 @@ typedef struct {
     Projectile combatProjectiles[MAX_PROJECTILES];
     Fissure combatFissures[MAX_FISSURES];
 
+    // Combat sync
+    int combatTickCount;    // tick counter within current combat round
+    int combatBlueCount;    // number of blue (player 0) units at combat start
+
     // Prep timer
     float prepTimer;
 } GameSession;

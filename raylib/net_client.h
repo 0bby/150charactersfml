@@ -53,6 +53,12 @@ typedef struct {
     NetUnit combatNetUnits[NET_MAX_UNITS];
     int combatNetUnitCount;
 
+    // Combat sync snapshots
+    bool combatSyncReady;
+    SyncUnit combatSyncUnits[NET_MAX_UNITS];
+    int combatSyncCount;
+    uint16_t combatSyncTick;
+
     // Shop from server
     ShopSlot serverShop[MAX_SHOP_SLOTS];
 } NetClient;

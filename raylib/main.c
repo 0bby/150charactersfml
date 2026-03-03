@@ -2216,9 +2216,9 @@ int main(int argc, char *argv[])
                     unitCount = deserialize_units(netClient.combatNetUnits,
                         netClient.combatNetUnitCount, units, MAX_UNITS);
 #endif
-                    ApplyRarityBuffs(units, unitCount);
+                    // Server already applied rarity buffs + synergies;
+                    // multipliers are included in the serialized NetUnit data.
                     SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
-                    ApplySynergies(units, unitCount);
                     phase = PHASE_COMBAT;
                     fightBannerTimer = 0.0f;
                     killCount = 0; multiKillCount = 0; multiKillTimer = 0.0f; killFeedTimer = -1.0f;
@@ -3095,6 +3095,30 @@ int main(int argc, char *argv[])
                 dt = 1.0f / 60.0f;
                 combatAccum -= dt;
                 if (combatAccum > 4.0f * dt) combatAccum = 4.0f * dt; // prevent spiral
+
+                // Apply server combat sync snapshot
+                if (NC_FLAG(combatSyncReady)) {
+                    NC_CLEAR(combatSyncReady);
+                    int syncCount;
+                    SyncUnit *syncUnits;
+#ifdef USE_EOS
+                    if (useEos) {
+                        syncCount = eosClient.combatSyncCount;
+                        syncUnits = eosClient.combatSyncUnits;
+                    } else
+#endif
+                    {
+                        syncCount = netClient.combatSyncCount;
+                        syncUnits = netClient.combatSyncUnits;
+                    }
+                    for (int i = 0; i < syncCount && i < unitCount; i++) {
+                        units[i].position.x = syncUnits[i].posX;
+                        units[i].position.z = syncUnits[i].posZ;
+                        units[i].currentHealth = syncUnits[i].currentHealth;
+                        units[i].shieldHP = syncUnits[i].shieldHP;
+                        units[i].active = syncUnits[i].active;
+                    }
+                }
             }
             // Pause combat in single-player when ESC menu is open
             if (showEscMenu && !isMultiplayer) {

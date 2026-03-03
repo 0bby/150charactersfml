@@ -1011,6 +1011,19 @@ static void eos_handle_server_msg(EosClient *ec, const NetMessage *msg)
         }
         break;
 
+    case MSG_COMBAT_SYNC:
+        if (msg->size >= 3) {
+            ec->combatSyncTick = ((uint16_t)msg->payload[0] << 8) | msg->payload[1];
+            ec->combatSyncCount = msg->payload[2];
+            if (ec->combatSyncCount > NET_MAX_UNITS) ec->combatSyncCount = NET_MAX_UNITS;
+            if (msg->size >= 3 + ec->combatSyncCount * (int)sizeof(SyncUnit)) {
+                memcpy(ec->combatSyncUnits, msg->payload + 3,
+                       ec->combatSyncCount * sizeof(SyncUnit));
+            }
+            ec->combatSyncReady = true;
+        }
+        break;
+
     case MSG_ERROR:
         if (msg->size > 0) {
             int len = msg->size < 127 ? msg->size : 127;
