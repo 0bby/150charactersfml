@@ -19,8 +19,10 @@ ifdef USE_EOS
   GAME_CFLAGS += -DUSE_EOS -I$(EOS_SDK)/include
   # Link against EOS shared library (no -static when using EOS)
   ifeq ($(UNAME),Linux)
+    EOS_LIB_NAME = libEOSSDK-Linux-Shipping.so
     EOS_LDFLAGS = -L$(EOS_SDK)/Bin -lEOSSDK-Linux-Shipping -Wl,-rpath,'$$ORIGIN'
   else ifeq ($(UNAME),Darwin)
+    EOS_LIB_NAME = libEOSSDK-Mac-Shipping.dylib
     EOS_LDFLAGS = -L$(EOS_SDK)/Bin -lEOSSDK-Mac-Shipping -Wl,-rpath,@executable_path
   endif
 endif
@@ -62,6 +64,9 @@ run: game
 
 $(GAME_TARGET): $(GAME_SRCS) $(GAME_HDRS)
 	$(CC) $(GAME_CFLAGS) -o $@ $(GAME_SRCS) $(GAME_LDFLAGS) $(EOS_LDFLAGS)
+ifdef USE_EOS
+	@ln -sf ../$(EOS_SDK)/Bin/$(EOS_LIB_NAME) $(GAME_DIR)/$(EOS_LIB_NAME)
+endif
 
 deps:
 	@if [ ! -f deps/raylib-linux/lib/libraylib.a ]; then \

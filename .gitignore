@@ -2,6 +2,7 @@
 nfc/build/
 raylib/game
 raylib/game.exe
+raylib/libEOSSDK-*
 server/server
 *.dSYM/
 
