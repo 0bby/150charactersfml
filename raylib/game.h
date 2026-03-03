@@ -270,7 +270,39 @@ typedef struct {
     int     typeIndex;    // which unit type (0=Mushroom, 1=Goblin)
     int     unitIndex;    // index in units[] array
     int     animFrame;    // dedicated anim counter for intro model
+    uint8_t rarity;       // 0=common, 1=rare, 2=legendary (for star display)
 } UnitIntro;
+
+//------------------------------------------------------------------------------------
+// Lobby Selection — singleplayer hero pick from plaza pool
+//------------------------------------------------------------------------------------
+#define LOBBY_POOL_SIZE 4
+typedef struct {
+    int poolTypes[LOBBY_POOL_SIZE];
+    uint8_t poolRarities[LOBBY_POOL_SIZE];
+    int poolCount;
+    int selectedSlot;       // -1 = none
+    bool heroSelected;
+} LobbySelection;
+
+//------------------------------------------------------------------------------------
+// Multiplayer Lobby Selection — 4-slot unit picker
+//------------------------------------------------------------------------------------
+typedef struct {
+    int slotTypes[BLUE_TEAM_MAX_SIZE];  // -1 = empty
+    int activeSlot;                      // 0-3, which slot being filled
+    bool selectionComplete;
+    float glowTimer;
+} MpLobbySelection;
+
+//------------------------------------------------------------------------------------
+// Capture State — post-combat capture prompt (solo only)
+//------------------------------------------------------------------------------------
+typedef struct {
+    bool active;
+    int captureType;        // typeIndex of last killed enemy
+    float animTimer;
+} CaptureState;
 
 //------------------------------------------------------------------------------------
 // Statue Spawn Animation (blue units fall from sky as stone statues)
