@@ -33,8 +33,8 @@ typedef enum {
     MSG_GAME_START       = 0x81,  // payload: player slot (0 or 1), starting gold
     MSG_PREP_START       = 0x82,  // payload: round number, gold, shop slots
     MSG_COMBAT_START     = 0x83,  // payload: serialized units (both teams)
-    MSG_ROUND_RESULT     = 0x84,  // payload: winner (0=blue, 1=red, 2=draw), scores
-    MSG_GAME_OVER        = 0x85,  // payload: final winner, scores
+    MSG_ROUND_RESULT     = 0x84,  // payload: winner, isPve, hp0, hp1, round, damage
+    MSG_GAME_OVER        = 0x85,  // payload: winner (0=you win, 1=you lose), hp0, hp1
     MSG_SHOP_ROLL_RESULT = 0x86,  // payload: 3 shop slot ability IDs + levels
     MSG_OPPONENT_READY   = 0x87,  // payload: none
     MSG_ERROR            = 0x88,  // payload: error string

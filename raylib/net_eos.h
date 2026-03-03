@@ -47,7 +47,8 @@ typedef struct {
     // Round result
     int roundWinner;
     bool roundIsPve;
-    int pvpWins[2];
+    int playerHealth[2];       // HP per player (indexed by server slot)
+    int lastRoundDamage;       // damage dealt this round
 
     // Game over
     int gameWinner;

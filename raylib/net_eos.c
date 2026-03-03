@@ -74,6 +74,7 @@ static EOS_ProductUserId     g_localUserId   = NULL;
 static bool                  g_eosLoggedIn   = false;
 static bool                  g_eosInitialized = false;
 static bool                  g_eosAltInstance = false;
+static bool                  g_eosAltDeleteDone = false;
 
 // Host state
 static GameSession           g_hostSession;
@@ -307,7 +308,7 @@ static void EOS_CALL on_device_id_created(const EOS_Connect_CreateDeviceIdCallba
     printf("[EOS] on_device_id_created: result=%s\n", EOS_EResult_ToString(data->ResultCode));
     fflush(stdout);
 
-    if (data->ResultCode == EOS_DuplicateNotAllowed && g_eosAltInstance) {
+    if (data->ResultCode == EOS_DuplicateNotAllowed && g_eosAltInstance && !g_eosAltDeleteDone) {
         // Alt instance: delete existing device ID and create a fresh one
         printf("[EOS] Alt instance: deleting existing device ID to get a new identity...\n");
         fflush(stdout);
@@ -329,12 +330,22 @@ static void EOS_CALL on_device_id_created(const EOS_Connect_CreateDeviceIdCallba
     }
 }
 
+// Called after alt-instance login to wipe the credential from disk,
+// so the normal instance (started later) creates its own fresh identity.
+static void EOS_CALL on_post_login_device_id_deleted(
+    const EOS_Connect_DeleteDeviceIdCallbackInfo *data)
+{
+    printf("[EOS] Alt post-login device ID cleanup: %s\n", EOS_EResult_ToString(data->ResultCode));
+    printf("[EOS] Alt instance ready. Start the other instance now (without --eos-alt).\n");
+    fflush(stdout);
+}
+
 static void EOS_CALL on_device_id_deleted(const EOS_Connect_DeleteDeviceIdCallbackInfo *data)
 {
     printf("[EOS] on_device_id_deleted: result=%s\n", EOS_EResult_ToString(data->ResultCode));
     fflush(stdout);
     // Now create a fresh device ID — this gets a brand new identity
-    g_eosAltInstance = false; // prevent infinite loop
+    g_eosAltDeleteDone = true; // won't re-enter the delete branch in on_device_id_created
     EOS_Connect_CreateDeviceIdOptions devOpts;
     memset(&devOpts, 0, sizeof(devOpts));
     devOpts.ApiVersion = EOS_CONNECT_CREATEDEVICEID_API_LATEST;
@@ -366,6 +377,19 @@ static void register_p2p_notifications(void)
     printf("[EOS] P2P notifications registered\n");
 }
 
+// After alt-instance login, wipe the device credential from disk so the
+// normal instance (started later) will create its own fresh identity.
+static void alt_post_login_cleanup(void)
+{
+    if (!g_eosAltInstance) return;
+    printf("[EOS] Alt: wiping device credential from disk (session stays in memory)...\n");
+    fflush(stdout);
+    EOS_Connect_DeleteDeviceIdOptions delOpts;
+    memset(&delOpts, 0, sizeof(delOpts));
+    delOpts.ApiVersion = EOS_CONNECT_DELETEDEVICEID_API_LATEST;
+    EOS_Connect_DeleteDeviceId(g_eosConnect, &delOpts, NULL, on_post_login_device_id_deleted);
+}
+
 static void EOS_CALL on_connect_login(const EOS_Connect_LoginCallbackInfo *data)
 {
     printf("[EOS] on_connect_login: result=%s\n", EOS_EResult_ToString(data->ResultCode));
@@ -379,6 +403,7 @@ static void EOS_CALL on_connect_login(const EOS_Connect_LoginCallbackInfo *data)
         EOS_ProductUserId_ToString(g_localUserId, buf, &bufLen);
         printf("[EOS] Logged in! UserId=%s\n", buf);
         fflush(stdout);
+        alt_post_login_cleanup();
     } else if (data->ResultCode == EOS_InvalidUser) {
         // Need to create user first
         printf("[EOS] No user found, creating...\n");
@@ -404,6 +429,7 @@ static void EOS_CALL on_connect_create_user(const EOS_Connect_CreateUserCallback
         register_p2p_notifications();
         printf("[EOS] User created and logged in!\n");
         fflush(stdout);
+        alt_post_login_cleanup();
     } else {
         printf("[EOS] CreateUser failed: %s\n", EOS_EResult_ToString(data->ResultCode));
         fflush(stdout);
@@ -416,7 +442,12 @@ static void EOS_CALL on_connect_create_user(const EOS_Connect_CreateUserCallback
 static void EOS_CALL on_peer_connection_request(
     const EOS_P2P_OnIncomingConnectionRequestInfo *data)
 {
-    printf("[EOS] Incoming P2P connection request\n");
+    char remoteBuf[64] = {0};
+    int remoteBufLen = sizeof(remoteBuf);
+    if (data->RemoteUserId)
+        EOS_ProductUserId_ToString(data->RemoteUserId, remoteBuf, &remoteBufLen);
+    printf("[EOS] Incoming P2P connection request from %s\n", remoteBuf);
+    fflush(stdout);
     // Auto-accept
     EOS_P2P_SocketId sid = make_socket_id();
     EOS_P2P_AcceptConnectionOptions opts;
@@ -518,10 +549,23 @@ static EOS_NotificationId g_lobbyMemberNotif = EOS_INVALID_NOTIFICATIONID;
 static void EOS_CALL on_lobby_member_status_received(
     const EOS_Lobby_LobbyMemberStatusReceivedCallbackInfo *data)
 {
+    char targetBuf[64] = {0};
+    int targetBufLen = sizeof(targetBuf);
+    if (data->TargetUserId)
+        EOS_ProductUserId_ToString(data->TargetUserId, targetBuf, &targetBufLen);
+    printf("[EOS] LobbyMemberStatus: status=%d target=%s lobby=%s\n",
+           (int)data->CurrentStatus, targetBuf,
+           data->LobbyId ? data->LobbyId : "(null)");
+    fflush(stdout);
+
     if (data->CurrentStatus != EOS_LMS_JOINED) return;
 
     EosClient *ec = g_pendingLobbyClient;
-    if (!ec || !ec->isHost) return;
+    if (!ec || !ec->isHost) {
+        printf("[EOS] Ignoring member join: ec=%p isHost=%d\n", (void*)ec, ec ? ec->isHost : -1);
+        fflush(stdout);
+        return;
+    }
 
     printf("[EOS] Remote player joined lobby!\n");
 
@@ -971,12 +1015,13 @@ static void eos_handle_server_msg(EosClient *ec, const NetMessage *msg)
         break;
 
     case MSG_ROUND_RESULT:
-        if (msg->size >= 5) {
+        if (msg->size >= 6) {
             ec->roundWinner = msg->payload[0];
             ec->roundIsPve = msg->payload[1];
-            ec->pvpWins[0] = msg->payload[2];
-            ec->pvpWins[1] = msg->payload[3];
+            ec->playerHealth[0] = msg->payload[2];
+            ec->playerHealth[1] = msg->payload[3];
             ec->currentRound = msg->payload[4];
+            ec->lastRoundDamage = msg->payload[5];
             ec->roundResultReady = true;
         }
         break;
@@ -984,8 +1029,8 @@ static void eos_handle_server_msg(EosClient *ec, const NetMessage *msg)
     case MSG_GAME_OVER:
         if (msg->size >= 3) {
             ec->gameWinner = msg->payload[0];
-            ec->pvpWins[0] = msg->payload[1];
-            ec->pvpWins[1] = msg->payload[2];
+            ec->playerHealth[0] = msg->payload[1];
+            ec->playerHealth[1] = msg->payload[2];
             ec->gameOver = true;
         }
         break;

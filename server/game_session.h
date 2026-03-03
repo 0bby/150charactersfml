@@ -8,7 +8,7 @@
 // Game Session — manages one 1v1 match between two players
 //------------------------------------------------------------------------------------
 #define COMBAT_DT (1.0f / 60.0f)  // headless combat tick rate
-#define MAX_PVP_WINS 4     // best-of-7: first to 4 PVP wins
+#define STARTING_HEALTH 20 // HP per player at game start
 #define MAX_ROUNDS 10      // absolute max rounds
 #define PREP_TIMER 45.0f   // seconds before auto-ready
 
@@ -42,7 +42,7 @@ typedef struct {
 
     // Round state
     int currentRound;
-    int pvpWins[2];        // PVP round wins per player
+    int playerHealth[2];   // HP per player, starts at STARTING_HEALTH
 
     // Combat state (headless)
     Unit combatUnits[MAX_UNITS];

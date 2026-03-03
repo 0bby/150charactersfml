@@ -1161,6 +1161,9 @@ int main(int argc, char *argv[])
     int currentRound = 0;          // 0-indexed, displayed as 1-indexed
     int blueWins = 0;
     int redWins  = 0;
+    int mpHealth[2] = {20, 20};   // multiplayer HP (indexed by server slot)
+    int lastRoundDamage = 0;
+    char mpRoundResultBuf[64] = {0};
     float roundOverTimer = 0.0f;   // brief pause after a round ends
     const char *roundResultText = "";
     bool debugMode = false;
@@ -2067,7 +2070,8 @@ int main(int argc, char *argv[])
                 playerGold = NC_FLAG(currentGold);
             }
 
-            if (NC_FLAG(prepStarted)) {
+            // Wait for both prep data AND unit selection before entering prep
+            if (NC_FLAG(prepStarted) && mpLobby.selectionComplete) {
                 NC_CLEAR(prepStarted);
                 playerGold = NC_FLAG(currentGold);
                 currentRound = NC_FLAG(currentRound);
@@ -2082,8 +2086,8 @@ int main(int argc, char *argv[])
                 // Reset multiplayer game state — keep blue units from lobby
                 ClearRedUnits(units, &unitCount);
                 snapshotCount = 0;
-                blueWins = 0;
-                redWins = 0;
+                mpHealth[0] = 20; mpHealth[1] = 20;
+                lastRoundDamage = 0;
                 roundResultText = "";
                 ClearAllModifiers(modifiers);
                 ClearAllProjectiles(projectiles);
@@ -3949,9 +3953,18 @@ int main(int argc, char *argv[])
                 if (NC_FLAG(roundResultReady)) {
                     NC_CLEAR(roundResultReady);
                     int rw = NC_FLAG(roundWinner);
-                    if (rw == 0) { blueWins++; roundResultText = "YOU WIN THE ROUND!"; }
-                    else if (rw == 1) { redWins++; roundResultText = "OPPONENT WINS!"; }
-                    else roundResultText = "DRAW — NO SURVIVORS!";
+                    mpHealth[0] = NC_FLAG(playerHealth[0]);
+                    mpHealth[1] = NC_FLAG(playerHealth[1]);
+                    lastRoundDamage = NC_FLAG(lastRoundDamage);
+                    if (rw == 0) {
+                        roundResultText = "YOU WIN THE ROUND!";
+                    } else if (rw == 1) {
+                        snprintf(mpRoundResultBuf, sizeof(mpRoundResultBuf),
+                                 "OPPONENT WINS! (-%d HP)", lastRoundDamage);
+                        roundResultText = mpRoundResultBuf;
+                    } else {
+                        roundResultText = "DRAW — NO DAMAGE!";
+                    }
                     currentRound = NC_FLAG(currentRound);
                     lastOutcomeWin = (rw == 0);
                     phase = PHASE_ROUND_OVER;
@@ -4273,8 +4286,8 @@ int main(int argc, char *argv[])
                 unitCount = 0;
                 snapshotCount = 0;
                 currentRound = 0;
-                blueWins = 0;
-                redWins = 0;
+                mpHealth[0] = 20; mpHealth[1] = 20;
+                lastRoundDamage = 0;
                 roundResultText = "";
                 ClearAllModifiers(modifiers);
                 ClearAllProjectiles(projectiles);
@@ -5607,19 +5620,52 @@ int main(int argc, char *argv[])
                 GameDrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
             }
             if (isMultiplayer) {
-                const char *youLabel = TextFormat("YOU (%s): %d", playerName, blueWins);
+                int mySlot = NC_FLAG(playerSlot);
+                int myHp = mpHealth[mySlot];
+                int oppHp = mpHealth[1 - mySlot];
 #ifdef USE_EOS
                 const char *oppName = useEos ? (eosClient.opponentName[0] ? eosClient.opponentName : "???") : (netClient.opponentName[0] ? netClient.opponentName : "???");
 #else
                 const char *oppName = netClient.opponentName[0] ? netClient.opponentName : "???";
 #endif
-                const char *oppLabel = TextFormat("OPP (%s): %d", oppName, redWins);
-                int mpNameSz = S(16);
+                int mpNameSz = S(14);
+                int hpBarW = S(80), hpBarH = S(10);
+                int hpY = S(36);
+
+                // YOU health
+                const char *youLabel = TextFormat("YOU (%s)", playerName);
                 int youW = GameMeasureText(youLabel, mpNameSz);
-                int oppW = GameMeasureText(oppLabel, mpNameSz);
-                GameDrawText(youLabel, sw/2 - youW - 10, S(36), mpNameSz, DARKBLUE);
-                GameDrawText(oppLabel, sw/2 + 10, S(36), mpNameSz, MAROON);
-                (void)oppW;
+                int youBarX = sw/2 - youW - S(16) - hpBarW;
+                GameDrawText(youLabel, youBarX - youW - S(6), hpY, mpNameSz, DARKBLUE);
+                // HP bar background
+                DrawRectangle(sw/2 - hpBarW - S(12), hpY, hpBarW, hpBarH, (Color){40,40,50,200});
+                // HP bar fill
+                float youPct = (float)myHp / 20.0f;
+                if (youPct < 0) youPct = 0;
+                Color youBarCol = youPct > 0.5f ? (Color){50,180,50,255} : youPct > 0.25f ? ORANGE : RED;
+                DrawRectangle(sw/2 - hpBarW - S(12), hpY, (int)(hpBarW * youPct), hpBarH, youBarCol);
+                DrawRectangleLinesEx((Rectangle){(float)(sw/2 - hpBarW - S(12)),(float)hpY,(float)hpBarW,(float)hpBarH}, 1, (Color){100,100,120,200});
+                // HP number
+                const char *youHpTxt = TextFormat("%d", myHp);
+                GameDrawText(youHpTxt, sw/2 - S(8), hpY, mpNameSz, WHITE);
+
+                // OPPONENT health
+                const char *oppLabel = TextFormat("OPP (%s)", oppName);
+                int oppBarX = sw/2 + S(24);
+                // HP number
+                const char *oppHpTxt = TextFormat("%d", oppHp);
+                GameDrawText(oppHpTxt, sw/2 + S(12), hpY, mpNameSz, WHITE);
+                // HP bar
+                DrawRectangle(oppBarX, hpY, hpBarW, hpBarH, (Color){40,40,50,200});
+                float oppPct = (float)oppHp / 20.0f;
+                if (oppPct < 0) oppPct = 0;
+                Color oppBarCol = oppPct > 0.5f ? (Color){180,50,50,255} : oppPct > 0.25f ? ORANGE : (Color){50,180,50,255};
+                DrawRectangle(oppBarX, hpY, (int)(hpBarW * oppPct), hpBarH, oppBarCol);
+                DrawRectangleLinesEx((Rectangle){(float)oppBarX,(float)hpY,(float)hpBarW,(float)hpBarH}, 1, (Color){100,100,120,200});
+                // Label
+                int oppLabelW = GameMeasureText(oppLabel, mpNameSz);
+                GameDrawText(oppLabel, oppBarX + hpBarW + S(6), hpY, mpNameSz, MAROON);
+                (void)oppLabelW;
             }
 
             // Phase label
@@ -5685,7 +5731,13 @@ int main(int argc, char *argv[])
                 int rtY = sh/2 - rtFontSize - S(5);
                 GameDrawText(roundResultText, sw/2 - rtw/2, rtY, rtFontSize, rtColor);
 
-                const char *scoreText = TextFormat("Score: %d - %d", blueWins, redWins);
+                const char *scoreText;
+                if (isMultiplayer) {
+                    int mySlot2 = NC_FLAG(playerSlot);
+                    scoreText = TextFormat("HP: You %d — Opp %d", mpHealth[mySlot2], mpHealth[1 - mySlot2]);
+                } else {
+                    scoreText = TextFormat("Score: %d - %d", blueWins, redWins);
+                }
                 int stFontSize = S(22);
                 int stw = GameMeasureText(scoreText, stFontSize);
                 GameDrawText(scoreText, sw/2 - stw/2, rtY + rtFontSize + S(8), stFontSize, WHITE);
@@ -7318,7 +7370,8 @@ int main(int argc, char *argv[])
             int gotw = GameMeasureText(goTitle, 36);
             GameDrawText(goTitle, gosw/2 - gotw/2, gosh/2 - 60, 36, GOLD);
 
-            const char *goScore = TextFormat("Score: %d - %d", blueWins, redWins);
+            int goMySlot = NC_FLAG(playerSlot);
+            const char *goScore = TextFormat("HP: You %d — Opp %d", mpHealth[goMySlot], mpHealth[1 - goMySlot]);
             int gsw = GameMeasureText(goScore, 20);
             GameDrawText(goScore, gosw/2 - gsw/2, gosh/2, 20, WHITE);
 

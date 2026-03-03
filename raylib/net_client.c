@@ -157,23 +157,25 @@ static void handle_server_msg(NetClient *nc, const NetMessage *msg)
         break;
 
     case MSG_ROUND_RESULT:
-        if (msg->size >= 5) {
+        if (msg->size >= 6) {
             nc->roundWinner = msg->payload[0];
             nc->roundIsPve = msg->payload[1];
-            nc->pvpWins[0] = msg->payload[2];
-            nc->pvpWins[1] = msg->payload[3];
+            nc->playerHealth[0] = msg->payload[2];
+            nc->playerHealth[1] = msg->payload[3];
             nc->currentRound = msg->payload[4];
+            nc->lastRoundDamage = msg->payload[5];
             nc->roundResultReady = true;
-            printf("[Net] Round result: winner=%d, pvpWins=%d-%d\n",
-                   nc->roundWinner, nc->pvpWins[0], nc->pvpWins[1]);
+            printf("[Net] Round result: winner=%d, hp=%d-%d, dmg=%d\n",
+                   nc->roundWinner, nc->playerHealth[0], nc->playerHealth[1],
+                   nc->lastRoundDamage);
         }
         break;
 
     case MSG_GAME_OVER:
         if (msg->size >= 3) {
             nc->gameWinner = msg->payload[0];
-            nc->pvpWins[0] = msg->payload[1];
-            nc->pvpWins[1] = msg->payload[2];
+            nc->playerHealth[0] = msg->payload[1];
+            nc->playerHealth[1] = msg->payload[2];
             nc->gameOver = true;
             printf("[Net] Game over: %s\n", nc->gameWinner == 0 ? "YOU WIN" : "YOU LOSE");
         }

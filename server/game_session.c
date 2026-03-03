@@ -173,7 +173,9 @@ void session_init(GameSession *s, int player0_sock)
     s->state = SESSION_WAITING;
     s->players[0].sockfd = player0_sock;
     s->players[0].connected = true;
-    s->players[0].gold = 10;
+    s->players[0].gold = 20;
+    s->playerHealth[0] = STARTING_HEALTH;
+    s->playerHealth[1] = STARTING_HEALTH;
     s->players[1].connected = false;
     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) {
         s->players[0].inventory[i].abilityId = -1;
@@ -194,7 +196,7 @@ int session_add_player(GameSession *s, int player1_sock)
     if (s->state != SESSION_WAITING) return -1;
     s->players[1].sockfd = player1_sock;
     s->players[1].connected = true;
-    s->players[1].gold = 10;
+    s->players[1].gold = 20;
 
     // Send game start to both players with opponent name
     for (int p = 0; p < 2; p++) {
@@ -203,7 +205,7 @@ int session_add_player(GameSession *s, int player1_sock)
         if (oppNameLen > 31) oppNameLen = 31;
         uint8_t payload[3 + 32];
         payload[0] = (uint8_t)p;  // player slot
-        payload[1] = 10;          // starting gold
+        payload[1] = 20;          // starting gold
         payload[2] = (uint8_t)oppNameLen;
         memcpy(payload + 3, s->players[other].name, oppNameLen);
         net_send_msg(s->players[p].sockfd, MSG_GAME_START, payload, 3 + oppNameLen);
@@ -419,13 +421,11 @@ int session_tick(GameSession *s, float dt)
             // Notify other player they win
             int other = 1 - p;
             if (s->players[other].connected) {
-                uint8_t payload[5];
-                payload[0] = (uint8_t)other; // winner
-                payload[1] = (s->pvpWins[0] >> 8) & 0xFF;
-                payload[2] = s->pvpWins[0] & 0xFF;
-                payload[3] = (s->pvpWins[1] >> 8) & 0xFF;
-                payload[4] = s->pvpWins[1] & 0xFF;
-                net_send_msg(s->players[other].sockfd, MSG_GAME_OVER, payload, 5);
+                uint8_t payload[3];
+                payload[0] = 0; // you win (opponent disconnected)
+                payload[1] = (uint8_t)s->playerHealth[0];
+                payload[2] = (uint8_t)s->playerHealth[1];
+                net_send_msg(s->players[other].sockfd, MSG_GAME_OVER, payload, 3);
             }
             s->state = SESSION_DEAD;
             return 1;
@@ -437,6 +437,19 @@ int session_tick(GameSession *s, float dt)
         s->prepTimer -= dt;
         if (s->prepTimer <= 0) {
             s->prepTimer = 0;
+            // Auto-ready only after round 0 (first round waits for manual ready)
+            if (s->currentRound > 0) {
+                for (int p = 0; p < 2; p++) {
+                    if (!s->players[p].ready && s->players[p].connected) {
+                        s->players[p].ready = true;
+                        int other = 1 - p;
+                        if (s->players[other].connected)
+                            net_send_msg(s->players[other].sockfd, MSG_OPPONENT_READY, NULL, 0);
+                    }
+                }
+                if (s->players[0].ready && s->players[1].ready)
+                    session_start_combat(s);
+            }
         }
 
         // Poll for messages from both players
@@ -469,46 +482,63 @@ int session_tick(GameSession *s, float dt)
             if (result == 1) winner = 0;       // blue wins = player 0
             else if (result == 2) winner = 1;  // red wins = player 1
 
+            // Calculate damage: count surviving non-mushling winner units
+            int damage = 0;
             if (winner >= 0) {
-                s->pvpWins[winner]++;
+                Team winnerTeam = (winner == 0) ? TEAM_BLUE : TEAM_RED;
+                for (int i = 0; i < s->combatUnitCount; i++) {
+                    if (s->combatUnits[i].active &&
+                        s->combatUnits[i].team == winnerTeam &&
+                        !s->combatUnits[i].isMushling)
+                        damage++;
+                }
+                if (damage < 1) damage = 1; // at least 1 damage on a loss
+                int loser = 1 - winner;
+                s->playerHealth[loser] -= damage;
+                if (s->playerHealth[loser] < 0) s->playerHealth[loser] = 0;
             }
 
             s->currentRound++;
 
             // Send round result to both players
+            // [0] winner (0=you win, 1=you lose, 2=draw)
+            // [1] isPve (always 0)
+            // [2] player0 health
+            // [3] player1 health
+            // [4] currentRound
+            // [5] damage dealt this round
             for (int p = 0; p < 2; p++) {
                 if (!s->players[p].connected) continue;
                 uint8_t payload[6];
-                // PVP: player p is always "blue" from their view
                 if (winner == p) payload[0] = 0;
                 else if (winner == (1-p)) payload[0] = 1;
                 else payload[0] = 2;
                 payload[1] = 0; // always PVP
-                payload[2] = (uint8_t)s->pvpWins[0];
-                payload[3] = (uint8_t)s->pvpWins[1];
+                payload[2] = (uint8_t)s->playerHealth[0];
+                payload[3] = (uint8_t)s->playerHealth[1];
                 payload[4] = (uint8_t)s->currentRound;
-                net_send_msg(s->players[p].sockfd, MSG_ROUND_RESULT, payload, 5);
+                payload[5] = (uint8_t)damage;
+                net_send_msg(s->players[p].sockfd, MSG_ROUND_RESULT, payload, 6);
             }
 
-            // Check game over
-            if (s->pvpWins[0] >= MAX_PVP_WINS || s->pvpWins[1] >= MAX_PVP_WINS) {
-                int gameWinner = (s->pvpWins[0] >= MAX_PVP_WINS) ? 0 : 1;
+            // Check game over: player health reached 0
+            if (winner >= 0 && s->playerHealth[1 - winner] <= 0) {
                 for (int p = 0; p < 2; p++) {
                     if (!s->players[p].connected) continue;
-                    uint8_t payload[5];
-                    payload[0] = (gameWinner == p) ? 0 : 1; // 0=you win, 1=you lose
-                    payload[1] = (uint8_t)s->pvpWins[0];
-                    payload[2] = (uint8_t)s->pvpWins[1];
+                    uint8_t payload[3];
+                    payload[0] = (winner == p) ? 0 : 1; // 0=you win, 1=you lose
+                    payload[1] = (uint8_t)s->playerHealth[0];
+                    payload[2] = (uint8_t)s->playerHealth[1];
                     net_send_msg(s->players[p].sockfd, MSG_GAME_OVER, payload, 3);
                 }
                 s->state = SESSION_DEAD;
                 return 1;
             }
 
-            // Give gold: 15 per round, loser gets 20
+            // Give gold: winner gets 20, loser gets 25
             for (int p = 0; p < 2; p++) {
                 bool isLoser = (winner >= 0 && winner != p);
-                s->players[p].gold += isLoser ? 20 : 15;
+                s->players[p].gold += isLoser ? 25 : 20;
             }
 
             session_start_prep(s);
