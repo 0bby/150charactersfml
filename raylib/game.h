@@ -412,7 +412,9 @@ typedef struct {
 typedef struct {
     int modelIndex;          // index into envModels[]
     Vector3 position;
+    float rotationX;         // degrees around X axis
     float rotationY;         // degrees around Y axis
+    float rotationZ;         // degrees around Z axis
     float scale;             // uniform multiplier (1.0 = auto-computed default)
     bool active;
 } EnvPiece;
