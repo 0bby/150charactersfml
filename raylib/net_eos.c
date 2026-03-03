@@ -999,7 +999,8 @@ static void host_drain_and_forward(EosClient *ec)
     }
 
     if (dead) {
-        printf("[EOS] Host session ended\n");
+        printf("[EOS] Host session ended (dead=%d)\n", dead);
+        fflush(stdout);
         g_hostSessionActive = false;
     }
 }

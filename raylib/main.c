@@ -2040,6 +2040,7 @@ int main(void)
 #endif
 
             if (NC_STATE) {
+                printf("[LOBBY ERROR] %s\n", NC_ERR); fflush(stdout);
                 snprintf(menuError, sizeof(menuError), "%s", NC_ERR);
 #ifdef USE_EOS
                 if (useEos) { eos_client_disconnect(&eosClient); }
@@ -2164,6 +2165,7 @@ int main(void)
 #endif
                 net_client_poll(&netClient);
                 if (NC_STATE) {
+                    printf("[PREP ERROR] %s\n", NC_ERR); fflush(stdout);
 #ifdef USE_EOS
                     if (useEos) { eos_client_disconnect(&eosClient); }
                     else
