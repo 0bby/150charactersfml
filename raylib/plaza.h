@@ -26,6 +26,9 @@ typedef struct {
 // Spawn a set of roaming red enemies for the plaza
 void PlazaSpawnEnemies(Unit units[], int *unitCount, int unitTypeCount, PlazaUnitData plazaData[]);
 
+// Spawn lobby pool: 1 of each valid type + extras with rarity rolls (singleplayer hero selection)
+void PlazaSpawnLobbyPool(Unit units[], int *unitCount, PlazaUnitData plazaData[], LobbySelection *lobby);
+
 // Update roaming AI (wander, pause, smooth rotation)
 void PlazaUpdateRoaming(Unit units[], int unitCount, PlazaUnitData plazaData[], float dt);
 
