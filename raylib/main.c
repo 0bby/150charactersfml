@@ -6449,24 +6449,13 @@ int main(void)
             int sw2 = GameMeasureText(subtitle, subSize);
             GameDrawText(subtitle, msw/2 - sw2/2, 140, subSize, (Color){160,140,200,160});
 
-            // Draw rarity stars and hover arrow above roaming red units (hero selection)
+            // Draw hover arrow + tooltip above roaming red units (hero selection)
             if (!lobbySelection.heroSelected) {
                 for (int i = 0; i < unitCount; i++) {
                     if (!units[i].active || units[i].team != TEAM_RED) continue;
                     Vector2 uScreen = GetWorldToScreen((Vector3){units[i].position.x, units[i].position.y + 12.0f, units[i].position.z}, camera);
                     int ux = (int)uScreen.x;
                     int uy = (int)uScreen.y;
-
-                    // Rarity stars
-                    if (units[i].rarity == RARITY_RARE) {
-                        const char *star = "*";
-                        int starW = GameMeasureText(star, 18);
-                        GameDrawText(star, ux - starW/2, uy - 18, 18, (Color){180, 100, 255, 220});
-                    } else if (units[i].rarity == RARITY_LEGENDARY) {
-                        const char *stars = "***";
-                        int starW = GameMeasureText(stars, 18);
-                        GameDrawText(stars, ux - starW/2, uy - 18, 18, GOLD);
-                    }
 
                     // Hover arrow + tooltip
                     if (i == plazaHoverUnit) {
@@ -7227,27 +7216,29 @@ int main(void)
             GameDrawText(subText, (int)nameX + 4, (int)nameY + nameFontSize + 4, subSize,
                 (Color){ 200, 200, 220, (unsigned char)(alpha * 0.8f) });
 
-            // --- Rarity stars in intro ---
+            // --- Decorative line under subtitle ---
+            int lineY2 = (int)nameY + nameFontSize + subSize + 12;
+            if (textSlide > 0.0f) {
+                int lineW = (int)((nameW + 40) * textSlide);
+                DrawRectangle((int)nameFinalX, lineY2, lineW, 3,
+                    (Color){ nameColor.r, nameColor.g, nameColor.b, (unsigned char)(alpha * 0.7f) });
+            }
+
+            // --- Rarity stars (below line, above abilities) ---
+            int starHeight = 0;
             if (intro.rarity > 0 && textSlide > 0.0f) {
-                int starSize = subSize + 4;
-                int starY = (int)nameY + nameFontSize + subSize + 8;
+                int starSize = subSize + 8;
+                int starY = lineY2 + 10;
+                starHeight = starSize + 10;
                 if (intro.rarity == RARITY_RARE) {
                     const char *star = "*";
-                    GameDrawText(star, (int)nameX + 4, starY, starSize,
+                    GameDrawText(star, (int)nameFinalX + 4, starY, starSize,
                         (Color){ 180, 100, 255, (unsigned char)(alpha * 0.9f) });
                 } else if (intro.rarity == RARITY_LEGENDARY) {
                     const char *stars = "* * *";
-                    GameDrawText(stars, (int)nameX + 4, starY, starSize,
+                    GameDrawText(stars, (int)nameFinalX + 4, starY, starSize,
                         (Color){ 255, 215, 0, alpha });
                 }
-            }
-
-            // --- Decorative line under name ---
-            if (textSlide > 0.0f) {
-                int lineW = (int)((nameW + 40) * textSlide);
-                int lineY2 = (int)nameY + nameFontSize + subSize + 12;
-                DrawRectangle((int)nameFinalX, lineY2, lineW, 3,
-                    (Color){ nameColor.r, nameColor.g, nameColor.b, (unsigned char)(alpha * 0.7f) });
             }
 
             // --- Ability slots (fade in with delay) ---
@@ -7260,7 +7251,7 @@ int main(void)
                 int slotSize = 48;
                 int slotGap = 8;
                 int abilX = (int)nameFinalX;
-                int abilY = (int)nameY + nameFontSize + subSize + 24;
+                int abilY = lineY2 + 10 + starHeight;
 
                 for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
                     int ax = abilX + a * (slotSize + slotGap);

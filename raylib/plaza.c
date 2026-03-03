@@ -52,8 +52,8 @@ void PlazaSpawnEnemies(Unit units[], int *unitCount, int unitTypeCount, PlazaUni
 // Spawn lobby pool: 1 of each valid type guaranteed + extras with rarity rolls
 //------------------------------------------------------------------------------------
 // Zone centers for 6 lobby units — spread formation
-static const float lobbyZoneX[LOBBY_POOL_SIZE] = { -50.0f, -20.0f, 20.0f, 50.0f, -35.0f, 35.0f };
-static const float lobbyZoneZ[LOBBY_POOL_SIZE] = { -20.0f, -30.0f, -30.0f, -20.0f, 10.0f, 10.0f };
+static const float lobbyZoneX[LOBBY_POOL_SIZE] = { -50.0f, -20.0f, 20.0f, 50.0f };
+static const float lobbyZoneZ[LOBBY_POOL_SIZE] = { -20.0f, -30.0f, -30.0f, -20.0f };
 
 void PlazaSpawnLobbyPool(Unit units[], int *unitCount, PlazaUnitData plazaData[], LobbySelection *lobby)
 {
@@ -97,40 +97,6 @@ void PlazaSpawnLobbyPool(Unit units[], int *unitCount, PlazaUnitData plazaData[]
         }
     }
 
-    // Fill remaining slots with random types
-    while (lobby->poolCount < LOBBY_POOL_SIZE) {
-        int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
-        if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
-            int idx = *unitCount - 1;
-            int slot = lobby->poolCount;
-            Unit *u = &units[idx];
-            u->position.x = lobbyZoneX[slot] + (float)GetRandomValue(-8, 8);
-            u->position.z = lobbyZoneZ[slot] + (float)GetRandomValue(-8, 8);
-            u->position.y = 0.0f;
-            u->facingAngle = (float)GetRandomValue(0, 360);
-            u->currentAnim = ANIM_IDLE;
-
-            int roll = GetRandomValue(1, 100);
-            uint8_t rarity = RARITY_COMMON;
-            if (roll <= 5) rarity = RARITY_LEGENDARY;
-            else if (roll <= 25) rarity = RARITY_RARE;
-            u->rarity = rarity;
-            if (rarity > 0) ApplyUnitRarity(u);
-
-            PlazaUnitData *pd = &plazaData[idx];
-            pd->zoneIndex = slot % 5;
-            pd->isScared = false;
-            pd->roamTarget.x = u->position.x + (float)GetRandomValue(-15, 15);
-            pd->roamTarget.y = 0.0f;
-            pd->roamTarget.z = u->position.z + (float)GetRandomValue(-15, 15);
-            pd->roamWaitTimer = PLAZA_WAIT_MIN +
-                (float)GetRandomValue(0, (int)((PLAZA_WAIT_MAX - PLAZA_WAIT_MIN) * 10)) / 10.0f;
-
-            lobby->poolTypes[slot] = type;
-            lobby->poolRarities[slot] = rarity;
-            lobby->poolCount++;
-        }
-    }
 }
 
 //------------------------------------------------------------------------------------
