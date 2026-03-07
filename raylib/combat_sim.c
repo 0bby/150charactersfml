@@ -624,6 +624,10 @@ int CombatTick(Unit units[], int *unitCountPtr,
                         float roll3x = det_roll(i, slotIdx + 200, units[i].currentHealth);
                         if (roll3x < chance3x) extraCasts = 2;
                     }
+                    if (extraCasts > 0) {
+                        EmitEvent(events, eventCount, COMBAT_EVT_MULTICAST, i,
+                                  slot->abilityId, units[i].position, (float)extraCasts, 0);
+                    }
                     // Re-execute the cast logic (reset cooldown was already set, just re-trigger effects)
                     for (int mc = 0; mc < extraCasts; mc++) {
                         EmitEvent(events, eventCount, COMBAT_EVT_ABILITY_CAST, i,

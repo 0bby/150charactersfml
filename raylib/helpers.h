@@ -40,7 +40,6 @@ void UpdateParticles(Particle particles[], float dt);
 
 // Shop & inventory helpers
 void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round);
-void SellAbility(int abilityId, int level, int *gold);
 void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold);
 void AssignRandomAbilities(Unit *unit, int numAbilities);
 
@@ -130,13 +129,13 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount);
 void ClearRedUnits(Unit units[], int *unitCount);
 void CompactBlueUnits(Unit units[], int *unitCount);
 
+// Unit code parse/format (leaderboard serialization)
+bool ParseUnitCode(const char *code, int *outTypeIndex, AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT]);
+int FormatUnitCode(int typeIndex, const AbilitySlot abilities[MAX_ABILITIES_PER_UNIT], char *buf, int bufSize);
+
 // Battle log helpers (client-only)
 #ifndef SERVER_BUILD
 void BattleLogClear(BattleLog *log);
 void BattleLogAddCast(BattleLog *log, float time, Team casterTeam, int casterType, int abilityId);
 void BattleLogAddKill(BattleLog *log, float time, Team killerTeam, int killerType, Team victimTeam, int victimType, int abilityId);
 #endif
-
-// NFC unit code parse/format
-bool ParseUnitCode(const char *code, int *outTypeIndex, AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT]);
-int FormatUnitCode(int typeIndex, const AbilitySlot abilities[MAX_ABILITIES_PER_UNIT], char *buf, int bufSize);

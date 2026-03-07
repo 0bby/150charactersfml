@@ -332,14 +332,6 @@ void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round)
     }
 }
 
-void SellAbility(int abilityId, int level, int *gold)
-{
-    if (abilityId < 0) return;
-    int sellValue = ABILITY_DEFS[abilityId].goldCost / 2 + level;
-    if (sellValue < 1) sellValue = 1;
-    *gold += sellValue;
-}
-
 void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold)
 {
     if (slot->abilityId < 0) return;
@@ -1109,7 +1101,7 @@ void SpawnMeleeImpact(Particle particles[], Vector3 pos)
 }
 
 //------------------------------------------------------------------------------------
-// Unit Code Parse / Format (debug spawn codes)
+// Unit Code Parse / Format (leaderboard serialization)
 //------------------------------------------------------------------------------------
 
 // Look up ability ID by 2-char abbreviation, returns -1 if not found

@@ -1,7 +1,23 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(grep:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.epicgames.com)",
+      "WebFetch(domain:www.epicgames.com)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:www.reddit.com)",
+      "WebFetch(domain:forums.unrealengine.com)",
+      "WebFetch(domain:steamcommunity.com)",
+      "WebFetch(domain:www.photonengine.com)",
+      "WebFetch(domain:doc.photonengine.com)",
+      "WebFetch(domain:partnering.steamgames.com)",
+      "WebFetch(domain:www.novasquare.dev)",
+      "WebFetch(domain:gamedev.stackexchange.com)",
+      "WebFetch(domain:medium.com)",
+      "Bash(wc:*)",
+      "Bash(mv:*)"
     ]
   }
 }

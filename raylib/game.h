@@ -392,6 +392,7 @@ typedef enum {
     COMBAT_EVT_SHAKE,          // screen shake trigger
     COMBAT_EVT_MELEE_HIT,      // unitIndex=target, value1=damage
     COMBAT_EVT_PROJECTILE_HIT, // unitIndex=target, value1=projType, position=impact pos
+    COMBAT_EVT_MULTICAST,      // unitIndex=caster, value1=extra cast count (1=2x, 2=3x)
 } CombatEventType;
 
 typedef struct {

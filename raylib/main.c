@@ -49,100 +49,13 @@ static bool  cgDebugOverlay  = false;
 #include "net_eos.h"
 #endif
 
-// Global font — loaded in main(), used by GameDrawText/GameMeasureText
-static Font g_gameFont = { 0 };
-
-static inline void GameDrawText(const char *text, int x, int y, int fontSize, Color color)
-{
-    if (g_gameFont.glyphCount > 0) {
-        float spacing = (float)fontSize / 10.0f;
-        DrawTextEx(g_gameFont, text, (Vector2){ (float)x, (float)y }, (float)fontSize, spacing, color);
-    } else {
-        DrawText(text, x, y, fontSize, color);
-    }
-}
-
-static inline int GameMeasureText(const char *text, int fontSize)
-{
-    if (g_gameFont.glyphCount > 0) {
-        float spacing = (float)fontSize / 10.0f;
-        return (int)MeasureTextEx(g_gameFont, text, (float)fontSize, spacing).x;
-    }
-    return MeasureText(text, fontSize);
-}
-
-// Returns WHITE or BLACK depending on background luminance for readable text
-static inline Color TextColorForBg(Color bg)
-{
-    float lum = 0.299f * bg.r + 0.587f * bg.g + 0.114f * bg.b;
-    return (lum > 150.0f) ? BLACK : WHITE;
-}
-
-// Key repeat: fires once on press, then continuously after a delay
-#define KEY_REPEAT_DELAY 0.35f
-#define KEY_REPEAT_RATE  0.05f
-
-static bool KeyRepeat(int key, float dt, float *timer) {
-    if (IsKeyPressed(key)) { *timer = 0.0f; return true; }
-    if (IsKeyDown(key)) {
-        *timer += dt;
-        if (*timer >= KEY_REPEAT_DELAY) { *timer -= KEY_REPEAT_RATE; return true; }
-    } else { *timer = 0.0f; }
-    return false;
-}
-
-// Draw text with auto contrast + shadow on colored backgrounds
-static inline void GameDrawTextOnColor(const char *text, int x, int y, int fontSize, Color bg)
-{
-    Color fg = TextColorForBg(bg);
-    Color shadow = (fg.r == 0) ? (Color){255,255,255,80} : (Color){0,0,0,150};
-    GameDrawText(text, x + 1, y + 1, fontSize, shadow);
-    GameDrawText(text, x, y, fontSize, fg);
-}
+#include "ui.h"
 #include "pve_waves.h"
 #include "plaza.h"
 
-// --- Settings persistence ---
-static void SaveSettings(float musicVol, float sfxVol, bool fullscreen, const char *name)
-{
-    FILE *fp = fopen("settings.json", "w");
-    if (!fp) return;
-    fprintf(fp, "{\n  \"musicVolume\": %.3f,\n  \"sfxVolume\": %.3f,\n  \"fullscreen\": %s,\n  \"playerName\": \"%s\"\n}\n",
-            musicVol, sfxVol, fullscreen ? "true" : "false", name);
-    fclose(fp);
-}
+#include "settings.h"
 
-static void LoadSettings(float *musicVol, float *sfxVol, bool *fullscreen, char *name, int *nameLen)
-{
-    FILE *fp = fopen("settings.json", "r");
-    if (!fp) return;
-    char buf[512];
-    size_t n = fread(buf, 1, sizeof(buf) - 1, fp);
-    buf[n] = '\0';
-    fclose(fp);
-
-    char *p;
-    if ((p = strstr(buf, "\"musicVolume\""))) { float v; if (sscanf(p, "\"musicVolume\": %f", &v) == 1) *musicVol = v; }
-    if ((p = strstr(buf, "\"sfxVolume\"")))   { float v; if (sscanf(p, "\"sfxVolume\": %f", &v) == 1) *sfxVol = v; }
-    if ((p = strstr(buf, "\"fullscreen\"")))  { *fullscreen = (strstr(p, "true") != NULL && strstr(p, "true") < p + 30); }
-    if ((p = strstr(buf, "\"playerName\"")))  {
-        char *q = strchr(p + 13, '"');
-        if (q) {
-            q++;
-            char *end = strchr(q, '"');
-            if (end && (end - q) < 31) {
-                int len = (int)(end - q);
-                memcpy(name, q, len);
-                name[len] = '\0';
-                *nameLen = len;
-            }
-        }
-    }
-}
-
-// --- UI Scale (720p base) ---
-static float uiScale = 1.0f;
-#define S(x) ((int)((x) * uiScale))
+// --- UI Scale (720p base, computed per-frame in main loop) ---
 
 // --- Hit flash ---
 #define HIT_FLASH_DURATION 0.12f
@@ -728,7 +641,6 @@ int main(int argc, char *argv[])
     int hoverAbilityId = -1;
     int hoverAbilityLevel = 0;
     int hoverAbilityUnitIndex = -1;
-    bool hoverFromInventory = false;
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
     bool usedShopHotkey = false;  // hides hotkey hint after first use
@@ -782,6 +694,8 @@ int main(int argc, char *argv[])
     float musicVolume = BGM_VOL;
     float sfxVolume = 1.0f;
     bool isFullscreen = false;
+    int focusedSlider = -1; // 0=music, 1=sfx, -1=none
+    float sliderKeyTimer = 0.0f;
     Model doorModel = LoadModel("assets/goblin/environment/door/Door.obj");
     for (int m = 0; m < doorModel.materialCount; m++) {
         doorModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
@@ -1466,7 +1380,6 @@ int main(int argc, char *argv[])
         hoverAbilityId = -1;
         hoverAbilityLevel = 0;
         hoverAbilityUnitIndex = -1;
-        hoverFromInventory = false;
         int prevHoverSynergyIdx = hoverSynergyIdx;
         hoverSynergyIdx = -1;
 
@@ -1623,6 +1536,7 @@ int main(int argc, char *argv[])
                     // Close button
                     Rectangle closeBtn = { (float)(panelX + panelW - 36), (float)(panelY + 4), 32, 32 };
                     if (CheckCollisionPointRec(mouse, closeBtn)) {
+                        PlaySound(sfxUiClick);
                         showMultiplayerPanel = false;
                     }
 
@@ -2604,44 +2518,6 @@ int main(int argc, char *argv[])
                         clickedButton = true;
                     }
                 }
-                // --- Shop: Right-click to toggle lock ---
-                if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && !(isMultiplayer && playerReady)) {
-                    bool rightClickHandled = false;
-                    int shopY = hudTop + 2;
-                    int shopCardW = S(160), shopCardH = S(38), shopCardGap = 10;
-                    int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
-                    int shopCardsX = (sw - totalShopW) / 2;
-                    for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
-                        int scx = shopCardsX + s * (shopCardW + shopCardGap);
-                        Rectangle r = { (float)scx, (float)(shopY + 8), (float)shopCardW, (float)shopCardH };
-                        if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
-                            shopSlots[s].locked = !shopSlots[s].locked;
-                            PlaySound(sfxUiBuy);
-                            rightClickHandled = true;
-                            break;
-                        }
-                    }
-                    // --- Inventory: Right-click to sell ability ---
-                    if (!rightClickHandled) {
-                        int totalCardsW2 = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
-                        int cardsStartX2 = (sw - totalCardsW2) / 2;
-                        int invStartX2 = cardsStartX2 - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
-                        int invStartY2 = hudTop + hudShopH + 15;
-                        for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
-                            int col = inv % HUD_INVENTORY_COLS;
-                            int row = inv / HUD_INVENTORY_COLS;
-                            int ix = invStartX2 + col * (hudAbilSlotSize + hudAbilSlotGap);
-                            int iy = invStartY2 + row * (hudAbilSlotSize + hudAbilSlotGap);
-                            Rectangle r = { (float)ix, (float)iy, (float)hudAbilSlotSize, (float)hudAbilSlotSize };
-                            if (CheckCollisionPointRec(mouse, r) && inventory[inv].abilityId >= 0) {
-                                SellAbility(inventory[inv].abilityId, inventory[inv].level, &playerGold);
-                                inventory[inv].abilityId = -1;
-                                PlaySound(sfxUiBuy);
-                                break;
-                            }
-                        }
-                    }
-                }
                 // --- Shop: Buy ability card click ---
                 if (!clickedButton && !(isMultiplayer && playerReady)) {
                     int shopY = hudTop + 2;
@@ -2901,6 +2777,27 @@ int main(int argc, char *argv[])
                 }
             }
 
+            // --- Shop: Right-click to toggle lock ---
+            if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && !(isMultiplayer && playerReady) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE && !showEscMenu && !showHelp) {
+                Vector2 mouse = GetMousePosition();
+                int sw = GetScreenWidth();
+                int sh = GetScreenHeight();
+                int hudTop = sh - hudTotalH;
+                int shopY = hudTop + 2;
+                int shopCardW = S(160), shopCardH = S(38), shopCardGap = 10;
+                int totalShopW = MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
+                int shopCardsX = (sw - totalShopW) / 2;
+                for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
+                    int scx = shopCardsX + s * (shopCardW + shopCardGap);
+                    Rectangle r = { (float)scx, (float)(shopY + 8), (float)shopCardW, (float)shopCardH };
+                    if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
+                        shopSlots[s].locked = !shopSlots[s].locked;
+                        PlaySound(sfxUiBuy);
+                        break;
+                    }
+                }
+            }
+
             // --- Drag-and-drop release handling ---
             if (dragState.dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && !intro.active && statueSpawn.phase == SSPAWN_INACTIVE)
             {
@@ -3003,22 +2900,6 @@ int main(int argc, char *argv[])
                             }
                             placed = true;
                         }
-                    }
-                }
-                // Check drop on sell zone
-                if (!placed && dragState.abilityId >= 0 && dragState.abilityId < ABILITY_COUNT) {
-                    int invGridW = HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap);
-                    int sellInvX = cardsStartX - invGridW - 20;
-                    int szSize = 2 * hudAbilSlotSize + hudAbilSlotGap;
-                    int szX = sellInvX - szSize - S(10);
-                    int szY = cardsY + S(18);
-                    Rectangle sellRect = { (float)szX, (float)szY, (float)szSize, (float)szSize };
-                    if (CheckCollisionPointRec(mouse, sellRect)) {
-                        int sellValue = ABILITY_DEFS[dragState.abilityId].goldCost * (dragState.level + 1) / 2;
-                        if (sellValue < 1) sellValue = 1;
-                        playerGold += sellValue;
-                        PlaySound(sfxUiBuy);
-                        placed = true;
                     }
                 }
                 // Not placed — return to source
@@ -3233,6 +3114,15 @@ int main(int argc, char *argv[])
                             }
                         }
                         break;
+                    case COMBAT_EVT_MULTICAST: {
+                        int ui = combatEvents[e].unitIndex;
+                        int casts = (int)combatEvents[e].value1 + 1; // 1 extra = 2x, 2 extra = 3x
+                        if (ui >= 0 && ui < unitCount) {
+                            const char *mcText = TextFormat("MULTICAST x%d!", casts);
+                            SpawnFloatingText(floatingTexts, units[ui].position,
+                                mcText, (Color){255, 180, 60, 255}, 1.5f);
+                        }
+                    } break;
                     default: break;
                     }
                 }
@@ -6299,7 +6189,16 @@ int main(int argc, char *argv[])
                     if (hpRatio > 1) hpRatio = 1;
                     DrawRectangle(hbX, hbY, hbW, hbH, (Color){ 20, 20, 20, 255 });
                     Color hpCol = (hpRatio > 0.5f) ? GREEN : (hpRatio > 0.25f) ? ORANGE : RED;
-                    DrawRectangle(hbX, hbY, (int)(hbW * hpRatio), hbH, hpCol);
+                    int hpFillW = (int)(hbW * hpRatio);
+                    DrawRectangle(hbX, hbY, hpFillW, hbH, hpCol);
+                    if (units[ui].shieldHP > 0) {
+                        float shieldRatio = units[ui].shieldHP / cardMaxHP;
+                        if (shieldRatio > 1) shieldRatio = 1;
+                        int shieldW = (int)(hbW * shieldRatio);
+                        int shieldX = hbX + hpFillW;
+                        if (shieldX + shieldW > hbX + hbW) shieldW = hbX + hbW - shieldX;
+                        DrawRectangle(shieldX, hbY, shieldW, hbH, (Color){80, 160, 255, 200});
+                    }
                     DrawRectangleLines(hbX, hbY, hbW, hbH, (Color){ 60, 60, 80, 255 });
 
                     // Concise stat line below health bar
@@ -6420,37 +6319,6 @@ int main(int argc, char *argv[])
                 }
             }
 
-            // --- Sell zone (left of inventory) ---
-            int sellZoneSize, sellZoneX, sellZoneY;
-            {
-                int invGridW = HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap);
-                int invStartX = cardsStartX - invGridW - 20;
-                sellZoneSize = 2 * hudAbilSlotSize + hudAbilSlotGap;
-                sellZoneX = invStartX - sellZoneSize - S(10);
-                sellZoneY = cardsY + S(18);
-                bool hovering = dragState.dragging && CheckCollisionPointRec(GetMousePosition(),
-                    (Rectangle){(float)sellZoneX, (float)sellZoneY, (float)sellZoneSize, (float)sellZoneSize});
-                Color sellBg = hovering ? (Color){80, 30, 30, 255} : (Color){45, 35, 35, 255};
-                Color sellBorder = hovering ? (Color){255, 80, 80, 255} : (Color){120, 80, 80, 255};
-                DrawRectangle(sellZoneX, sellZoneY, sellZoneSize, sellZoneSize, sellBg);
-                DrawRectangleLines(sellZoneX, sellZoneY, sellZoneSize, sellZoneSize, sellBorder);
-                // Sell label
-                const char *sellLabel = "SELL";
-                int sellLabelW = GameMeasureText(sellLabel, S(14));
-                GameDrawText(sellLabel, sellZoneX + (sellZoneSize - sellLabelW) / 2,
-                    sellZoneY + sellZoneSize / 2 - S(16), S(14), sellBorder);
-                // Gold indicator
-                if (dragState.dragging && dragState.abilityId >= 0 && dragState.abilityId < ABILITY_COUNT) {
-                    int sellValue = ABILITY_DEFS[dragState.abilityId].goldCost * (dragState.level + 1) / 2;
-                    if (sellValue < 1) sellValue = 1;
-                    const char *sellGold = TextFormat("+%dg", sellValue);
-                    int sgW = GameMeasureText(sellGold, S(12));
-                    GameDrawText(sellGold, sellZoneX + (sellZoneSize - sgW) / 2,
-                        sellZoneY + sellZoneSize / 2 + S(2), S(12),
-                        hovering ? (Color){240, 200, 60, 255} : (Color){160, 140, 50, 200});
-                }
-            }
-
             // --- Inventory (left of unit cards) ---
             {
                 int invStartX = cardsStartX - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
@@ -6470,7 +6338,7 @@ int main(int argc, char *argv[])
                         // Hover detection
                         bool invHovered = CheckCollisionPointRec(GetMousePosition(),
                             (Rectangle){(float)ix,(float)iy,(float)hudAbilSlotSize,(float)hudAbilSlotSize});
-                        if (invHovered) { hoverAbilityId = inventory[inv].abilityId; hoverAbilityLevel = inventory[inv].level; hoverFromInventory = true; }
+                        if (invHovered) { hoverAbilityId = inventory[inv].abilityId; hoverAbilityLevel = inventory[inv].level; }
                         int invAbbrSize = S(13);
                         if (invHovered && hoverTimer > 0 && hoverTimer < tooltipDelay)
                             invAbbrSize = S(13) + (int)(3.0f * (hoverTimer / tooltipDelay));
@@ -6876,8 +6744,7 @@ int main(int argc, char *argv[])
             numStatLines++; // reserve a line for cooldown
 
             int tipW = S(300);
-            bool showSellHint = hoverFromInventory && phase == PHASE_PREP;
-            int tipH = S(50) + numStatLines * S(18) + (showSellHint ? S(18) : 0);
+            int tipH = S(50) + numStatLines * S(18);
             int tipX = (int)mpos.x + 14;
             int tipY = (int)mpos.y - tipH - 4;
             if (tipX + tipW > GetScreenWidth()) tipX = (int)mpos.x - tipW - 4;
@@ -6944,13 +6811,6 @@ int main(int argc, char *argv[])
                     }
                 }
                 lineY += S(18);
-            }
-            // Sell hint for inventory slots
-            if (showSellHint) {
-                int sellValue = ABILITY_DEFS[hoverAbilityId].goldCost / 2 + hoverAbilityLevel;
-                if (sellValue < 1) sellValue = 1;
-                const char *sellText = TextFormat("Right-click to sell (+%dg)", sellValue);
-                GameDrawText(sellText, tipX + S(6), lineY, S(12), (Color){255, 230, 120, 200});
             }
         }
 
@@ -8015,7 +7875,7 @@ int main(int argc, char *argv[])
             Color kc = (Color){120,200,255,255}, dc = (Color){200,200,220,255};
             GameDrawText("Mouse", lx, ly, fsz, kc); GameDrawText("Place / drag units", lx + S(110), ly, fsz, dc); ly += gap;
             GameDrawText("1-5", lx, ly, fsz, kc); GameDrawText("Buy shop slot", lx + S(110), ly, fsz, dc); ly += gap;
-            GameDrawText("D", lx, ly, fsz, kc); GameDrawText("Reroll shop", lx + S(110), ly, fsz, dc); ly += gap;
+            GameDrawText("R", lx, ly, fsz, kc); GameDrawText("Reroll shop", lx + S(110), ly, fsz, dc); ly += gap;
             GameDrawText("Space", lx, ly, fsz, kc); GameDrawText("Start combat / skip", lx + S(110), ly, fsz, dc); ly += gap;
             GameDrawText("L", lx, ly, fsz, kc); GameDrawText("Lock/unlock shop", lx + S(110), ly, fsz, dc); ly += gap;
             GameDrawText("H", lx, ly, fsz, kc); GameDrawText("Toggle this help", lx + S(110), ly, fsz, dc); ly += gap;
@@ -8054,6 +7914,7 @@ int main(int argc, char *argv[])
             DrawRectangleRec(escCloseBtn, escCloseBg);
             GameDrawText("X", (int)(escCloseBtn.x + S(10)), (int)(escCloseBtn.y + S(7)), S(18), WHITE);
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), escCloseBtn)) {
+                PlaySound(sfxUiClick);
                 SaveSettings(musicVolume, sfxVolume, isFullscreen, playerName);
                 showEscMenu = false;
             }
@@ -8067,14 +7928,16 @@ int main(int argc, char *argv[])
             Rectangle musicTrack = { (float)sliderX, (float)musicSliderY, (float)sliderW, (float)sliderH };
             DrawRectangleRec(musicTrack, (Color){40,40,55,255});
             DrawRectangle(sliderX, musicSliderY, (int)(sliderW * musicVolume), sliderH, (Color){80,160,255,255});
-            DrawRectangleLinesEx(musicTrack, 1, (Color){100,100,130,255});
+            DrawRectangleLinesEx(musicTrack, 1, focusedSlider == 0 ? (Color){180,180,255,255} : (Color){100,100,130,255});
             GameDrawText(TextFormat("%d%%", (int)(musicVolume * 100)), sliderX + sliderW + S(8), musicSliderY, S(14), WHITE);
             if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
                 Rectangle expanded = { musicTrack.x, musicTrack.y - 5, musicTrack.width, musicTrack.height + 10 };
                 if (CheckCollisionPointRec(GetMousePosition(), expanded)) {
+                    focusedSlider = 0;
                     musicVolume = (GetMousePosition().x - musicTrack.x) / musicTrack.width;
                     if (musicVolume < 0) musicVolume = 0;
                     if (musicVolume > 1) musicVolume = 1;
+                    if (musicVolume < 0.01f) musicVolume = 0.0f;
                     SetMusicVolume(bgm, musicVolume);
                 }
             }
@@ -8085,16 +7948,48 @@ int main(int argc, char *argv[])
             Rectangle sfxTrack = { (float)sliderX, (float)sfxSliderY, (float)sliderW, (float)sliderH };
             DrawRectangleRec(sfxTrack, (Color){40,40,55,255});
             DrawRectangle(sliderX, sfxSliderY, (int)(sliderW * sfxVolume), sliderH, (Color){80,160,255,255});
-            DrawRectangleLinesEx(sfxTrack, 1, (Color){100,100,130,255});
+            DrawRectangleLinesEx(sfxTrack, 1, focusedSlider == 1 ? (Color){180,180,255,255} : (Color){100,100,130,255});
             GameDrawText(TextFormat("%d%%", (int)(sfxVolume * 100)), sliderX + sliderW + S(8), sfxSliderY, S(14), WHITE);
             if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
                 Rectangle expanded = { sfxTrack.x, sfxTrack.y - 5, sfxTrack.width, sfxTrack.height + 10 };
                 if (CheckCollisionPointRec(GetMousePosition(), expanded)) {
+                    focusedSlider = 1;
                     sfxVolume = (GetMousePosition().x - sfxTrack.x) / sfxTrack.width;
                     if (sfxVolume < 0) sfxVolume = 0;
                     if (sfxVolume > 1) sfxVolume = 1;
+                    if (sfxVolume < 0.01f) sfxVolume = 0.0f;
                     for (int si = 0; si < sfxCount; si++)
                         SetSoundVolume(allSfx[si], sfxBaseVol[si] * sfxVolume);
+                }
+            }
+            // Click outside both sliders resets focus
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                Rectangle musicExp = { musicTrack.x, musicTrack.y - 5, musicTrack.width, musicTrack.height + 10 };
+                Rectangle sfxExp = { sfxTrack.x, sfxTrack.y - 5, sfxTrack.width, sfxTrack.height + 10 };
+                if (!CheckCollisionPointRec(GetMousePosition(), musicExp) &&
+                    !CheckCollisionPointRec(GetMousePosition(), sfxExp))
+                    focusedSlider = -1;
+            }
+            // Arrow key adjustment for focused slider
+            if (focusedSlider >= 0) {
+                bool left = KeyRepeat(KEY_LEFT, dt, &sliderKeyTimer);
+                bool right = KeyRepeat(KEY_RIGHT, dt, &sliderKeyTimer);
+                if (left || right) {
+                    float delta = right ? 0.01f : -0.01f;
+                    if (focusedSlider == 0) {
+                        musicVolume += delta;
+                        if (musicVolume < 0) musicVolume = 0;
+                        if (musicVolume > 1) musicVolume = 1;
+                        if (musicVolume < 0.01f) musicVolume = 0.0f;
+                        SetMusicVolume(bgm, musicVolume);
+                    } else {
+                        sfxVolume += delta;
+                        if (sfxVolume < 0) sfxVolume = 0;
+                        if (sfxVolume > 1) sfxVolume = 1;
+                        if (sfxVolume < 0.01f) sfxVolume = 0.0f;
+                        for (int si = 0; si < sfxCount; si++)
+                            SetSoundVolume(allSfx[si], sfxBaseVol[si] * sfxVolume);
+                    }
                 }
             }
 
@@ -8108,6 +8003,7 @@ int main(int argc, char *argv[])
             }
             GameDrawText("Fullscreen (F11)", panelX + S(48), checkY + S(2), S(16), WHITE);
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), checkBox)) {
+                PlaySound(sfxUiClick);
                 ToggleBorderlessWindowed();
                 isFullscreen = !isFullscreen;
             }
@@ -8126,6 +8022,7 @@ int main(int argc, char *argv[])
             int qtw = GameMeasureText(quitText, S(18));
             GameDrawText(quitText, quitBtnX + quitBtnW/2 - qtw/2, quitBtnY + S(8), S(18), WHITE);
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), quitBtn)) {
+                PlaySound(sfxUiClick);
                 SaveSettings(musicVolume, sfxVolume, isFullscreen, playerName);
                 if (isMultiplayer) {
 #ifdef USE_EOS
@@ -8157,10 +8054,11 @@ int main(int argc, char *argv[])
                     helpBg = (Color){80,80,170,255};
                 DrawRectangleRec(helpBtn, helpBg);
                 DrawRectangleLinesEx(helpBtn, 1, (Color){100,100,130,255});
-                const char *helpText = "HELP (H)";
+                const char *helpText = "CONTROLS (H)";
                 int htw = GameMeasureText(helpText, S(18));
                 GameDrawText(helpText, helpBtnX + helpBtnW/2 - htw/2, helpBtnY + S(8), S(18), WHITE);
                 if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), helpBtn)) {
+                    PlaySound(sfxUiClick);
                     showHelp = true;
                     showEscMenu = false;
                 }
@@ -8180,6 +8078,7 @@ int main(int argc, char *argv[])
             int rtw = GameMeasureText(resText, S(18));
             GameDrawText(resText, resBtnX + resBtnW/2 - rtw/2, resBtnY + S(8), S(18), WHITE);
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), resBtn)) {
+                PlaySound(sfxUiClick);
                 SaveSettings(musicVolume, sfxVolume, isFullscreen, playerName);
                 showEscMenu = false;
             }

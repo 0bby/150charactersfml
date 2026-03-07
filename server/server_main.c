@@ -15,7 +15,6 @@
 #include "../raylib/net_protocol.h"
 #include "../raylib/net_common.h"
 #include "../raylib/leaderboard.h"
-#include "nfc_store.h"
 #include "game_session.h"
 
 //------------------------------------------------------------------------------------
@@ -33,12 +32,6 @@ static void sigint_handler(int sig) { (void)sig; running = 0; }
 //------------------------------------------------------------------------------------
 #define GLOBAL_LEADERBOARD_FILE "global_leaderboard.json"
 static Leaderboard globalLeaderboard;
-
-//------------------------------------------------------------------------------------
-// Global NFC tag store
-//------------------------------------------------------------------------------------
-#define NFC_TAGS_FILE "nfc_tags.json"
-static NfcStore nfcStore;
 
 static void send_leaderboard_data(int sockfd)
 {
@@ -135,185 +128,6 @@ static void handle_new_client(int clientfd, struct sockaddr_in *addr)
         return;
     }
 
-    // Handle NFC messages (stateless, short-lived connections)
-    if (msg.type == MSG_NFC_PREFETCH) {
-        // Send all known UIDs as hex strings: [count:2 LE][uids × (hexLen:1, hexChars:N)]
-        uint8_t resp[NET_MAX_PAYLOAD];
-        int count = nfcStore.tagCount;
-        resp[0] = (uint8_t)(count & 0xFF);
-        resp[1] = (uint8_t)((count >> 8) & 0xFF);
-        int off = 2;
-        for (int i = 0; i < count; i++) {
-            int hexLen = (int)strlen(nfcStore.tags[i].uidHex);
-            if (off + 1 + hexLen > NET_MAX_PAYLOAD) break;
-            resp[off++] = (uint8_t)hexLen;
-            memcpy(resp + off, nfcStore.tags[i].uidHex, hexLen);
-            off += hexLen;
-        }
-        net_send_msg(clientfd, MSG_NFC_PREFETCH_DATA, resp, off);
-        printf("[Server] NFC prefetch -> sent %d UIDs\n", count);
-        close(clientfd);
-        return;
-    }
-
-    if (msg.type == MSG_NFC_LOOKUP) {
-        if (msg.size >= 1) {
-            uint8_t uidLen = msg.payload[0];
-            if (uidLen >= 4 && uidLen <= NFC_UID_MAX_LEN && msg.size >= 1 + uidLen) {
-                // Convert binary UID to hex string
-                char uidHex[NFC_UID_HEX_MAX] = {0};
-                for (int i = 0; i < uidLen; i++)
-                    sprintf(uidHex + i * 2, "%02X", msg.payload[1 + i]);
-
-                NfcTagEntry *entry = NfcStoreLookup(&nfcStore, uidHex);
-                // Response: [uidLen:1][uid:N][status:1][typeIndex:1][rarity:1][abilities × 4 × (id:1, level:1)][nameLen:1][name:nameLen]
-                uint8_t resp[1 + NFC_UID_MAX_LEN + 3 + NFC_MAX_ABILITIES * 2 + 1 + NFC_NAME_MAX];
-                resp[0] = uidLen;
-                memcpy(resp + 1, msg.payload + 1, uidLen);
-                int off = 1 + uidLen;
-                if (entry) {
-                    resp[off++] = NFC_STATUS_OK;
-                    resp[off++] = entry->typeIndex;
-                    resp[off++] = entry->rarity;
-                    for (int a = 0; a < NFC_MAX_ABILITIES; a++) {
-                        resp[off++] = (uint8_t)(int8_t)entry->abilities[a].abilityId;
-                        resp[off++] = entry->abilities[a].level;
-                    }
-                    // Append name
-                    int nameLen = (int)strlen(entry->name);
-                    resp[off++] = (uint8_t)nameLen;
-                    if (nameLen > 0) { memcpy(resp + off, entry->name, nameLen); off += nameLen; }
-                    printf("[Server] NFC lookup %s -> type=%d rarity=%d name=\"%s\"\n", uidHex, entry->typeIndex, entry->rarity, entry->name);
-                } else {
-                    resp[off++] = NFC_STATUS_NOT_FOUND;
-                    resp[off++] = 0;
-                    resp[off++] = 0;
-                    for (int a = 0; a < NFC_MAX_ABILITIES; a++) {
-                        resp[off++] = 0xFF; // -1 as uint8_t
-                        resp[off++] = 0;
-                    }
-                    resp[off++] = 0; // no name
-                    printf("[Server] NFC lookup %s -> not found\n", uidHex);
-                }
-                net_send_msg(clientfd, MSG_NFC_DATA, resp, off);
-            }
-        }
-        close(clientfd);
-        return;
-    }
-
-    if (msg.type == MSG_NFC_REGISTER) {
-        if (msg.size >= 3) {
-            uint8_t uidLen = msg.payload[0];
-            if (uidLen >= 4 && uidLen <= NFC_UID_MAX_LEN && msg.size >= 1 + uidLen + 2) {
-                uint8_t typeIndex = msg.payload[1 + uidLen];
-                uint8_t rarity = msg.payload[2 + uidLen];
-
-                char uidHex[NFC_UID_HEX_MAX] = {0};
-                for (int i = 0; i < uidLen; i++)
-                    sprintf(uidHex + i * 2, "%02X", msg.payload[1 + i]);
-
-                int result = NfcStoreRegister(&nfcStore, uidHex, typeIndex, rarity);
-                NfcStoreSave(&nfcStore, NFC_TAGS_FILE);
-
-                uint8_t resp[1 + NFC_UID_MAX_LEN + 3];
-                resp[0] = uidLen;
-                memcpy(resp + 1, msg.payload + 1, uidLen);
-                resp[1 + uidLen] = (result >= 0) ? NFC_STATUS_OK : NFC_STATUS_ERROR;
-                resp[2 + uidLen] = typeIndex;
-                resp[3 + uidLen] = rarity;
-
-                const char *action = (result == 1) ? "updated" : (result == 0) ? "registered" : "FAILED (store full)";
-                printf("[Server] NFC register %s type=%d rarity=%d -> %s\n", uidHex, typeIndex, rarity, action);
-                net_send_msg(clientfd, MSG_NFC_DATA, resp, 1 + uidLen + 3);
-            }
-        }
-        close(clientfd);
-        return;
-    }
-
-    if (msg.type == MSG_NFC_ABILITY_UPDATE) {
-        if (msg.size >= 2) {
-            uint8_t uidLen = msg.payload[0];
-            if (uidLen >= 4 && uidLen <= NFC_UID_MAX_LEN && msg.size >= 1 + uidLen + 1) {
-                char uidHex[NFC_UID_HEX_MAX] = {0};
-                for (int i = 0; i < uidLen; i++)
-                    sprintf(uidHex + i * 2, "%02X", msg.payload[1 + i]);
-
-                int abCount = msg.payload[1 + uidLen];
-                if (abCount > NFC_MAX_ABILITIES) abCount = NFC_MAX_ABILITIES;
-
-                NfcAbility abilities[NFC_MAX_ABILITIES];
-                for (int a = 0; a < NFC_MAX_ABILITIES; a++) {
-                    abilities[a].abilityId = -1;
-                    abilities[a].level = 0;
-                }
-                int off = 2 + uidLen;
-                for (int a = 0; a < abCount && off + 1 < msg.size; a++) {
-                    abilities[a].abilityId = (int8_t)msg.payload[off++];
-                    abilities[a].level = msg.payload[off++];
-                }
-
-                int result = NfcStoreUpdateAbilities(&nfcStore, uidHex, abilities, abCount);
-                if (result == 0) {
-                    NfcStoreSave(&nfcStore, NFC_TAGS_FILE);
-                    printf("[Server] NFC ability update %s -> %d abilities\n", uidHex, abCount);
-                } else {
-                    printf("[Server] NFC ability update %s -> tag not found\n", uidHex);
-                }
-            }
-        }
-        close(clientfd);
-        return;
-    }
-
-    if (msg.type == MSG_NFC_SET_NAME) {
-        if (msg.size >= 2) {
-            uint8_t uidLen = msg.payload[0];
-            if (uidLen >= 4 && uidLen <= NFC_UID_MAX_LEN && msg.size >= 1 + uidLen + 1) {
-                char uidHex[NFC_UID_HEX_MAX] = {0};
-                for (int i = 0; i < uidLen; i++)
-                    sprintf(uidHex + i * 2, "%02X", msg.payload[1 + i]);
-
-                uint8_t nameLen = msg.payload[1 + uidLen];
-                if (nameLen > NFC_NAME_MAX - 1) nameLen = NFC_NAME_MAX - 1;
-
-                NfcTagEntry *entry = NfcStoreLookup(&nfcStore, uidHex);
-                if (entry) {
-                    memcpy(entry->name, msg.payload + 2 + uidLen, nameLen);
-                    entry->name[nameLen] = '\0';
-                    NfcStoreSave(&nfcStore, NFC_TAGS_FILE);
-                    printf("[Server] NFC set name %s -> \"%s\"\n", uidHex, entry->name);
-                } else {
-                    printf("[Server] NFC set name %s -> tag not found\n", uidHex);
-                }
-            }
-        }
-        close(clientfd);
-        return;
-    }
-
-    if (msg.type == MSG_NFC_ABILITY_RESET) {
-        if (msg.size >= 1) {
-            uint8_t uidLen = msg.payload[0];
-            if (uidLen >= 4 && uidLen <= NFC_UID_MAX_LEN && msg.size >= 1 + uidLen) {
-                char uidHex[NFC_UID_HEX_MAX] = {0};
-                for (int i = 0; i < uidLen; i++)
-                    sprintf(uidHex + i * 2, "%02X", msg.payload[1 + i]);
-
-                int result = NfcStoreResetAbilities(&nfcStore, uidHex);
-                if (result == 0) {
-                    NfcStoreSave(&nfcStore, NFC_TAGS_FILE);
-                    printf("[Server] NFC ability reset %s -> ok\n", uidHex);
-                } else {
-                    printf("[Server] NFC ability reset %s -> tag not found\n", uidHex);
-                }
-            }
-        }
-        close(clientfd);
-        return;
-    }
-
     if (msg.type != MSG_JOIN) {
         printf("[Server] Client fd=%d sent unexpected msg type 0x%02X, closing\n", clientfd, msg.type);
         close(clientfd);
@@ -388,10 +202,6 @@ int main(int argc, char *argv[])
     LoadLeaderboard(&globalLeaderboard, GLOBAL_LEADERBOARD_FILE);
     printf("Loaded %d leaderboard entries from %s\n", globalLeaderboard.entryCount, GLOBAL_LEADERBOARD_FILE);
 
-    // Load NFC tag store
-    NfcStoreLoad(&nfcStore, NFC_TAGS_FILE);
-    printf("Loaded %d NFC tags from %s\n", nfcStore.tagCount, NFC_TAGS_FILE);
-
     // Create listening socket
     int listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0) { perror("socket"); return 1; }
@@ -450,9 +260,6 @@ int main(int argc, char *argv[])
     printf("\n[Server] Shutting down...\n");
     SaveLeaderboard(&globalLeaderboard, GLOBAL_LEADERBOARD_FILE);
     printf("[Server] Saved %d leaderboard entries\n", globalLeaderboard.entryCount);
-    NfcStoreSave(&nfcStore, NFC_TAGS_FILE);
-    printf("[Server] Saved %d NFC tags\n", nfcStore.tagCount);
-
     // Close all sessions
     for (int i = 0; i < sessionCount; i++) {
         for (int p = 0; p < 2; p++) {

@@ -251,7 +251,7 @@ void net_set_nonblocking(int sockfd)
 }
 
 //------------------------------------------------------------------------------------
-// Short-lived blocking TCP connect (leaderboard, NFC, etc.)
+// Short-lived blocking TCP connect (leaderboard, etc.)
 //------------------------------------------------------------------------------------
 int net_shortlived_connect(const char *host, int port)
 {
