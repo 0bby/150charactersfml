@@ -17,7 +17,9 @@
       "WebFetch(domain:gamedev.stackexchange.com)",
       "WebFetch(domain:medium.com)",
       "Bash(wc:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(export:*)",
+      "Bash(ls:*)"
     ]
   }
 }

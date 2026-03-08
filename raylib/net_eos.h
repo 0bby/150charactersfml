@@ -56,6 +56,7 @@ typedef struct {
     // Combat units
     NetUnit combatNetUnits[NET_MAX_UNITS];
     int combatNetUnitCount;
+    uint32_t combatSeed;
 
     // Combat sync snapshots
     bool combatSyncReady;

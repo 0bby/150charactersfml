@@ -36,6 +36,7 @@ typedef enum { TEAM_BLUE = 0, TEAM_RED = 1 } Team;
 typedef enum {
     PHASE_PLAZA,      // 3D plaza with roaming enemies, interactive objects
     PHASE_LOBBY,      // waiting in multiplayer lobby
+    PHASE_MAP,        // Slay the Spire-style branching map
     PHASE_PREP,       // place / arrange units
     PHASE_COMBAT,     // units fight automatically
     PHASE_ROUND_OVER, // brief pause showing round result
@@ -86,6 +87,7 @@ typedef struct {
     Team sourceTeam;
     float speed;
     float damage;
+    float baseDmg;
     float damageIncrease;
     float stunDuration;
     int bouncesRemaining;
@@ -191,6 +193,7 @@ typedef struct {
     float facingAngle;     // degrees around Y axis (for smooth turning)
     AnimState currentAnim;
     int animFrame;
+    float animTimer;  // accumulates dt for frame-rate independent animation
     AbilitySlot abilities[MAX_ABILITIES_PER_UNIT];
     int nextAbilitySlot;   // index into ACTIVATION_ORDER for clockwise cycling
     float gazeAccum;       // Stone Gaze: time spent facing a stone-gazer
@@ -212,6 +215,7 @@ typedef struct {
     bool  hasSpawnedMushling;
     bool  isMushling;          // spawned mushling (no further spawns)
     uint8_t rarity;        // 0=common, 1=rare, 2=legendary
+    int itemId;            // equipped item (-1 = ITEM_NONE)
 } Unit;
 
 //------------------------------------------------------------------------------------
@@ -226,6 +230,7 @@ typedef struct {
     float hpMultiplier;
     float dmgMultiplier;
     float speedMultiplier;
+    int itemId;
 } UnitSnapshot;
 
 //------------------------------------------------------------------------------------
@@ -270,6 +275,7 @@ typedef struct {
     int     typeIndex;    // which unit type (0=Mushroom, 1=Goblin)
     int     unitIndex;    // index in units[] array
     int     animFrame;    // dedicated anim counter for intro model
+    float   introAnimTimer; // accumulates dt for frame-rate independent animation
     uint8_t rarity;       // 0=common, 1=rare, 2=legendary (for star display)
 } UnitIntro;
 

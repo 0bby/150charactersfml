@@ -53,6 +53,7 @@ typedef enum {
     MOD_CHARGING,        // value = charge speed
     MOD_MULTICAST,       // value = 2x proc chance (0-1)
     MOD_SHARE_PAIN,      // value = share percentage (0-1)
+    MOD_COOLDOWN_REDUCTION, // value = fraction of CD reduced (0.2 = 20% faster)
 } ModifierType;
 
 // Returns true for modifier types that stack (SUM) instead of dedup (MAX)
@@ -135,6 +136,7 @@ typedef enum {
 #define AV_HK_DMG_PER_DIST 0  // damage per unit of distance
 #define AV_HK_SPEED        1
 #define AV_HK_RANGE        2
+#define AV_HK_BASE_DMG     3  // flat base damage (ensures non-zero at close range)
 // -- Primal Charge
 #define AV_PC_DAMAGE       0
 #define AV_PC_KNOCKBACK    1  // push distance
@@ -335,7 +337,7 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         },
     },
     [ABILITY_SUNDER] = {
-        .name = "Sunder", .description = "Swap HP with enemy at low HP",
+        .name = "Sunder", .description = "Swap HP with highest-HP enemy (only if they have more)",
         .abbrev = "SU", .color = { 180, 40, 80, 255 },
         .targetType = TARGET_NONE, .isPassive = true, .goldCost = 3,
         .range    = { 0 },
@@ -449,22 +451,22 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         },
     },
     [ABILITY_HOOK] = {
-        .name = "Dendi Hook", .description = "Hook furthest enemy, dmg by distance",
+        .name = "Dendi Hook", .description = "Hook furthest enemy, base dmg + bonus by distance",
         .abbrev = "HK", .color = { 200, 60, 60, 255 },
         .targetType = TARGET_NONE, .isPassive = false, .goldCost = 4,
         .range    = { 0 },
         .cooldown = { 14.0f, 13.5f, 13.0f, 12.5f, 12.0f, 11.0f, 10.5f, 10.0f, 9.5f, 9.0f },
         .values = {
-            { [AV_HK_DMG_PER_DIST]=0.08f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=65.0f },
-            { [AV_HK_DMG_PER_DIST]=0.10f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=70.0f },
-            { [AV_HK_DMG_PER_DIST]=0.12f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=75.0f },
-            { [AV_HK_DMG_PER_DIST]=0.16f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=80.0f },
-            { [AV_HK_DMG_PER_DIST]=0.20f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=88.0f },
-            { [AV_HK_DMG_PER_DIST]=0.24f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=95.0f },
-            { [AV_HK_DMG_PER_DIST]=0.28f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=102.0f },
-            { [AV_HK_DMG_PER_DIST]=0.34f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=112.0f },
-            { [AV_HK_DMG_PER_DIST]=0.40f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=122.0f },
-            { [AV_HK_DMG_PER_DIST]=0.50f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=135.0f },
+            { [AV_HK_DMG_PER_DIST]=0.08f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=65.0f,  [AV_HK_BASE_DMG]=5.0f },
+            { [AV_HK_DMG_PER_DIST]=0.10f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=70.0f,  [AV_HK_BASE_DMG]=6.0f },
+            { [AV_HK_DMG_PER_DIST]=0.12f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=75.0f,  [AV_HK_BASE_DMG]=7.0f },
+            { [AV_HK_DMG_PER_DIST]=0.16f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=80.0f,  [AV_HK_BASE_DMG]=9.0f },
+            { [AV_HK_DMG_PER_DIST]=0.20f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=88.0f,  [AV_HK_BASE_DMG]=11.0f },
+            { [AV_HK_DMG_PER_DIST]=0.24f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=95.0f,  [AV_HK_BASE_DMG]=13.0f },
+            { [AV_HK_DMG_PER_DIST]=0.28f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=102.0f, [AV_HK_BASE_DMG]=16.0f },
+            { [AV_HK_DMG_PER_DIST]=0.34f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=112.0f, [AV_HK_BASE_DMG]=19.0f },
+            { [AV_HK_DMG_PER_DIST]=0.40f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=122.0f, [AV_HK_BASE_DMG]=22.0f },
+            { [AV_HK_DMG_PER_DIST]=0.50f, [AV_HK_SPEED]=65.0f, [AV_HK_RANGE]=135.0f, [AV_HK_BASE_DMG]=25.0f },
         },
     },
     [ABILITY_PRIMAL_CHARGE] = {

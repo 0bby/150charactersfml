@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 #include "../raylib/game.h"
 #include "../raylib/net_protocol.h"
 #include "../raylib/net_common.h"
@@ -54,6 +55,7 @@ typedef struct {
     // Combat sync
     int combatTickCount;    // tick counter within current combat round
     int combatBlueCount;    // number of blue (player 0) units at combat start
+    uint32_t combatSeed;    // shared RNG seed for deterministic combat
 
     // Prep timer
     float prepTimer;

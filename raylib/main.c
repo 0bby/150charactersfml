@@ -38,7 +38,9 @@ static bool  cgDebugOverlay  = false;
 #include "game.h"
 #include "synergies.h"
 #include "helpers.h"
+#include "items.h"
 #include "combat_sim.h"
+#include "map.h"
 
 // Must match server's COMBAT_DT exactly (game_session.h)
 #define COMBAT_DT (1.0f / 60.0f)
@@ -353,8 +355,15 @@ int main(int argc, char *argv[])
 
     // Portrait render textures for HUD (one per max blue unit)
     RenderTexture2D portraits[BLUE_TEAM_MAX_SIZE];
-    for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++)
+    bool portraitDirty[BLUE_TEAM_MAX_SIZE];
+    int portraitTypeCache[BLUE_TEAM_MAX_SIZE];   // cached typeIndex per slot
+    uint8_t portraitRarityCache[BLUE_TEAM_MAX_SIZE]; // cached rarity per slot
+    for (int i = 0; i < BLUE_TEAM_MAX_SIZE; i++) {
         portraits[i] = LoadRenderTexture(HUD_PORTRAIT_SIZE_BASE, HUD_PORTRAIT_SIZE_BASE);
+        portraitDirty[i] = true;
+        portraitTypeCache[i] = -1;
+        portraitRarityCache[i] = 255;
+    }
 
     // Intro screen render texture (larger for cinematic model display)
     RenderTexture2D introModelRT = LoadRenderTexture(512, 512);
@@ -632,6 +641,21 @@ int main(int argc, char *argv[])
     InventorySlot inventory[MAX_INVENTORY_SLOTS];
     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
     DragState dragState = { 0 };
+    // Item inventory (unequipped items the player owns)
+    int itemInventory[MAX_ITEMS];
+    int itemInventoryCount = 0;
+    for (int i = 0; i < MAX_ITEMS; i++) itemInventory[i] = ITEM_NONE;
+    // Item drag state
+    typedef struct {
+        bool dragging;
+        int sourceType;  // 0=inventory, 1=unit slot
+        int sourceIndex;
+        int itemId;
+    } ItemDragState;
+    ItemDragState itemDrag = {0};
+    // Item shop state (for NODE_SHOP overlay)
+    int itemShopOffers[3] = { ITEM_NONE, ITEM_NONE, ITEM_NONE };
+    bool itemShopGenerated = false;
     int removeConfirmUnit = -1;  // unit index awaiting removal confirmation (-1 = none)
     ScreenShake shake = {0};
     FloatingText floatingTexts[MAX_FLOATING_TEXTS] = {0};
@@ -641,6 +665,10 @@ int main(int argc, char *argv[])
     int hoverAbilityId = -1;
     int hoverAbilityLevel = 0;
     int hoverAbilityUnitIndex = -1;
+    int shopHoverAbilityId = -1;
+    float shopHighlightTimer = 0.0f;
+    int shopHighlightAbilityId = -1;
+    float dragOffsetX = 0, dragOffsetZ = 0;
     float hoverTimer = 0.0f;
     const float tooltipDelay = 0.5f;
     bool usedShopHotkey = false;  // hides hotkey hint after first use
@@ -1088,6 +1116,15 @@ int main(int argc, char *argv[])
     int debugSpawnRarity = RARITY_COMMON;
     int shadowDebugMode = 0;
 
+    // Frame-time profiler (debug mode overlay)
+    double profLogicTime = 0.0;   // game logic + combat tick
+    double profRenderTime = 0.0;  // 3D scene + 2D overlay
+    double profTotalTime = 0.0;   // full frame
+    // Smoothed values for display (EMA)
+    double profLogicSmooth = 0.0;
+    double profRenderSmooth = 0.0;
+    double profTotalSmooth = 0.0;
+
     // Leaderboard & prestige state
     Leaderboard leaderboard = {0};
     LoadLeaderboard(&leaderboard, LEADERBOARD_FILE);
@@ -1096,6 +1133,14 @@ int main(int argc, char *argv[])
     int lastMilestoneRound = 0;
     bool blueLostLastRound = false;
     bool deathPenalty = false;
+
+    // Map state (Slay the Spire branching map)
+    ActMap actMap = {0};
+    bool mapActive = false;           // true when using map system (singleplayer)
+    int mapSelectedNodeType = -1;     // last selected node type
+    MapEventType currentMapEvent = EVENT_FOUNTAIN;
+    bool showingMapEvent = false;     // true when displaying event choices
+    int mapEventChoice = -1;          // player's event choice (-1 = none yet)
     char playerName[32] = "Player";
     int playerNameLen = 6;
     bool nameInputActive = false;
@@ -1130,8 +1175,6 @@ int main(int argc, char *argv[])
     // Spawn initial plaza lobby pool (hero selection)
     PlazaSpawnLobbyPool(units, &unitCount, plazaData, &lobbySelection);
 
-    SetTargetFPS(60);
-
     // Load persisted settings
     LoadSettings(&musicVolume, &sfxVolume, &isFullscreen, playerName, &playerNameLen);
     SetMusicVolume(bgm, musicVolume);
@@ -1146,6 +1189,7 @@ int main(int argc, char *argv[])
     //==================================================================================
     while (!WindowShouldClose())
     {
+        double profFrameStart = GetTime();
         float dt = GetFrameTime();
         float rawDt = dt; // unscaled dt for UI timers
         uiScale = (float)GetScreenHeight() / 720.0f;
@@ -1289,7 +1333,15 @@ int main(int argc, char *argv[])
             UnitType *itype = &unitTypes[intro.typeIndex];
             if (itype->hasAnimations && itype->animIndex[ANIM_IDLE] >= 0) {
                 int fc = itype->idleAnims[itype->animIndex[ANIM_IDLE]].frameCount;
-                if (fc > 0) intro.animFrame = (intro.animFrame + 1) % fc;
+                if (fc > 0) {
+                    float animFps = 30.0f;
+                    intro.introAnimTimer += dt;
+                    float frameDur = 1.0f / animFps;
+                    while (intro.introAnimTimer >= frameDur) {
+                        intro.introAnimTimer -= frameDur;
+                        intro.animFrame = (intro.animFrame + 1) % fc;
+                    }
+                }
             }
             if (intro.timer >= INTRO_DURATION) {
                 intro.active = false;
@@ -1380,8 +1432,15 @@ int main(int argc, char *argv[])
         hoverAbilityId = -1;
         hoverAbilityLevel = 0;
         hoverAbilityUnitIndex = -1;
+        shopHoverAbilityId = -1;
         int prevHoverSynergyIdx = hoverSynergyIdx;
         hoverSynergyIdx = -1;
+
+        // Tick shop highlight linger timer
+        if (shopHighlightTimer > 0) {
+            shopHighlightTimer -= dt;
+            if (shopHighlightTimer <= 0) shopHighlightAbilityId = -1;
+        }
 
         // Lerp camera toward phase preset (skip when debug override active)
         if (!camOverride) {
@@ -1433,7 +1492,7 @@ int main(int argc, char *argv[])
             } else if (plazaState == PLAZA_FLEEING) {
                 bool allGone = PlazaUpdateFlee(units, unitCount, plazaData, particles, dt);
                 if (allGone) {
-                    // All enemies fled — initialize game state and transition to prep
+                    // All enemies fled — initialize game state and transition to map
                     ClearRedUnits(units, &unitCount);
                     snapshotCount = 0;
                     currentRound = 0;
@@ -1450,12 +1509,21 @@ int main(int argc, char *argv[])
                     statueSpawn.phase = SSPAWN_INACTIVE;
                     playerGold = 20;
                     for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) inventory[i].abilityId = -1;
+                    for (int i = 0; i < MAX_ITEMS; i++) itemInventory[i] = ITEM_NONE;
+                    itemInventoryCount = 0;
+                    itemShopGenerated = false;
+                    itemDrag.dragging = false;
                     RollShop(shopSlots, &playerGold, 0, currentRound);
                     rollCost = rollCostBase;
                     dragState.dragging = false;
-                    SpawnWave(units, &unitCount, 0, unitTypeCount);
                     waveUpgradeText[0] = '\0';
-                    phase = PHASE_PREP;
+                    // Generate Act 1 map and enter map phase
+                    GenerateMap(&actMap, 1, (uint32_t)GetRandomValue(1, 999999));
+                    ResetMapScroll();
+                    mapActive = true;
+                    showingMapEvent = false;
+                    mapEventChoice = -1;
+                    phase = PHASE_MAP;
                 }
             }
 
@@ -2082,6 +2150,213 @@ int main(int argc, char *argv[])
             }
         }
         //------------------------------------------------------------------------------
+        // PHASE: MAP — Slay the Spire branching map (singleplayer)
+        //------------------------------------------------------------------------------
+        else if (phase == PHASE_MAP)
+        {
+            if (IsKeyPressed(KEY_ESCAPE)) { if (showHelp) showHelp = false; else showEscMenu = !showEscMenu; }
+
+            if (showingMapEvent && !showEscMenu && !showHelp) {
+                // Event screen: handle choice buttons
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    Vector2 emouse = GetMousePosition();
+                    int esw = GetScreenWidth(), esh = GetScreenHeight();
+                    int btnW = 200, btnH = 50, btnGap = 20;
+                    int btnY = esh / 2 + 40;
+                    // Choice A
+                    Rectangle choiceA = { (float)(esw/2 - btnW - btnGap/2), (float)btnY, (float)btnW, (float)btnH };
+                    // Choice B
+                    Rectangle choiceB = { (float)(esw/2 + btnGap/2), (float)btnY, (float)btnW, (float)btnH };
+                    if (CheckCollisionPointRec(emouse, choiceA)) mapEventChoice = 0;
+                    else if (CheckCollisionPointRec(emouse, choiceB)) mapEventChoice = 1;
+
+                    if (mapEventChoice >= 0) {
+                        // Apply event effect
+                        switch (currentMapEvent) {
+                            case EVENT_FOUNTAIN:
+                                if (mapEventChoice == 0) {
+                                    // Heal all to full
+                                    for (int i = 0; i < unitCount; i++) {
+                                        if (units[i].active && units[i].team == TEAM_BLUE) {
+                                            float maxHP = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+                                            units[i].currentHealth = maxHP;
+                                        }
+                                    }
+                                } else {
+                                    playerGold += 10;
+                                }
+                                break;
+                            case EVENT_MERCHANT:
+                                if (mapEventChoice == 0 && playerGold >= 5) {
+                                    playerGold -= 5;
+                                    // Give random ability to a random blue unit
+                                    for (int i = 0; i < unitCount; i++) {
+                                        if (!units[i].active || units[i].team != TEAM_BLUE) continue;
+                                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                            if (units[i].abilities[a].abilityId == -1) {
+                                                units[i].abilities[a].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
+                                                units[i].abilities[a].level = 0;
+                                                goto merchant_done;
+                                            }
+                                        }
+                                    }
+                                    merchant_done: (void)0;
+                                }
+                                break;
+                            case EVENT_TRAINING:
+                                for (int i = 0; i < unitCount; i++) {
+                                    if (!units[i].active || units[i].team != TEAM_BLUE) continue;
+                                    if (mapEventChoice == 0) {
+                                        units[i].hpMultiplier *= 1.1f;
+                                        float maxHP = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+                                        units[i].currentHealth = maxHP;
+                                    } else {
+                                        units[i].dmgMultiplier *= 1.1f;
+                                    }
+                                    break; // only one random unit
+                                }
+                                break;
+                            case EVENT_ALTAR:
+                                if (mapEventChoice == 0) {
+                                    for (int i = 0; i < unitCount; i++) {
+                                        if (units[i].active && units[i].team == TEAM_BLUE)
+                                            units[i].currentHealth *= 0.8f;
+                                    }
+                                    playerGold += 15;
+                                }
+                                break;
+                            case EVENT_TOME:
+                                if (mapEventChoice == 0) {
+                                    for (int i = 0; i < unitCount; i++) {
+                                        if (!units[i].active || units[i].team != TEAM_BLUE) continue;
+                                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                                            if (units[i].abilities[a].abilityId == -1) {
+                                                units[i].abilities[a].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
+                                                units[i].abilities[a].level = 0;
+                                                goto tome_done;
+                                            }
+                                        }
+                                    }
+                                    tome_done: (void)0;
+                                }
+                                break;
+                            default: break;
+                        }
+                        // Save snapshot and return to map
+                        SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
+                        showingMapEvent = false;
+                        mapEventChoice = -1;
+                    }
+                }
+            } else if (!showEscMenu && !showHelp) {
+                int selected = UpdateMap(&actMap);
+                if (selected >= 0) {
+                    mapSelectedNodeType = selected;
+                    // Compute wave round based on act and floor
+                    int mapRound = (actMap.act - 1) * MAP_LAYERS + actMap.currentLayer;
+                    currentRound = mapRound;
+
+                    switch (selected) {
+                        case NODE_COMBAT: {
+                            // Spawn normal wave and go to prep
+                            SpawnWave(units, &unitCount, mapRound, unitTypeCount);
+                            // Apply act scaling
+                            for (int i = 0; i < unitCount; i++) {
+                                if (units[i].active && units[i].team == TEAM_RED) {
+                                    float actHpMult = 1.0f + 0.3f * (actMap.act - 1);
+                                    float actDmgMult = 1.0f + 0.15f * (actMap.act - 1);
+                                    units[i].hpMultiplier *= actHpMult;
+                                    units[i].dmgMultiplier *= actDmgMult;
+                                    units[i].currentHealth = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+                                }
+                            }
+                            waveUpgradeText[0] = '\0';
+                            RollShop(shopSlots, &playerGold, 0, currentRound);
+                            rollCost = rollCostBase;
+                            phase = PHASE_PREP;
+                        } break;
+                        case NODE_ELITE: {
+                            // Spawn harder wave (1.5x stats, extra ability)
+                            SpawnWave(units, &unitCount, mapRound, unitTypeCount);
+                            for (int i = 0; i < unitCount; i++) {
+                                if (units[i].active && units[i].team == TEAM_RED) {
+                                    float actHpMult = 1.0f + 0.3f * (actMap.act - 1);
+                                    float actDmgMult = 1.0f + 0.15f * (actMap.act - 1);
+                                    units[i].hpMultiplier *= actHpMult * 1.5f;
+                                    units[i].dmgMultiplier *= actDmgMult * 1.5f;
+                                    units[i].currentHealth = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+                                }
+                            }
+                            snprintf(waveUpgradeText, sizeof(waveUpgradeText), "ELITE FIGHT!");
+                            RollShop(shopSlots, &playerGold, 0, currentRound);
+                            rollCost = rollCostBase;
+                            phase = PHASE_PREP;
+                        } break;
+                        case NODE_BOSS: {
+                            // Boss wave — use milestone boss logic
+                            SpawnWave(units, &unitCount, mapRound, unitTypeCount);
+                            for (int i = 0; i < unitCount; i++) {
+                                if (units[i].active && units[i].team == TEAM_RED) {
+                                    float actHpMult = 1.0f + 0.3f * (actMap.act - 1);
+                                    float actDmgMult = 1.0f + 0.15f * (actMap.act - 1);
+                                    units[i].hpMultiplier *= actHpMult;
+                                    units[i].dmgMultiplier *= actDmgMult;
+                                    units[i].currentHealth = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+                                }
+                            }
+                            snprintf(waveUpgradeText, sizeof(waveUpgradeText), "ACT %d BOSS!", actMap.act);
+                            RollShop(shopSlots, &playerGold, 0, currentRound);
+                            rollCost = rollCostBase;
+                            phase = PHASE_PREP;
+                        } break;
+                        case NODE_SHOP: {
+                            // Shop: go to prep with no enemies + item shop
+                            RollShop(shopSlots, &playerGold, 0, currentRound);
+                            rollCost = rollCostBase;
+                            waveUpgradeText[0] = '\0';
+                            // Generate 3 random item offers
+                            {
+                                uint32_t iseed = actMap.seed + (uint32_t)actMap.currentNode * 97;
+                                for (int io = 0; io < 3; io++) {
+                                    iseed ^= iseed << 13; iseed ^= iseed >> 17; iseed ^= iseed << 5;
+                                    int attempts = 0;
+                                    int pick;
+                                    do {
+                                        pick = (int)(iseed % (uint32_t)ITEM_COUNT);
+                                        iseed ^= iseed << 13; iseed ^= iseed >> 17; iseed ^= iseed << 5;
+                                        attempts++;
+                                    } while ((!ITEM_DEFS[pick].enabled || pick == itemShopOffers[0] || pick == itemShopOffers[1]) && attempts < 20);
+                                    itemShopOffers[io] = pick;
+                                }
+                                itemShopGenerated = true;
+                            }
+                            phase = PHASE_PREP;
+                        } break;
+                        case NODE_REST: {
+                            // Heal all units by 30% max HP
+                            for (int i = 0; i < unitCount; i++) {
+                                if (units[i].active && units[i].team == TEAM_BLUE) {
+                                    float maxHP = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+                                    units[i].currentHealth += maxHP * 0.3f;
+                                    if (units[i].currentHealth > maxHP)
+                                        units[i].currentHealth = maxHP;
+                                }
+                            }
+                            SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
+                            // Stay on map (node already visited)
+                        } break;
+                        case NODE_EVENT: {
+                            // Show event screen
+                            currentMapEvent = GetRandomEvent((uint32_t)(actMap.seed + actMap.currentNode * 31));
+                            showingMapEvent = true;
+                            mapEventChoice = -1;
+                        } break;
+                        default: break;
+                    }
+                }
+            }
+        }
+        //------------------------------------------------------------------------------
         // PHASE: PREP — place units, click Play to start
         //------------------------------------------------------------------------------
         else if (phase == PHASE_PREP)
@@ -2140,6 +2415,16 @@ int main(int argc, char *argv[])
 #endif
                     // Server already applied rarity buffs + synergies;
                     // multipliers are included in the serialized NetUnit data.
+                    // Seed combat RNG with server's shared seed
+                    {
+                        uint32_t seed;
+#ifdef USE_EOS
+                        seed = useEos ? eosClient.combatSeed : netClient.combatSeed;
+#else
+                        seed = netClient.combatSeed;
+#endif
+                        combat_rng_seed(seed);
+                    }
                     SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
                     phase = PHASE_COMBAT;
                     fightBannerTimer = 0.0f;
@@ -2192,8 +2477,8 @@ int main(int argc, char *argv[])
                 }
                 if (groundHit.hit)
                 {
-                    units[i].position.x = groundHit.point.x;
-                    units[i].position.z = groundHit.point.z;
+                    units[i].position.x = groundHit.point.x + dragOffsetX;
+                    units[i].position.z = groundHit.point.z + dragOffsetZ;
                     // Clamp blue units to their half (positive Z = blue side)
                     if (units[i].team == TEAM_BLUE) {
                         if (units[i].position.z < ARENA_BOUNDARY_Z)
@@ -2206,7 +2491,7 @@ int main(int argc, char *argv[])
                     if (units[i].position.z < -gridLimit) units[i].position.z = -gridLimit;
                     if (units[i].position.z >  gridLimit) units[i].position.z =  gridLimit;
                 }
-                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) { PlaySound(sfxUiDrop); units[i].dragging = false; }
+                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) { PlaySound(sfxUiDrop); units[i].dragging = false; dragOffsetX = 0; dragOffsetZ = 0; }
             }
 
             // Quick-buy: keys 1, 2, 3 for shop slots
@@ -2215,6 +2500,8 @@ int main(int argc, char *argv[])
                 for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
                     if (IsKeyPressed(quickBuyKeys[s]) && shopSlots[s].abilityId >= 0) {
                         usedShopHotkey = true;
+                        shopHighlightAbilityId = shopSlots[s].abilityId;
+                        shopHighlightTimer = 0.5f;
                         if (isMultiplayer) {
 #ifdef USE_EOS
                             if (useEos) eos_client_send_buy(&eosClient, s); else
@@ -2364,6 +2651,13 @@ int main(int argc, char *argv[])
                                 clickedButton = true;
                             }
                         }
+                    } else if (mapActive && mapSelectedNodeType == NODE_SHOP) {
+                        // Shop node: "DONE" returns to map
+                        SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
+                        ClearRedUnits(units, &unitCount);
+                        itemShopGenerated = false;
+                        phase = PHASE_MAP;
+                        clickedButton = true;
                     } else {
                         // Solo: check both teams have units, start combat
                         int ba, ra;
@@ -2373,12 +2667,18 @@ int main(int argc, char *argv[])
                             CompactBlueUnits(units, &unitCount);
                             SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
                             ApplySynergies(units, unitCount);
+                            combat_rng_seed((uint32_t)(GetTime() * 1000.0) ^ (uint32_t)currentRound);
                             phase = PHASE_COMBAT;
                             fightBannerTimer = 0.0f;
                             killCount = 0; multiKillCount = 0; multiKillTimer = 0.0f; killFeedTimer = -1.0f;
                             slowmoTimer = 0.0f; slowmoScale = 1.0f;
                             BattleLogClear(&battleLog); combatElapsedTime = 0.0f; combatAccum = 0.0f;
                             ClearAllModifiers(modifiers);
+                            // Apply item effects for blue units
+                            for (int ji = 0; ji < unitCount; ji++) {
+                                if (units[ji].active && units[ji].team == TEAM_BLUE)
+                                    ApplyItemEffects(&units[ji], ji, modifiers);
+                            }
                             ClearAllProjectiles(projectiles);
                             ClearAllParticles(particles);
                             ClearAllFloatingTexts(floatingTexts);
@@ -2529,6 +2829,8 @@ int main(int argc, char *argv[])
                         Rectangle r = { (float)scx, (float)(shopY + 8), (float)shopCardW, (float)shopCardH };
                         if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
                             PlaySound(sfxUiBuy);
+                            shopHighlightAbilityId = shopSlots[s].abilityId;
+                            shopHighlightTimer = 0.5f;
                             if (isMultiplayer) {
 #ifdef USE_EOS
                                 if (useEos) eos_client_send_buy(&eosClient, s); else
@@ -2688,6 +2990,7 @@ int main(int argc, char *argv[])
                     for (int i = unitCount - 1; i >= 0; i--)
                     {
                         if (!units[i].active) continue;
+                        if (units[i].team != TEAM_BLUE) continue;
                         BoundingBox sb = GetUnitBounds(&units[i], &unitTypes[units[i].typeIndex]);
                         if (GetRayCollisionBox(GetScreenToWorldRay(mouse, camera), sb).hit)
                         {
@@ -2696,6 +2999,19 @@ int main(int argc, char *argv[])
                             units[i].dragging = true;
                             hasDraggedUnit = true;
                             hitAny = true;
+                            // Store cursor-to-unit offset so drag doesn't snap
+                            {
+                                Ray oRay = GetScreenToWorldRay(mouse, camera);
+                                RayCollision oHit = GetRayCollisionQuad(oRay,
+                                    (Vector3){-500,0,-500}, (Vector3){-500,0,500},
+                                    (Vector3){ 500,0, 500}, (Vector3){ 500,0,-500});
+                                if (oHit.hit) {
+                                    dragOffsetX = units[i].position.x - oHit.point.x;
+                                    dragOffsetZ = units[i].position.z - oHit.point.z;
+                                } else {
+                                    dragOffsetX = 0; dragOffsetZ = 0;
+                                }
+                            }
                             for (int j = 0; j < unitCount; j++) if (j != i) units[j].selected = false;
                             break;
                         }
@@ -2986,44 +3302,15 @@ int main(int argc, char *argv[])
                 // Death spiral prevention: if >1s behind, reset to 1 tick
                 if (combatAccum > 1.0f) combatAccum = COMBAT_DT;
 
-                // Apply server sync correction BEFORE ticking
+                // Desync detection only — don't apply corrections, trust local simulation
                 if (NC_FLAG(combatSyncReady)) {
                     NC_CLEAR(combatSyncReady);
-                    int syncCount;
-                    SyncUnit *syncUnits;
                     uint32_t serverHash;
 #ifdef USE_EOS
-                    if (useEos) {
-                        syncCount = eosClient.combatSyncCount;
-                        syncUnits = eosClient.combatSyncUnits;
-                        serverHash = eosClient.combatSyncHash;
-                    } else
+                    serverHash = useEos ? eosClient.combatSyncHash : netClient.combatSyncHash;
+#else
+                    serverHash = netClient.combatSyncHash;
 #endif
-                    {
-                        syncCount = netClient.combatSyncCount;
-                        syncUnits = netClient.combatSyncUnits;
-                        serverHash = netClient.combatSyncHash;
-                    }
-                    for (int i = 0; i < syncCount && i < unitCount; i++) {
-                        float dx = syncUnits[i].posX - units[i].position.x;
-                        float dz = syncUnits[i].posZ - units[i].position.z;
-                        float dist = sqrtf(dx*dx + dz*dz);
-                        if (dist > 2.0f) {
-                            // Large difference: teleport
-                            units[i].position.x = syncUnits[i].posX;
-                            units[i].position.z = syncUnits[i].posZ;
-                        } else if (dist > 0.01f) {
-                            // Small difference: lerp toward sync position
-                            units[i].position.x += dx * 0.5f;
-                            units[i].position.z += dz * 0.5f;
-                        }
-                        // HP/shield/active always hard-set
-                        units[i].currentHealth = syncUnits[i].currentHealth;
-                        units[i].shieldHP = syncUnits[i].shieldHP;
-                        units[i].active = syncUnits[i].active;
-                    }
-
-                    // Desync detection: compute local state hash and compare
                     if (serverHash != 0) {
                         uint32_t localHash = 0;
                         for (int i = 0; i < unitCount; i++) {
@@ -3210,9 +3497,185 @@ int main(int argc, char *argv[])
                 UpdateFloatingTexts(floatingTexts, dt);
                 goto combat_skip;
             }
-            combatElapsedTime += dt;
+            // === SINGLEPLAYER: deterministic CombatTick with visual feedback ===
+            {
+                float realDt = dt;
+                combatAccum += realDt;
 
-            // === STEP 1: Tick modifiers ===
+                // Sub-tick: visual-only updates
+                if (combatAccum < COMBAT_DT) {
+                    UpdateParticles(particles, realDt);
+                    UpdateFloatingTexts(floatingTexts, realDt);
+                    combatElapsedTime += realDt;
+                    goto combat_skip;
+                }
+
+                // Death spiral prevention
+                if (combatAccum > 1.0f) combatAccum = COMBAT_DT;
+
+                // Count ticks to catch up (cap at 4)
+                int ticksToRun = 0;
+                float tempAccum = combatAccum;
+                while (tempAccum >= COMBAT_DT) { tempAccum -= COMBAT_DT; ticksToRun++; }
+                if (ticksToRun > 4) ticksToRun = 4;
+
+                // Full struct snapshots BEFORE all ticks (for visual effect diffing)
+                Unit unitsBefore[MAX_UNITS];
+                Projectile projBefore[MAX_PROJECTILES];
+                memcpy(unitsBefore, units, sizeof(Unit) * unitCount);
+                memcpy(projBefore, projectiles, sizeof(Projectile) * MAX_PROJECTILES);
+
+                // Run all catch-up ticks — only the LAST tick emits CombatEvents
+                CombatEvent combatEvents[MAX_COMBAT_EVENTS];
+                int combatEventCount = 0;
+                for (int tick = 0; tick < ticksToRun; tick++) {
+                    combatAccum -= COMBAT_DT;
+                    if (tick == ticksToRun - 1) {
+                        CombatTick(units, &unitCount, modifiers, projectiles, fissures,
+                                   COMBAT_DT, combatEvents, &combatEventCount);
+                    } else {
+                        CombatTick(units, &unitCount, modifiers, projectiles, fissures,
+                                   COMBAT_DT, NULL, NULL);
+                    }
+                }
+                if (combatAccum > 4.0f * COMBAT_DT) combatAccum = 4.0f * COMBAT_DT;
+
+                // === Process CombatEvents (from last tick only) ===
+                for (int e = 0; e < combatEventCount; e++) {
+                    switch (combatEvents[e].type) {
+                    case COMBAT_EVT_SHAKE:
+                        TriggerShake(&shake, combatEvents[e].value1, combatEvents[e].value2);
+                        break;
+                    case COMBAT_EVT_ABILITY_CAST: {
+                        int ui = combatEvents[e].unitIndex;
+                        int ai = combatEvents[e].abilityId;
+                        if (ui >= 0 && ui < unitCount && ai >= 0 && ai < ABILITY_COUNT) {
+                            BattleLogAddCast(&battleLog, combatElapsedTime,
+                                units[ui].team, units[ui].typeIndex, ai);
+                            PlaySound(shoutSfxByType[units[ui].typeIndex]);
+                            SpawnFloatingText(floatingTexts,
+                                units[ui].position,
+                                ABILITY_DEFS[ai].name,
+                                (Color){255, 220, 100, 255}, 1.2f);
+                        }
+                    } break;
+                    case COMBAT_EVT_MELEE_HIT:
+                        PlaySound(sfxMeleeHit);
+                        if (combatEvents[e].unitIndex >= 0 && combatEvents[e].unitIndex < unitCount)
+                            SpawnMeleeImpact(particles, units[combatEvents[e].unitIndex].position);
+                        break;
+                    case COMBAT_EVT_PROJECTILE_HIT:
+                        PlaySound(sfxProjectileHit);
+                        if (combatEvents[e].unitIndex >= 0 && combatEvents[e].unitIndex < unitCount) {
+                            Vector3 impactPos = combatEvents[e].position;
+                            for (int ep = 0; ep < PROJ_EXPLODE_COUNT; ep++) {
+                                float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                                float spd = (float)GetRandomValue(100, 250) / 10.0f;
+                                Vector3 ev = { cosf(angle)*spd, (float)GetRandomValue(40,150)/10.0f, sinf(angle)*spd };
+                                Color ec;
+                                switch (combatEvents[e].abilityId) {
+                                    case PROJ_HOOK: ec = (Color){200, 160, 100, 255}; break;
+                                    case PROJ_MAELSTROM: ec = (Color){100, 180, 255, 255}; break;
+                                    case PROJ_DEVIL_BOLT: ec = (Color){200, 50, 50, 255}; break;
+                                    case PROJ_MAGIC_MISSILE: ec = (Color){120, 80, 255, 255}; break;
+                                    case PROJ_CHAIN_FROST: ec = (Color){80, 200, 255, 255}; break;
+                                    default: ec = (Color){255, 200, 100, 255}; break;
+                                }
+                                SpawnParticle(particles, impactPos, ev, 0.3f + (float)GetRandomValue(0,3)/10.0f,
+                                    (float)GetRandomValue(3,8)/10.0f, ec);
+                            }
+                        }
+                        break;
+                    case COMBAT_EVT_MULTICAST: {
+                        int ui = combatEvents[e].unitIndex;
+                        int casts = (int)combatEvents[e].value1 + 1;
+                        if (ui >= 0 && ui < unitCount) {
+                            const char *mcText = TextFormat("MULTICAST x%d!", casts);
+                            SpawnFloatingText(floatingTexts, units[ui].position,
+                                mcText, (Color){255, 180, 60, 255}, 1.5f);
+                        }
+                    } break;
+                    default: break;
+                    }
+                }
+
+                // === State diff (snapshot vs current) for visual effects ===
+                for (int i = 0; i < unitCount; i++) {
+                    float dmg = unitsBefore[i].currentHealth - units[i].currentHealth;
+                    if (dmg > 0.5f) {
+                        SpawnDamageNumber(floatingTexts, units[i].position, dmg, false);
+                        units[i].hitFlash = HIT_FLASH_DURATION;
+                    }
+                    if (unitsBefore[i].active && !units[i].active) {
+                        // Unit died
+                        PlaySound(dieSfxByType[units[i].typeIndex]);
+                        SpawnDeathExplosion(particles, units[i].position, units[i].team);
+                        TriggerShake(&shake, 6.0f, 0.3f);
+                        // Kill feed
+                        { Team killerTeam = (units[i].team == TEAM_BLUE) ? TEAM_RED : TEAM_BLUE;
+                        if (killerTeam != lastKillTeam) multiKillCount = 0;
+                        lastKillTeam = killerTeam; }
+                        killCount++; multiKillCount++; multiKillTimer = 2.0f;
+                        if (killCount == 1) { snprintf(killFeedText, sizeof(killFeedText), "FIRST BLOOD!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                        else if (multiKillCount == 2) { snprintf(killFeedText, sizeof(killFeedText), "DOUBLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                        else if (multiKillCount == 3) { snprintf(killFeedText, sizeof(killFeedText), "TRIPLE KILL!"); killFeedTimer = 0.0f; killFeedScale = 2.0f; }
+                        else if (multiKillCount >= 4) { snprintf(killFeedText, sizeof(killFeedText), "RAMPAGE!"); killFeedTimer = 0.0f; killFeedScale = 2.5f; }
+                        // Slow-mo on last kill
+                        int ba2, ra2; CountTeams(units, unitCount, &ba2, &ra2);
+                        if (ba2 == 0 || ra2 == 0) { slowmoTimer = 0.5f; slowmoScale = 0.3f; }
+                        // Track last killed enemy type for capture mechanic
+                        if (units[i].team == TEAM_RED) { lastKilledEnemyType = units[i].typeIndex; lastKilledRarity = units[i].rarity; for(int ab=0;ab<MAX_ABILITIES_PER_UNIT;ab++) lastKilledAbilities[ab]=units[i].abilities[ab]; }
+                    }
+                }
+
+                // Projectile whoosh sound (chargeTimer crossed from >0 to <=0)
+                for (int pp = 0; pp < MAX_PROJECTILES; pp++) {
+                    if (projBefore[pp].chargeTimer > 0 && projectiles[pp].chargeTimer <= 0
+                        && projectiles[pp].active)
+                        PlaySound(sfxProjectileWhoosh);
+                }
+
+                // Dig particles (visual only)
+                for (int i = 0; i < unitCount; i++) {
+                    if (!units[i].active) continue;
+                    if (UnitHasModifier(modifiers, i, MOD_DIG_HEAL)) {
+                        UnitType *dtype = &unitTypes[units[i].typeIndex];
+                        float modelH = (dtype->baseBounds.max.y - dtype->baseBounds.min.y) * dtype->scale;
+                        float modelR = (dtype->baseBounds.max.x - dtype->baseBounds.min.x) * dtype->scale * 0.6f;
+                        for (int pp = 0; pp < 3; pp++) {
+                            float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                            float r = modelR + (float)GetRandomValue(5, 20) / 10.0f;
+                            Vector3 pos = {
+                                units[i].position.x + cosf(angle) * r,
+                                units[i].position.y + (float)GetRandomValue(0, (int)(modelH * 10.0f)) / 10.0f,
+                                units[i].position.z + sinf(angle) * r
+                            };
+                            Vector3 vel = {
+                                cosf(angle) * 3.0f,
+                                (float)GetRandomValue(20, 60) / 10.0f,
+                                sinf(angle) * 3.0f
+                            };
+                            int shade = GetRandomValue(100, 180);
+                            Color brown = { (unsigned char)shade, (unsigned char)(shade * 0.6f),
+                                            (unsigned char)(shade * 0.3f), 255 };
+                            float sz = (float)GetRandomValue(3, 8) / 10.0f;
+                            SpawnParticle(particles, pos, vel, 0.5f + (float)GetRandomValue(0, 3) / 10.0f, sz, brown);
+                        }
+                    }
+                }
+
+                // Update visual effects with REAL dt for smooth particles
+                UpdateParticles(particles, realDt);
+                UpdateFloatingTexts(floatingTexts, realDt);
+                combatElapsedTime += realDt;
+
+                // Smooth Y toward ground
+                for (int i = 0; i < unitCount; i++) {
+                    if (!units[i].active) continue;
+                    units[i].position.y += (0.0f - units[i].position.y) * 0.1f;
+                }
+            } // end singleplayer CombatTick block
+            if (0) { // dead code — old inline singleplayer combat removed
             for (int m = 0; m < MAX_MODIFIERS; m++) {
                 if (!modifiers[m].active) continue;
                 int ui = modifiers[m].unitIndex;
@@ -4021,6 +4484,7 @@ int main(int argc, char *argv[])
                 if (!units[i].active) continue;
                 units[i].position.y += (0.0f - units[i].position.y) * 0.1f;
             }
+            } // end if(0) dead code block
 
             // Check round end
             combat_check_end:
@@ -4220,8 +4684,30 @@ int main(int argc, char *argv[])
                     ClearAllFissures(fissures);
                     ClearRedUnits(units, &unitCount);
                     phase = PHASE_MILESTONE;
+                } else if (mapActive) {
+                    // Map mode: return to map after combat
+                    RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
+                    for (int i = 0; i < unitCount; i++) {
+                        units[i].nextAbilitySlot = 0;
+                        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                            units[i].abilities[a].cooldownRemaining = 0;
+                            units[i].abilities[a].triggered = false;
+                        }
+                    }
+                    ClearAllModifiers(modifiers);
+                    ClearAllProjectiles(projectiles);
+                    ClearAllFloatingTexts(floatingTexts);
+                    ClearAllFissures(fissures);
+                    ClearRedUnits(units, &unitCount);
+                    { playerGold += roundGoldReward + goldInterest; }
+                    // If boss node was beaten, go to milestone
+                    if (mapSelectedNodeType == NODE_BOSS && !blueLostLastRound) {
+                        phase = PHASE_MILESTONE;
+                    } else {
+                        phase = PHASE_MAP;
+                    }
                 } else {
-                    // Normal round transition
+                    // Normal round transition (legacy non-map mode)
                     RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
                     for (int i = 0; i < unitCount; i++) {
                         units[i].nextAbilitySlot = 0;
@@ -4318,26 +4804,35 @@ int main(int argc, char *argv[])
                 Rectangle contBtn = { (float)(btnStartX + btnW + btnGap), (float)btnY, (float)btnW, (float)btnH };
                 if (CheckCollisionPointRec(mouse, contBtn)) {
                     lastMilestoneRound = currentRound;
-                    SpawnWave(units, &unitCount, currentRound, unitTypeCount);
-                    // Generate wave upgrade description
-                    if (currentRound < TOTAL_ROUNDS) {
-                        switch (currentRound) {
-                            case 1: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, each with 1 ability"); break;
-                            case 2: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemies now have 2 abilities"); break;
-                            case 3: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, abilities leveled up"); break;
-                            case 4: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "BOSS ROUND!"); break;
-                            default: waveUpgradeText[0] = '\0'; break;
-                        }
+                    if (mapActive) {
+                        // Generate next act map and go to map
+                        actMap.act++;
+                        GenerateMap(&actMap, actMap.act, actMap.seed + actMap.act);
+                        ResetMapScroll();
+                        { playerGold += roundGoldReward + goldInterest; }
+                        phase = PHASE_MAP;
                     } else {
-                        int extraR = currentRound - TOTAL_ROUNDS;
-                        int roll = ((extraR * 7 + 13) * 31) % 100;
-                        if (roll < 50) snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy unit");
-                        else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
+                        SpawnWave(units, &unitCount, currentRound, unitTypeCount);
+                        // Generate wave upgrade description
+                        if (currentRound < TOTAL_ROUNDS) {
+                            switch (currentRound) {
+                                case 1: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, each with 1 ability"); break;
+                                case 2: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemies now have 2 abilities"); break;
+                                case 3: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy, abilities leveled up"); break;
+                                case 4: snprintf(waveUpgradeText, sizeof(waveUpgradeText), "BOSS ROUND!"); break;
+                                default: waveUpgradeText[0] = '\0'; break;
+                            }
+                        } else {
+                            int extraR = currentRound - TOTAL_ROUNDS;
+                            int roll = ((extraR * 7 + 13) * 31) % 100;
+                            if (roll < 50) snprintf(waveUpgradeText, sizeof(waveUpgradeText), "+1 Enemy unit");
+                            else snprintf(waveUpgradeText, sizeof(waveUpgradeText), "Enemy abilities upgraded");
+                        }
+                        { playerGold += roundGoldReward + goldInterest; }
+                        RollShop(shopSlots, &playerGold, 0, currentRound);
+                        rollCost = rollCostBase;
+                        phase = PHASE_PREP;
                     }
-                    { playerGold += roundGoldReward + goldInterest; }
-                    RollShop(shopSlots, &playerGold, 0, currentRound);
-                    rollCost = rollCostBase;
-                    phase = PHASE_PREP;
                 }
             }
         }
@@ -4511,6 +5006,7 @@ int main(int argc, char *argv[])
             if (desired != units[i].currentAnim) {
                 units[i].currentAnim = desired;
                 units[i].animFrame = 0;
+                units[i].animTimer = 0.0f;
             }
 
             // Advance frame — pick anim array based on current state
@@ -4519,8 +5015,15 @@ int main(int argc, char *argv[])
                 ModelAnimation *arr = GetAnimArray(type, units[i].currentAnim);
                 if (arr) {
                     int frameCount = arr[idx].frameCount;
-                    if (frameCount > 0)
-                        units[i].animFrame = (units[i].animFrame + 1) % frameCount;
+                    if (frameCount > 0) {
+                        float animFps = 30.0f;
+                        units[i].animTimer += dt;
+                        float frameDur = 1.0f / animFps;
+                        while (units[i].animTimer >= frameDur) {
+                            units[i].animTimer -= frameDur;
+                            units[i].animFrame = (units[i].animFrame + 1) % frameCount;
+                        }
+                    }
                 }
             }
         }
@@ -4538,8 +5041,16 @@ int main(int argc, char *argv[])
         //==============================================================================
         // DRAW
         //==============================================================================
+        double profLogicEnd = GetTime();
+        profLogicTime = profLogicEnd - profFrameStart;
+        double profRenderStart = profLogicEnd;
         BeginDrawing();
         ClearBackground((Color){ 45, 40, 35, 255 });
+
+        // Mark portraits dirty on phase change
+        if (phase != prevPhase) {
+            for (int pd = 0; pd < BLUE_TEAM_MAX_SIZE; pd++) portraitDirty[pd] = true;
+        }
 
         // Collect active blue units for HUD (skip mushlings)
         int blueHudUnits[BLUE_TEAM_MAX_SIZE];
@@ -4549,9 +5060,18 @@ int main(int argc, char *argv[])
                 blueHudUnits[blueHudCount++] = i;
         }
 
-        // Render unit portraits into offscreen textures
+        // Render unit portraits into offscreen textures (only when dirty)
         for (int h = 0; h < blueHudCount; h++) {
             int ui = blueHudUnits[h];
+            // Auto-detect dirtiness: type or rarity changed
+            if (portraitTypeCache[h] != units[ui].typeIndex ||
+                portraitRarityCache[h] != units[ui].rarity) {
+                portraitDirty[h] = true;
+                portraitTypeCache[h] = units[ui].typeIndex;
+                portraitRarityCache[h] = units[ui].rarity;
+            }
+            if (!portraitDirty[h]) continue;
+
             UnitType *type = &unitTypes[units[ui].typeIndex];
             if (!type->loaded) continue;
 
@@ -4570,6 +5090,7 @@ int main(int argc, char *argv[])
                     DrawModel(type->model, (Vector3){ 0, 0, 0 }, type->scale, GetTeamTint(TEAM_BLUE));
                 EndMode3D();
             EndTextureMode();
+            portraitDirty[h] = false;
         }
 
         // Apply screen shake offset to camera
@@ -4740,11 +5261,22 @@ int main(int argc, char *argv[])
             SetShaderValue(lightShader, useNormalMapLoc, (int[]){1}, SHADER_UNIFORM_INT);
             {
                 float gridOrigin = -(TILE_GRID_SIZE * TILE_WORLD_SIZE) / 2.0f;
+                int scrW = GetScreenWidth(), scrH = GetScreenHeight();
                 for (int r = 0; r < TILE_GRID_SIZE; r++) {
                     for (int c = 0; c < TILE_GRID_SIZE; c++) {
                         int vi = tileVariantGrid[r][c];
                         float cellX = gridOrigin + (c + 0.5f) * TILE_WORLD_SIZE + tileJitterX[r][c];
                         float cellZ = gridOrigin + (r + 0.5f) * TILE_WORLD_SIZE + tileJitterZ[r][c];
+
+                        // Frustum cull: skip tiles whose center projects off-screen
+                        // Use generous margin (half tile size) to avoid popping
+                        {
+                            Vector2 tsp = GetWorldToScreen((Vector3){cellX, 0, cellZ}, camera);
+                            float margin = TILE_WORLD_SIZE * 8.0f; // generous margin for tile extent + wobble
+                            if (tsp.x < -margin || tsp.x > scrW + margin ||
+                                tsp.y < -margin || tsp.y > scrH + margin) continue;
+                        }
+
                         float totalRot = tileRotationGrid[r][c] + tileJitterAngle[r][c];
                         // DrawModelEx applies scale→rotate→translate, so the OBJ-space
                         // center offset gets rotated. Rotate it by the same angle to compensate.
@@ -5261,6 +5793,10 @@ int main(int argc, char *argv[])
                            labelWorldPos.y + (type->baseBounds.max.y * type->scale) + 1.0f,
                            labelWorldPos.z }, camera);
 
+            // Skip offscreen units
+            if (sp.x < -50 || sp.x > GetScreenWidth() + 50 ||
+                sp.y < -50 || sp.y > GetScreenHeight() + 50) continue;
+
             if (units[i].rarity > 0) {
                 const char *stars = (units[i].rarity == RARITY_LEGENDARY) ? "* *" : "*";
                 int starsW = GameMeasureText(stars, S(14));
@@ -5407,6 +5943,7 @@ int main(int argc, char *argv[])
                     case MOD_CHARGING:      modLabel = "CHARGING";     modColor = (Color){255,140,0,255};   break;
                     case MOD_MULTICAST:     modLabel = "MULTICAST";    modColor = (Color){255,180,60,255};  break;
                     case MOD_SHARE_PAIN:    modLabel = "SHARE PAIN";   modColor = (Color){180,60,180,255};  break;
+                    case MOD_COOLDOWN_REDUCTION: modLabel = "CDR";     modColor = (Color){180,120,255,255}; break;
                 }
                 if (modLabel) {
                     int totalLen = (int)strlen(modLabel);
@@ -5418,13 +5955,26 @@ int main(int argc, char *argv[])
                     if (frac > 1.0f) frac = 1.0f;
                     int activeChars = (int)(frac * totalLen + 0.5f);
                     Color dimGray = { 100, 100, 120, 255 };
-                    int cx = startX;
-                    char tmp[2] = { 0, 0 };
-                    for (int k = 0; k < totalLen; k++) {
-                        tmp[0] = modLabel[k];
-                        Color charCol = (k < activeChars) ? modColor : dimGray;
-                        GameDrawText(tmp, cx, modY, S(11), charCol);
-                        cx += GameMeasureText(tmp, S(11));
+                    if (activeChars >= totalLen) {
+                        // Fully active — single draw call
+                        GameDrawText(modLabel, startX, modY, S(11), modColor);
+                    } else if (activeChars <= 0) {
+                        // Fully dim — single draw call
+                        GameDrawText(modLabel, startX, modY, S(11), dimGray);
+                    } else {
+                        // Two-pass: active portion then dim portion
+                        char activeBuf[32];
+                        int len = activeChars < (int)sizeof(activeBuf) - 1 ? activeChars : (int)sizeof(activeBuf) - 1;
+                        memcpy(activeBuf, modLabel, len);
+                        activeBuf[len] = '\0';
+                        GameDrawText(activeBuf, startX, modY, S(11), modColor);
+                        int activeW = GameMeasureText(activeBuf, S(11));
+                        char dimBuf[32];
+                        int dimLen = totalLen - activeChars;
+                        if (dimLen > (int)sizeof(dimBuf) - 1) dimLen = (int)sizeof(dimBuf) - 1;
+                        memcpy(dimBuf, modLabel + activeChars, dimLen);
+                        dimBuf[dimLen] = '\0';
+                        GameDrawText(dimBuf, startX + activeW, modY, S(11), dimGray);
                     }
                     modY += 10;
                 }
@@ -5612,7 +6162,8 @@ int main(int argc, char *argv[])
                 Rectangle dPlayBtn = { (float)(20), (float)(dHudTop - playBtnH - btnMargin), (float)playBtnW, (float)playBtnH };
                 int ba, ra;
                 CountTeams(units, unitCount, &ba, &ra);
-                bool canPlay = isMultiplayer ? (ba > 0) : (ba > 0 && ra > 0);
+                bool isShopNode = (mapActive && mapSelectedNodeType == NODE_SHOP);
+                bool canPlay = isMultiplayer ? (ba > 0) : (isShopNode ? (ba > 0) : (ba > 0 && ra > 0));
                 bool alreadyReady = isMultiplayer && playerReady;
                 Color pc;
                 if (alreadyReady)
@@ -5631,6 +6182,8 @@ int main(int argc, char *argv[])
                         pt = waitingForOpponent ? "WAITING FOR OPPONENT..." : "I'M READY!";
                     else
                         pt = TextFormat("I'M READY - Round %d", currentRound + 1);
+                } else if (isShopNode) {
+                    pt = "DONE - Return to Map";
                 } else {
                     pt = TextFormat("PLAY Round %d", currentRound + 1);
                 }
@@ -5681,20 +6234,15 @@ int main(int argc, char *argv[])
                     GameDrawText(waveUpgradeText, wuX, wuY, wuSz, wuColor);
                 }
 
-                // Danger zone + next milestone (top center, below wave info)
+                // Next milestone info (top center, below wave info)
                 if (lastMilestoneRound > 0) {
-                    int dangerY = roundY + roundSz + S(6);
-                    if (waveUpgradeText[0] != '\0') dangerY += S(24);
-                    const char *dangerText = "DANGER ZONE - Losing means permanent death!";
-                    int dangerSz = S(22);
-                    int dtw = GameMeasureText(dangerText, dangerSz);
-                    DrawRectangle(sw/2 - dtw/2 - S(8), dangerY - S(2), dtw + S(16), dangerSz + S(4), (Color){60, 10, 10, 200});
-                    GameDrawText(dangerText, sw/2 - dtw/2, dangerY, dangerSz, RED);
+                    int infoY = roundY + roundSz + S(6);
+                    if (waveUpgradeText[0] != '\0') infoY += S(24);
                     int nextMilestone = ((currentRound / 5) + 1) * 5;
                     const char *nextText = TextFormat("Next milestone: Wave %d", nextMilestone);
-                    int nextSz = S(18);
+                    int nextSz = S(16);
                     int ntw = GameMeasureText(nextText, nextSz);
-                    GameDrawText(nextText, sw/2 - ntw/2, dangerY + dangerSz + S(4), nextSz, ORANGE);
+                    GameDrawText(nextText, sw/2 - ntw/2, infoY, nextSz, (Color){200, 200, 220, 200});
                 }
 
                 GameDrawText(TextFormat("Units: %d / %d", unitCount, MAX_UNITS), 10, 30, 10, DARKGRAY);
@@ -5822,8 +6370,8 @@ int main(int argc, char *argv[])
                 int stw = GameMeasureText(scoreText, stFontSize);
                 GameDrawText(scoreText, sw/2 - stw/2, rtY + rtFontSize + S(8), stFontSize, WHITE);
 
-                // Balatro-style gold breakdown
-                if (!isMultiplayer) {
+                // Balatro-style gold breakdown (hide when death penalty imminent)
+                if (!isMultiplayer && !(blueLostLastRound && lastMilestoneRound > 0)) {
                     int gbW = S(200), gbH = S(120);
                     int gbX = sw/2 - gbW/2;
                     int gbY = rtY + rtFontSize + S(38);
@@ -6270,6 +6818,17 @@ int main(int argc, char *argv[])
                         }
                         DrawRectangleLines(ax, ay, hudAbilSlotSize, hudAbilSlotSize,
                                           (Color){ 90, 90, 110, 255 });
+                        // Shop ability highlight glow
+                        {
+                            int highlightId = (shopHoverAbilityId >= 0) ? shopHoverAbilityId : shopHighlightAbilityId;
+                            if (highlightId >= 0 && aslot->abilityId == highlightId) {
+                                unsigned char glowAlpha = 255;
+                                if (shopHoverAbilityId < 0 && shopHighlightTimer > 0)
+                                    glowAlpha = (unsigned char)(255 * (shopHighlightTimer / 0.5f));
+                                DrawRectangleLinesEx((Rectangle){(float)ax, (float)ay, (float)hudAbilSlotSize, (float)hudAbilSlotSize},
+                                    2, (Color){100, 255, 255, glowAlpha});
+                            }
+                        }
                         // Activation order number (top-right corner)
                         // Find which activation position this slot is
                         int orderNum = 0;
@@ -6304,6 +6863,72 @@ int main(int argc, char *argv[])
                         arX = abilStartX + (hudAbilSlotSize - GameMeasureText("^", arFsz)) / 2 - hudAbilSlotSize / 2;
                         arY = abilStartY + hudAbilSlotSize + (hudAbilSlotGap - arFsz) / 2;
                         GameDrawText("^", arX, arY, arFsz, arCol);
+                    }
+                    // Item slot (below ability grid)
+                    {
+                        int iSlotSize = S(24);
+                        int iSlotX = abilStartX + (2 * hudAbilSlotSize + hudAbilSlotGap - iSlotSize) / 2;
+                        int iSlotY = abilStartY + 2 * (hudAbilSlotSize + hudAbilSlotGap) + S(2);
+                        Rectangle iSlotRect = {(float)iSlotX, (float)iSlotY, (float)iSlotSize, (float)iSlotSize};
+                        bool iSlotHover = CheckCollisionPointRec(GetMousePosition(), iSlotRect);
+                        if (units[ui].itemId >= 0 && units[ui].itemId < ITEM_COUNT) {
+                            const ItemDef *idef = &ITEM_DEFS[units[ui].itemId];
+                            DrawRectangle(iSlotX, iSlotY, iSlotSize, iSlotSize, idef->color);
+                            DrawRectangleLines(iSlotX, iSlotY, iSlotSize, iSlotSize, (Color){200,200,220,255});
+                            // Item initial letter
+                            char iLetter[2] = { idef->name[0], '\0' };
+                            int ilFsz = S(14);
+                            int ilw2 = GameMeasureText(iLetter, ilFsz);
+                            GameDrawTextOnColor(iLetter, iSlotX + (iSlotSize - ilw2)/2, iSlotY + (iSlotSize - ilFsz)/2, ilFsz, idef->color);
+                            // Tooltip on hover
+                            if (iSlotHover) {
+                                const char *iTip = TextFormat("%s: %s", idef->name, idef->description);
+                                int iTipFsz = S(12);
+                                int iTipW = GameMeasureText(iTip, iTipFsz);
+                                int iTipX = iSlotX - iTipW/2 + iSlotSize/2;
+                                int iTipY = iSlotY - iTipFsz - S(6);
+                                DrawRectangle(iTipX - 4, iTipY - 2, iTipW + 8, iTipFsz + 4, (Color){20,20,30,230});
+                                GameDrawText(iTip, iTipX, iTipY, iTipFsz, WHITE);
+                            }
+                            // Drop on occupied slot: swap items
+                            if (phase == PHASE_PREP && itemDrag.dragging && iSlotHover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                                int oldItem = units[ui].itemId;
+                                units[ui].itemId = itemDrag.itemId;
+                                if (itemDrag.sourceType == 0 && itemDrag.sourceIndex >= 0 && itemDrag.sourceIndex < MAX_ITEMS) {
+                                    itemInventory[itemDrag.sourceIndex] = oldItem;
+                                }
+                                itemDrag.dragging = false;
+                            }
+                            // Click to unequip (prep phase only)
+                            else if (phase == PHASE_PREP && iSlotHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !itemDrag.dragging) {
+                                int unequipId = units[ui].itemId;
+                                units[ui].itemId = ITEM_NONE;
+                                for (int ii = 0; ii < MAX_ITEMS; ii++) {
+                                    if (itemInventory[ii] == ITEM_NONE) {
+                                        itemInventory[ii] = unequipId;
+                                        itemInventoryCount++;
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                            DrawRectangle(iSlotX, iSlotY, iSlotSize, iSlotSize, (Color){30,30,40,255});
+                            DrawRectangleLines(iSlotX, iSlotY, iSlotSize, iSlotSize, (Color){70,70,90,255});
+                            int pFsz = S(14);
+                            const char *pTxt = "+";
+                            int pw2 = GameMeasureText(pTxt, pFsz);
+                            GameDrawText(pTxt, iSlotX + (iSlotSize - pw2)/2, iSlotY + (iSlotSize - pFsz)/2, pFsz, (Color){70,70,90,255});
+                            // Drop target for item drag
+                            if (phase == PHASE_PREP && itemDrag.dragging && iSlotHover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                                units[ui].itemId = itemDrag.itemId;
+                                // Remove from source
+                                if (itemDrag.sourceType == 0 && itemDrag.sourceIndex >= 0 && itemDrag.sourceIndex < MAX_ITEMS) {
+                                    itemInventory[itemDrag.sourceIndex] = ITEM_NONE;
+                                    itemInventoryCount--;
+                                }
+                                itemDrag.dragging = false;
+                            }
+                        }
                     }
                 }
                 else
@@ -6350,6 +6975,62 @@ int main(int argc, char *argv[])
                         const char *ilvl = TextFormat("L%d", inventory[inv].level + 1);
                         int ilvlFsz = S(11);
                         GameDrawTextOnColor(ilvl, ix + S(2), iy + hudAbilSlotSize - ilvlFsz, ilvlFsz, invAbilColor);
+                    }
+                }
+                // Item inventory (below ability inventory)
+                int itemInvY = invStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(8);
+                if (itemInventoryCount > 0 || phase == PHASE_PREP) {
+                    GameDrawText("ITEMS", invStartX, itemInvY, S(12), (Color){160,160,180,255});
+                    int itemSlotSize = S(28);
+                    int itemSlotGap = S(4);
+                    int itemY = itemInvY + S(14);
+                    int itemCols = 3;
+                    for (int ii = 0; ii < MAX_ITEMS && ii < 6; ii++) {
+                        int ic = ii % itemCols;
+                        int ir = ii / itemCols;
+                        int iix = invStartX + ic * (itemSlotSize + itemSlotGap);
+                        int iiy = itemY + ir * (itemSlotSize + itemSlotGap);
+                        Rectangle iiRect = {(float)iix, (float)iiy, (float)itemSlotSize, (float)itemSlotSize};
+                        bool iiHover = CheckCollisionPointRec(GetMousePosition(), iiRect);
+                        if (itemInventory[ii] >= 0 && itemInventory[ii] < ITEM_COUNT) {
+                            const ItemDef *iidef = &ITEM_DEFS[itemInventory[ii]];
+                            DrawRectangle(iix, iiy, itemSlotSize, itemSlotSize, iidef->color);
+                            DrawRectangleLines(iix, iiy, itemSlotSize, itemSlotSize, (Color){200,200,220,255});
+                            char iLet[2] = { iidef->name[0], '\0' };
+                            int ilFsz2 = S(16);
+                            int ilw3 = GameMeasureText(iLet, ilFsz2);
+                            GameDrawTextOnColor(iLet, iix + (itemSlotSize - ilw3)/2, iiy + (itemSlotSize - ilFsz2)/2, ilFsz2, iidef->color);
+                            // Tooltip
+                            if (iiHover) {
+                                const char *tip = TextFormat("%s: %s", iidef->name, iidef->description);
+                                int tipFsz = S(12);
+                                int tipW = GameMeasureText(tip, tipFsz);
+                                int tipX = iix - tipW/2 + itemSlotSize/2;
+                                int tipY2 = iiy - tipFsz - S(6);
+                                DrawRectangle(tipX - 4, tipY2 - 2, tipW + 8, tipFsz + 4, (Color){20,20,30,230});
+                                GameDrawText(tip, tipX, tipY2, tipFsz, WHITE);
+                            }
+                            // Start drag (prep phase only)
+                            if (phase == PHASE_PREP && iiHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !itemDrag.dragging && !dragState.dragging) {
+                                itemDrag.dragging = true;
+                                itemDrag.sourceType = 0;
+                                itemDrag.sourceIndex = ii;
+                                itemDrag.itemId = itemInventory[ii];
+                            }
+                        } else {
+                            DrawRectangle(iix, iiy, itemSlotSize, itemSlotSize, (Color){30,30,40,255});
+                            DrawRectangleLines(iix, iiy, itemSlotSize, itemSlotSize, (Color){60,60,80,255});
+                            // Drop target: return dragged item to inventory
+                            if (phase == PHASE_PREP && itemDrag.dragging && iiHover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                                itemInventory[ii] = itemDrag.itemId;
+                                itemInventoryCount++;
+                                if (itemDrag.sourceType == 0 && itemDrag.sourceIndex >= 0 && itemDrag.sourceIndex < MAX_ITEMS) {
+                                    itemInventory[itemDrag.sourceIndex] = ITEM_NONE;
+                                    itemInventoryCount--;
+                                }
+                                itemDrag.dragging = false;
+                            }
+                        }
                     }
                 }
             }
@@ -6483,6 +7164,21 @@ int main(int argc, char *argv[])
                 GameDrawText(dabbr, (int)dmouse.x - daw/2, (int)dmouse.y - 5, S(13), WHITE);
             }
 
+            // Item drag visual
+            if (itemDrag.dragging && itemDrag.itemId >= 0 && itemDrag.itemId < ITEM_COUNT) {
+                Vector2 imouse = GetMousePosition();
+                const ItemDef *idragDef = &ITEM_DEFS[itemDrag.itemId];
+                DrawRectangle((int)imouse.x - 14, (int)imouse.y - 14, 28, 28, idragDef->color);
+                DrawRectangleLines((int)imouse.x - 14, (int)imouse.y - 14, 28, 28, WHITE);
+                char idLet[2] = { idragDef->name[0], '\0' };
+                int idw = GameMeasureText(idLet, S(14));
+                GameDrawTextOnColor(idLet, (int)imouse.x - idw/2, (int)imouse.y - S(7), S(14), idragDef->color);
+            }
+            // Cancel item drag if released without dropping on valid target
+            if (itemDrag.dragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                itemDrag.dragging = false;
+            }
+
             // --- Shop panel (only during PREP, above unit bar) ---
             if (phase == PHASE_PREP)
             {
@@ -6536,7 +7232,7 @@ int main(int argc, char *argv[])
                         Color cardBg = canAfford ? ABILITY_DEFS[shopSlots[s].abilityId].color : (Color){50,50,65,255};
                         bool shopHovered = CheckCollisionPointRec(GetMousePosition(),
                             (Rectangle){(float)scx,(float)scy,(float)shopCardW,(float)shopCardH});
-                        if (shopHovered) { hoverAbilityId = shopSlots[s].abilityId; hoverAbilityLevel = 0; }
+                        if (shopHovered) { hoverAbilityId = shopSlots[s].abilityId; hoverAbilityLevel = 0; shopHoverAbilityId = shopSlots[s].abilityId; }
                         if (canAfford && shopHovered)
                             cardBg = (Color){ cardBg.r + 30, cardBg.g + 30, cardBg.b + 30, 255 };
                         DrawRectangle(scx, scy, shopCardW, shopCardH, cardBg);
@@ -6568,6 +7264,65 @@ int main(int argc, char *argv[])
                         int lkFsz = S(10);
                         int lkW = GameMeasureText(lockTxt, lkFsz);
                         GameDrawText(lockTxt, scx + shopCardW - lkW - 3, scy + 2, lkFsz, (Color){0,220,220,255});
+                    }
+                }
+
+                // Item shop (only on shop nodes)
+                if (mapActive && mapSelectedNodeType == NODE_SHOP && itemShopGenerated) {
+                    int iShopY = shopY - S(60);
+                    const char *iTitle = "ITEM SHOP";
+                    int itw = GameMeasureText(iTitle, S(14));
+                    GameDrawText(iTitle, (hudSw - itw) / 2, iShopY, S(14), (Color){255,210,60,255});
+                    int iCardW = S(140), iCardH = S(42), iCardGap = S(10);
+                    int iTotalW = 3 * iCardW + 2 * iCardGap;
+                    int iStartX = (hudSw - iTotalW) / 2;
+                    int iCardY = iShopY + S(18);
+                    for (int io = 0; io < 3; io++) {
+                        int ix = iStartX + io * (iCardW + iCardGap);
+                        int iid = itemShopOffers[io];
+                        if (iid < 0 || iid >= ITEM_COUNT) {
+                            DrawRectangle(ix, iCardY, iCardW, iCardH, (Color){35,35,45,255});
+                            DrawRectangleLines(ix, iCardY, iCardW, iCardH, (Color){60,60,80,255});
+                            int soldFsz = S(14);
+                            GameDrawText("SOLD", ix + (iCardW - GameMeasureText("SOLD", soldFsz))/2,
+                                    iCardY + (iCardH - soldFsz)/2, soldFsz, (Color){60,60,80,255});
+                            continue;
+                        }
+                        const ItemDef *idef = &ITEM_DEFS[iid];
+                        bool canBuy = (playerGold >= idef->cost && itemInventoryCount < MAX_ITEMS);
+                        Color icBg = canBuy ? idef->color : (Color){50,50,65,255};
+                        Rectangle iRect = {(float)ix, (float)iCardY, (float)iCardW, (float)iCardH};
+                        bool iHover = CheckCollisionPointRec(GetMousePosition(), iRect);
+                        if (canBuy && iHover)
+                            icBg = (Color){(unsigned char)(icBg.r+30), (unsigned char)(icBg.g+30), (unsigned char)(icBg.b+30), 255};
+                        DrawRectangleRec(iRect, icBg);
+                        DrawRectangleLinesEx(iRect, 1, (Color){90,90,110,255});
+                        // Item name + cost
+                        int iFsz = S(12);
+                        const char *iLabel = TextFormat("%s  %dg", idef->name, idef->cost);
+                        int ilw = GameMeasureText(iLabel, iFsz);
+                        if (canBuy)
+                            GameDrawTextOnColor(iLabel, ix + (iCardW - ilw)/2, iCardY + S(4), iFsz, icBg);
+                        else
+                            GameDrawText(iLabel, ix + (iCardW - ilw)/2, iCardY + S(4), iFsz, (Color){100,100,120,255});
+                        // Description
+                        int dFsz = S(10);
+                        const char *dLabel = idef->description;
+                        int dlw = GameMeasureText(dLabel, dFsz);
+                        GameDrawText(dLabel, ix + (iCardW - dlw)/2, iCardY + S(18), dFsz, (Color){180,180,200,220});
+                        // Buy on click
+                        if (iHover && canBuy && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                            playerGold -= idef->cost;
+                            // Add to inventory
+                            for (int ii = 0; ii < MAX_ITEMS; ii++) {
+                                if (itemInventory[ii] == ITEM_NONE) {
+                                    itemInventory[ii] = iid;
+                                    itemInventoryCount++;
+                                    break;
+                                }
+                            }
+                            itemShopOffers[io] = ITEM_NONE;
+                        }
                     }
                 }
 
@@ -6720,6 +7475,7 @@ int main(int argc, char *argv[])
                 statLines[numStatLines++] = (StatLine){ "Duration", AV_AS_DURATION, false };
                 break;
             case ABILITY_HOOK:
+                statLines[numStatLines++] = (StatLine){ "Base Dmg", AV_HK_BASE_DMG, false };
                 statLines[numStatLines++] = (StatLine){ "Dmg/Dist", AV_HK_DMG_PER_DIST, false };
                 statLines[numStatLines++] = (StatLine){ "Range", AV_HK_RANGE, false };
                 break;
@@ -7294,6 +8050,96 @@ int main(int argc, char *argv[])
         }
 
         //==============================================================================
+        // PHASE_MAP DRAWING — Slay the Spire branching map
+        //==============================================================================
+        if (phase == PHASE_MAP)
+        {
+            DrawMap(&actMap);
+
+            // Event overlay
+            if (showingMapEvent) {
+                int esw = GetScreenWidth(), esh = GetScreenHeight();
+                DrawRectangle(0, 0, esw, esh, (Color){10, 10, 20, 220});
+
+                const char *eventTitle = "";
+                const char *eventDesc = "";
+                const char *choiceAText = "";
+                const char *choiceBText = "";
+
+                switch (currentMapEvent) {
+                    case EVENT_FOUNTAIN:
+                        eventTitle = "Mysterious Fountain";
+                        eventDesc = "A glowing spring bubbles with restorative energy.";
+                        choiceAText = "Heal all to full HP";
+                        choiceBText = "Gain 10 gold";
+                        break;
+                    case EVENT_MERCHANT:
+                        eventTitle = "Wandering Merchant";
+                        eventDesc = "A cloaked figure offers rare goods.";
+                        choiceAText = "Buy random ability (5g)";
+                        choiceBText = "Skip";
+                        break;
+                    case EVENT_TRAINING:
+                        eventTitle = "Training Grounds";
+                        eventDesc = "An ancient arena pulses with power.";
+                        choiceAText = "Unit gets +10% HP";
+                        choiceBText = "Unit gets +10% DMG";
+                        break;
+                    case EVENT_ALTAR:
+                        eventTitle = "Cursed Altar";
+                        eventDesc = "Dark energy radiates from the stone.";
+                        choiceAText = "Sacrifice 20% HP, gain 15g";
+                        choiceBText = "Walk away";
+                        break;
+                    case EVENT_TOME:
+                        eventTitle = "Ancient Tome";
+                        eventDesc = "A dusty book hums with magical knowledge.";
+                        choiceAText = "Learn random ability";
+                        choiceBText = "Leave it alone";
+                        break;
+                    default: break;
+                }
+
+                int titleSz = 28, descSz = 18;
+                int ttw = MeasureText(eventTitle, titleSz);
+                DrawText(eventTitle, esw/2 - ttw/2, esh/2 - 100, titleSz, GOLD);
+                int dtw = MeasureText(eventDesc, descSz);
+                DrawText(eventDesc, esw/2 - dtw/2, esh/2 - 60, descSz, (Color){200, 200, 220, 255});
+
+                int btnW = 200, btnH = 50, btnGap = 20;
+                int btnY = esh / 2 + 40;
+
+                // Choice A
+                Rectangle choiceARect = { (float)(esw/2 - btnW - btnGap/2), (float)btnY, (float)btnW, (float)btnH };
+                Color caBg = (Color){50, 120, 180, 255};
+                if (CheckCollisionPointRec(GetMousePosition(), choiceARect))
+                    caBg = (Color){70, 150, 220, 255};
+                DrawRectangleRec(choiceARect, caBg);
+                DrawRectangleLinesEx(choiceARect, 2, WHITE);
+                int caw = MeasureText(choiceAText, 14);
+                DrawText(choiceAText, (int)(choiceARect.x + btnW/2 - caw/2), btnY + 18, 14, WHITE);
+
+                // Choice B
+                Rectangle choiceBRect = { (float)(esw/2 + btnGap/2), (float)btnY, (float)btnW, (float)btnH };
+                Color cbBg = (Color){120, 80, 50, 255};
+                if (CheckCollisionPointRec(GetMousePosition(), choiceBRect))
+                    cbBg = (Color){160, 110, 70, 255};
+                DrawRectangleRec(choiceBRect, cbBg);
+                DrawRectangleLinesEx(choiceBRect, 2, WHITE);
+                int cbw = MeasureText(choiceBText, 14);
+                DrawText(choiceBText, (int)(choiceBRect.x + btnW/2 - cbw/2), btnY + 18, 14, WHITE);
+            }
+
+            // Gold display
+            {
+                const char *goldText = TextFormat("Gold: %d", playerGold);
+                int gsz = 18;
+                int gw = MeasureText(goldText, gsz);
+                DrawText(goldText, GetScreenWidth() - gw - 20, 20, gsz, GOLD);
+            }
+        }
+
+        //==============================================================================
         // PHASE_MILESTONE DRAWING
         //==============================================================================
         if (phase == PHASE_MILESTONE)
@@ -7385,8 +8231,8 @@ int main(int argc, char *argv[])
                 GameDrawText(setText, (int)(setBtn.x + btnW2/2 - setW/2), (int)(setBtn.y + 16), 22, WHITE);
 
                 const char *setDesc = "Saves to leaderboard. Imprisons your party.";
-                int sdw = GameMeasureText(setDesc, 14);
-                GameDrawText(setDesc, (int)(setBtn.x + btnW2/2 - sdw/2), (int)(setBtn.y + btnH2 + 10), 14, (Color){255,210,80,200});
+                int sdw = GameMeasureText(setDesc, 11);
+                GameDrawText(setDesc, (int)(setBtn.x + btnW2/2 - sdw/2), (int)(setBtn.y + 36), 11, (Color){255,210,80,200});
             }
 
             // CONTINUE button
@@ -7402,8 +8248,8 @@ int main(int argc, char *argv[])
                 GameDrawText(contText, (int)(contBtn.x + btnW2/2 - contW/2), (int)(contBtn.y + 16), 22, WHITE);
 
                 const char *contDesc = "Keep fighting. Lose and they die.";
-                int cdw = GameMeasureText(contDesc, 14);
-                GameDrawText(contDesc, (int)(contBtn.x + btnW2/2 - cdw/2), (int)(contBtn.y + btnH2 + 10), 14, (Color){255,100,80,200});
+                int cdw = GameMeasureText(contDesc, 11);
+                GameDrawText(contDesc, (int)(contBtn.x + btnW2/2 - cdw/2), (int)(contBtn.y + 36), 11, (Color){255,100,80,200});
             }
         }
 
@@ -8085,6 +8931,54 @@ int main(int argc, char *argv[])
         }
 
         DrawFPS(10, 10);
+
+        // Frame-time budget bar (debug mode)
+        {
+            double profRenderEnd = GetTime();
+            profRenderTime = profRenderEnd - profRenderStart;
+            profTotalTime = profRenderEnd - profFrameStart;
+
+            // Exponential moving average (alpha=0.05 for smooth display)
+            const double alpha = 0.05;
+            profLogicSmooth  += alpha * (profLogicTime  - profLogicSmooth);
+            profRenderSmooth += alpha * (profRenderTime - profRenderSmooth);
+            profTotalSmooth  += alpha * (profTotalTime  - profTotalSmooth);
+
+            if (debugMode) {
+                int bx = 10, by = 30;
+                int bw = 260, bh = 14;
+                float budgetMs = 16.667f; // 60 Hz budget
+                float logicMs  = (float)(profLogicSmooth  * 1000.0);
+                float renderMs = (float)(profRenderSmooth * 1000.0);
+                float totalMs  = (float)(profTotalSmooth  * 1000.0);
+
+                // Background
+                DrawRectangle(bx - 2, by - 2, bw + 4, bh * 3 + 30, (Color){0, 0, 0, 180});
+
+                // Budget bar: logic (green) + render (blue) proportional to 16.67ms
+                float logicFrac  = logicMs / budgetMs;
+                float renderFrac = renderMs / budgetMs;
+                if (logicFrac > 1.0f) logicFrac = 1.0f;
+                if (renderFrac > 1.0f) renderFrac = 1.0f;
+
+                // Bar outline
+                DrawRectangleLines(bx, by, bw, bh, (Color){180, 180, 180, 200});
+                // Logic portion (green)
+                int logicW = (int)(logicFrac * bw);
+                DrawRectangle(bx, by, logicW, bh, (Color){80, 200, 80, 220});
+                // Render portion (blue, stacked after logic)
+                int renderW = (int)(renderFrac * bw);
+                if (logicW + renderW > bw) renderW = bw - logicW;
+                DrawRectangle(bx + logicW, by, renderW, bh, (Color){80, 120, 220, 220});
+
+                // Labels
+                DrawText(TextFormat("Logic:  %.2f ms", logicMs),  bx, by + bh + 2, 10, (Color){80, 200, 80, 255});
+                DrawText(TextFormat("Render: %.2f ms", renderMs), bx, by + bh + 14, 10, (Color){80, 120, 220, 255});
+                DrawText(TextFormat("Total:  %.2f ms (budget: %.1f ms)", totalMs, budgetMs), bx, by + bh + 26, 10,
+                    totalMs > budgetMs ? RED : (Color){220, 220, 220, 255});
+            }
+        }
+
         EndDrawing();
     }
 

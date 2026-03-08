@@ -1,5 +1,6 @@
 #include "game.h"
 #include "helpers.h"
+#include "items.h"
 #include "synergies.h"
 #include <math.h>
 #include <string.h>
@@ -58,6 +59,7 @@ bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
         .shieldHP       = 0.0f,
         .abilityCastDelay = 0.0f,
         .chargeTarget   = -1,
+        .itemId         = -1,
     };
     for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
         units[*unitCount].abilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
@@ -147,6 +149,7 @@ void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[], int *snapCo
         snaps[i].hpMultiplier = units[i].hpMultiplier;
         snaps[i].dmgMultiplier = units[i].dmgMultiplier;
         snaps[i].speedMultiplier = units[i].speedMultiplier;
+        snaps[i].itemId = units[i].itemId;
     }
 }
 
@@ -181,6 +184,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int sna
         for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
             units[i].abilities[a] = snaps[i].abilities[a];
         units[i].rarity = snaps[i].rarity;
+        units[i].itemId = snaps[i].itemId;
     }
 }
 
@@ -316,18 +320,10 @@ void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round)
 {
     if (*gold < cost) return;
     *gold -= cost;
+    (void)round;
     for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
         if (shopSlots[i].locked) continue;
-        if (round < 3) {
-            // Early rounds: bias toward cheaper abilities (cost 2-3)
-            // Re-roll expensive abilities with 70% chance
-            int id = GetRandomValue(0, ABILITY_COUNT - 1);
-            if (ABILITY_DEFS[id].goldCost >= 4 && GetRandomValue(0, 99) < 70)
-                id = GetRandomValue(0, ABILITY_COUNT - 1);
-            shopSlots[i].abilityId = id;
-        } else {
-            shopSlots[i].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
-        }
+        shopSlots[i].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
         shopSlots[i].level = 0;
     }
 }
@@ -835,6 +831,48 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
         // Stats scale gently
         float hpScale = 1.2f + 0.06f * (float)(extraRounds + 1);
         float dmgScale = 1.0f + 0.03f * (float)(extraRounds + 1);
+
+        // Boss at every milestone (every 5th round, 0-indexed: 4, 9, 14, ...)
+        bool isMilestone = (round > 0 && round % 5 == 4);
+        if (isMilestone) {
+            // Spawn boss unit first
+            int bossType = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
+            if (SpawnUnit(units, unitCount, bossType, TEAM_RED)) {
+                Unit *boss = &units[*unitCount - 1];
+                boss->position = FindValidSpawnPos(units, *unitCount, 10.0f);
+                float bossScale = 2.0f + 0.1f * (float)(round / 5);
+                if (bossScale > 3.5f) bossScale = 3.5f;
+                boss->scaleOverride = bossScale;
+                boss->hpMultiplier = hpScale * 3.0f;
+                boss->dmgMultiplier = dmgScale * 1.3f;
+                boss->currentHealth = UNIT_STATS[bossType].health * boss->hpMultiplier;
+                int bossAb = numAb + 1;
+                if (bossAb > MAX_ABILITIES_PER_UNIT) bossAb = MAX_ABILITIES_PER_UNIT;
+                int bossLevel = abLevel + 1;
+                if (bossLevel > ABILITY_MAX_LEVELS - 1) bossLevel = ABILITY_MAX_LEVELS - 1;
+                int bossBudget = bossLevel * bossAb;
+                AssignAbilitiesWithBudget(boss, bossAb, bossBudget);
+            }
+            // Scale down remaining normal units on milestone waves
+            for (int e = 0; e < enemyCount - 1; e++) {
+                int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
+                if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
+                    Unit *u = &units[*unitCount - 1];
+                    u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
+                    u->scaleOverride = 0.8f;
+                    float hpJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
+                    float dmgJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
+                    u->hpMultiplier = hpScale * 0.8f * hpJitter;
+                    u->dmgMultiplier = dmgScale * 0.8f * dmgJitter;
+                    u->currentHealth = UNIT_STATS[type].health * u->hpMultiplier;
+                    int unitAb = numAb + (GetRandomValue(0, 1) ? 1 : 0);
+                    if (unitAb > MAX_ABILITIES_PER_UNIT) unitAb = MAX_ABILITIES_PER_UNIT;
+                    int totalBudget = abLevel * unitAb + GetRandomValue(-1, 1);
+                    if (totalBudget < 0) totalBudget = 0;
+                    AssignAbilitiesWithBudget(u, unitAb, totalBudget);
+                }
+            }
+        } else {
         for (int e = 0; e < enemyCount; e++) {
             int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
             if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
@@ -854,6 +892,7 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
                 if (totalBudget < 0) totalBudget = 0;
                 AssignAbilitiesWithBudget(u, unitAb, totalBudget);
             }
+        }
         }
     }
 }
@@ -879,6 +918,27 @@ void ApplyRarityBuffs(Unit units[], int unitCount)
     for (int i = 0; i < unitCount; i++) {
         if (!units[i].active) continue;
         ApplyUnitRarity(&units[i]);
+    }
+}
+
+void ApplyItemEffects(Unit *unit, int unitIndex, Modifier modifiers[]) {
+    if (unit->itemId < 0 || unit->itemId >= ITEM_COUNT) return;
+    const ItemDef *item = &ITEM_DEFS[unit->itemId];
+    switch (item->effectType) {
+        case IEFF_HP_MULT:
+            unit->hpMultiplier *= item->effectValue;
+            unit->currentHealth = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
+            break;
+        case IEFF_DMG_MULT:
+            unit->dmgMultiplier *= item->effectValue;
+            break;
+        case IEFF_SPEED_MULT:
+            unit->speedMultiplier *= item->effectValue;
+            break;
+        case IEFF_MODIFIER:
+            AddModifier(modifiers, unitIndex, (ModifierType)item->modType,
+                        item->modDuration, item->effectValue);
+            break;
     }
 }
 

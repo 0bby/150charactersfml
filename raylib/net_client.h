@@ -53,6 +53,7 @@ typedef struct {
     // Combat units from server
     NetUnit combatNetUnits[NET_MAX_UNITS];
     int combatNetUnitCount;
+    uint32_t combatSeed;       // shared RNG seed from server
 
     // Combat sync snapshots
     bool combatSyncReady;

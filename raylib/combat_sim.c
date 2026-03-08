@@ -6,17 +6,16 @@
 #define PI 3.14159265358979323846f
 #endif
 
-// Deterministic hash-based pseudo-random: produces 0.0–1.0 from game state
-static float det_roll(int a, int b, float hp)
-{
-    unsigned int h;
-    memcpy(&h, &hp, sizeof(h));          // bit-pattern of float HP
-    h ^= (unsigned int)a * 2654435761u;  // Knuth multiplicative hash
-    h ^= (unsigned int)b * 2246822519u;
-    h ^= h >> 16;
-    h *= 0x45d9f3bu;
-    h ^= h >> 16;
-    return (float)(h & 0xFFFF) / 65535.0f;
+// Seeded xorshift32 PRNG for deterministic combat
+static uint32_t combatRngState = 1;
+
+void combat_rng_seed(uint32_t seed) { combatRngState = seed ? seed : 1; }
+
+float combat_rng_next(void) {
+    combatRngState ^= combatRngState << 13;
+    combatRngState ^= combatRngState >> 17;
+    combatRngState ^= combatRngState << 5;
+    return (float)(combatRngState & 0xFFFF) / 65535.0f;
 }
 
 // Damage pipeline flags
@@ -172,7 +171,7 @@ int CombatTick(Unit units[], int *unitCountPtr,
             // HIT — Hook: damage by distance, then pull target to caster
             if (projectiles[p].type == PROJ_HOOK) {
                 float hookDist = DistXZ(units[ti].position, units[projectiles[p].sourceIndex].position);
-                float rawDmg = hookDist * projectiles[p].damage;
+                float rawDmg = projectiles[p].baseDmg + hookDist * projectiles[p].damage;
                 float hitDmg = ApplyDamage(units, &unitCount, modifiers, ti, rawDmg, DMG_SINGLE_TARGET);
                 if (hitDmg > 0 && units[ti].active) {
                     // Start pulling target to caster
@@ -265,11 +264,15 @@ int CombatTick(Unit units[], int *unitCountPtr,
         float unitMaxHP = stats->health * units[i].hpMultiplier;
         bool stunned = UnitHasModifier(modifiers, i, MOD_STUN);
 
-        // Tick ability cooldowns
-        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-            if (units[i].abilities[a].abilityId < 0) continue;
-            if (units[i].abilities[a].cooldownRemaining > 0)
-                units[i].abilities[a].cooldownRemaining -= dt;
+        // Tick ability cooldowns (CDR makes cooldowns tick faster)
+        {
+            float cdr = GetModifierValue(modifiers, i, MOD_COOLDOWN_REDUCTION);
+            float effectiveDt = dt * (1.0f + cdr);
+            for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                if (units[i].abilities[a].abilityId < 0) continue;
+                if (units[i].abilities[a].cooldownRemaining > 0)
+                    units[i].abilities[a].cooldownRemaining -= effectiveDt;
+            }
         }
 
         // Passive triggers (Dig, Sunder) — blocked by stun
@@ -294,7 +297,7 @@ int CombatTick(Unit units[], int *unitCountPtr,
                     float threshold = def->values[slot->level][AV_SU_HP_THRESH];
                     if (units[i].currentHealth > 0 && units[i].currentHealth <= unitMaxHP * threshold) {
                         int enemy = FindHighestHPEnemy(units, unitCount, i);
-                        if (enemy >= 0) {
+                        if (enemy >= 0 && units[enemy].currentHealth > units[i].currentHealth) {
                             float myHP = units[i].currentHealth;
                             float enemyHP = units[enemy].currentHealth;
                             units[i].currentHealth = enemyHP;
@@ -574,7 +577,8 @@ int CombatTick(Unit units[], int *unitCountPtr,
                 SpawnHookProjectile(projectiles, units[i].position,
                     hkTarget, i, units[i].team, slot->level,
                     hkDef->values[slot->level][AV_HK_SPEED],
-                    hkDef->values[slot->level][AV_HK_DMG_PER_DIST], range);
+                    hkDef->values[slot->level][AV_HK_DMG_PER_DIST], range,
+                    hkDef->values[slot->level][AV_HK_BASE_DMG]);
                 slot->cooldownRemaining = hkDef->cooldown[slot->level];
                 castThisFrame = true;
             } break;
@@ -617,11 +621,11 @@ int CombatTick(Unit units[], int *unitCountPtr,
                     float chance3x = 0.0f;
                     int mcLvl = GetUnitAbilityLevel(units, i, ABILITY_MULTICAST);
                     if (mcLvl >= 0) chance3x = ABILITY_DEFS[ABILITY_MULTICAST].values[mcLvl][AV_MC_CHANCE_3X];
-                    float roll2x = det_roll(i, slotIdx + 100, units[i].currentHealth);
+                    float roll2x = combat_rng_next();
                     int extraCasts = 0;
                     if (roll2x < chance2x) {
                         extraCasts = 1;
-                        float roll3x = det_roll(i, slotIdx + 200, units[i].currentHealth);
+                        float roll3x = combat_rng_next();
                         if (roll3x < chance3x) extraCasts = 2;
                     }
                     if (extraCasts > 0) {
@@ -661,7 +665,8 @@ int CombatTick(Unit units[], int *unitCountPtr,
                                     hkT2, i, units[i].team, slot->level,
                                     hkDef2->values[slot->level][AV_HK_SPEED],
                                     hkDef2->values[slot->level][AV_HK_DMG_PER_DIST],
-                                    hkDef2->values[slot->level][AV_HK_RANGE]);
+                                    hkDef2->values[slot->level][AV_HK_RANGE],
+                                    hkDef2->values[slot->level][AV_HK_BASE_DMG]);
                         } break;
                         case ABILITY_BLOOD_RAGE:
                             AddModifier(modifiers, i, MOD_LIFESTEAL,
@@ -807,7 +812,7 @@ int CombatTick(Unit units[], int *unitCountPtr,
                     // Craggy Armor retaliation — chance to stun attacker
                     if (dmg > 0 && UnitHasModifier(modifiers, target, MOD_CRAGGY_ARMOR)) {
                         float stunChance = GetModifierValue(modifiers, target, MOD_CRAGGY_ARMOR);
-                        float roll = det_roll(i, target, units[i].currentHealth);
+                        float roll = combat_rng_next();
                         if (roll < stunChance) {
                             int caLvl = GetUnitAbilityLevel(units, target, ABILITY_CRAGGY_ARMOR);
                             float stunDur = (caLvl >= 0) ? ABILITY_DEFS[ABILITY_CRAGGY_ARMOR].values[caLvl][AV_CA_STUN_DUR] : 1.0f;
@@ -819,7 +824,7 @@ int CombatTick(Unit units[], int *unitCountPtr,
                     // Maelstrom on-hit proc (deterministic)
                     if (dmg > 0 && UnitHasModifier(modifiers, i, MOD_MAELSTROM)) {
                         float procChance = GetModifierValue(modifiers, i, MOD_MAELSTROM);
-                        float roll = det_roll(i, target, units[target].currentHealth);
+                        float roll = combat_rng_next();
                         if (roll < procChance) {
                             int mlLvl = GetUnitAbilityLevel(units, i, ABILITY_MAELSTROM);
                             if (mlLvl < 0) mlLvl = 0;

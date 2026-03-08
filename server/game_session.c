@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <time.h>
 
 #ifdef _WIN32
   #define WIN32_LEAN_AND_MEAN
@@ -108,12 +109,14 @@ static void send_combat_start(GameSession *s, int playerIdx,
 {
     NetUnit netUnits[NET_MAX_UNITS];
     int count = serialize_units(units, unitCount, netUnits, NET_MAX_UNITS);
-    uint8_t payload[2 + sizeof(NetUnit) * NET_MAX_UNITS];
+    uint8_t payload[6 + sizeof(NetUnit) * NET_MAX_UNITS];
     payload[0] = (uint8_t)s->currentRound;
-    payload[1] = (uint8_t)count;
-    memcpy(payload + 2, netUnits, count * sizeof(NetUnit));
+    // Embed 4-byte seed after round byte
+    memcpy(payload + 1, &s->combatSeed, 4);
+    payload[5] = (uint8_t)count;
+    memcpy(payload + 6, netUnits, count * sizeof(NetUnit));
     net_send_msg(s->players[playerIdx].sockfd, MSG_COMBAT_START,
-                 payload, 2 + count * sizeof(NetUnit));
+                 payload, 6 + count * sizeof(NetUnit));
 }
 
 // Send compact combat state snapshot to both players
@@ -285,6 +288,10 @@ void session_start_combat(GameSession *s)
     ApplySynergies(s->combatUnits, s->combatUnitCount);
 
     s->combatTickCount = 0;
+
+    // Generate shared RNG seed and initialize combat PRNG
+    s->combatSeed = (uint32_t)rand() ^ (uint32_t)time(NULL) ^ (uint32_t)s->currentRound;
+    combat_rng_seed(s->combatSeed);
 
     // Player 0 sees: their army (blue) vs p1 mirror (red)
     send_combat_start(s, 0, s->combatUnits, s->combatUnitCount);

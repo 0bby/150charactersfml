@@ -143,16 +143,17 @@ static void handle_server_msg(NetClient *nc, const NetMessage *msg)
         break;
 
     case MSG_COMBAT_START:
-        if (msg->size >= 2) {
+        if (msg->size >= 6) {
             nc->currentRound = msg->payload[0];
-            nc->combatNetUnitCount = msg->payload[1];
+            memcpy(&nc->combatSeed, msg->payload + 1, 4);
+            nc->combatNetUnitCount = msg->payload[5];
             if (nc->combatNetUnitCount > NET_MAX_UNITS) nc->combatNetUnitCount = NET_MAX_UNITS;
-            if (msg->size >= 2 + nc->combatNetUnitCount * (int)sizeof(NetUnit)) {
-                memcpy(nc->combatNetUnits, msg->payload + 2,
+            if (msg->size >= 6 + nc->combatNetUnitCount * (int)sizeof(NetUnit)) {
+                memcpy(nc->combatNetUnits, msg->payload + 6,
                        nc->combatNetUnitCount * sizeof(NetUnit));
             }
             nc->combatStarted = true;
-            printf("[Net] Combat start: %d units\n", nc->combatNetUnitCount);
+            printf("[Net] Combat start: %d units, seed=0x%08X\n", nc->combatNetUnitCount, nc->combatSeed);
         }
         break;
 

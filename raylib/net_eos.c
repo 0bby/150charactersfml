@@ -1007,12 +1007,13 @@ static void eos_handle_server_msg(EosClient *ec, const NetMessage *msg)
         break;
 
     case MSG_COMBAT_START:
-        if (msg->size >= 2) {
+        if (msg->size >= 6) {
             ec->currentRound = msg->payload[0];
-            ec->combatNetUnitCount = msg->payload[1];
+            memcpy(&ec->combatSeed, msg->payload + 1, 4);
+            ec->combatNetUnitCount = msg->payload[5];
             if (ec->combatNetUnitCount > NET_MAX_UNITS) ec->combatNetUnitCount = NET_MAX_UNITS;
-            if (msg->size >= 2 + ec->combatNetUnitCount * (int)sizeof(NetUnit))
-                memcpy(ec->combatNetUnits, msg->payload + 2,
+            if (msg->size >= 6 + ec->combatNetUnitCount * (int)sizeof(NetUnit))
+                memcpy(ec->combatNetUnits, msg->payload + 6,
                        ec->combatNetUnitCount * sizeof(NetUnit));
             ec->combatStarted = true;
         }

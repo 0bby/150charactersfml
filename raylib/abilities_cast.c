@@ -26,7 +26,7 @@ void SpawnChainFrostProjectile(Projectile projectiles[],
 }
 
 void SpawnHookProjectile(Projectile projectiles[], Vector3 startPos, int targetIndex,
-    int sourceIndex, Team sourceTeam, int level, float speed, float dmgPerDist, float range)
+    int sourceIndex, Team sourceTeam, int level, float speed, float dmgPerDist, float range, float baseDmg)
 {
     for (int p = 0; p < MAX_PROJECTILES; p++) {
         if (!projectiles[p].active) {
@@ -34,7 +34,7 @@ void SpawnHookProjectile(Projectile projectiles[], Vector3 startPos, int targetI
                 .type = PROJ_HOOK,
                 .position = (Vector3){ startPos.x, startPos.y + 3.0f, startPos.z },
                 .targetIndex = targetIndex, .sourceIndex = sourceIndex, .sourceTeam = sourceTeam,
-                .speed = speed, .damage = dmgPerDist, .stunDuration = 0,
+                .speed = speed, .damage = dmgPerDist, .baseDmg = baseDmg, .stunDuration = 0,
                 .bouncesRemaining = 0, .bounceRange = range, .lastHitUnit = -1,
                 .level = level, .color = (Color){ 200, 60, 60, 255 }, .active = true,
                 .chargeTimer = 0.2f, .chargeMax = 0.2f,
@@ -432,8 +432,9 @@ bool CastHook(CombatState *state, int caster, AbilitySlot *slot)
     }
     float speed = def->values[lvl][AV_HK_SPEED];
     float dmgPerDist = def->values[lvl][AV_HK_DMG_PER_DIST];
+    float baseDmg = def->values[lvl][AV_HK_BASE_DMG];
     SpawnHookProjectile(state->projectiles, state->units[caster].position,
-        target, caster, state->units[caster].team, lvl, speed, dmgPerDist, range);
+        target, caster, state->units[caster].team, lvl, speed, dmgPerDist, range, baseDmg);
     slot->cooldownRemaining = def->cooldown[lvl];
     return true;
 }
@@ -466,7 +467,7 @@ void CheckPassiveSunder(CombatState *state, int unitIndex)
         float maxHP = UNIT_STATS[unit->typeIndex].health;
         if (unit->currentHealth > 0 && unit->currentHealth <= maxHP * threshold) {
             int enemy = FindHighestHPEnemy(state->units, state->unitCount, unitIndex);
-            if (enemy >= 0) {
+            if (enemy >= 0 && state->units[enemy].currentHealth > unit->currentHealth) {
                 float myHP = unit->currentHealth;
                 float enemyHP = state->units[enemy].currentHealth;
                 unit->currentHealth = enemyHP;
