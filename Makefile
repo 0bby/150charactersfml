@@ -83,29 +83,53 @@ deps:
 		echo "=== deps/raylib-linux/lib/libraylib.a already exists, skipping ==="; \
 	fi
 
-export: deps
+export-linux: deps
 	@echo "=== Building Linux (static) ==="
 	$(MAKE) clean-game
 	$(MAKE) STATIC_RAYLIB=1 game
-	@echo "=== Building Windows ==="
-	$(MAKE) -f Makefile.win
-	@echo "=== Assembling export ==="
-	@rm -rf export
-	@mkdir -p export/linux export/windows
+	@echo "=== Assembling Linux export ==="
+	@mkdir -p export/linux
 	@cp $(GAME_TARGET) export/linux/
-	@cp $(GAME_DIR)/game.exe export/windows/
 	@for dir in $(GAME_ASSET_DIRS); do \
 		if [ -d "$(GAME_DIR)/$$dir" ]; then \
 			cp -r "$(GAME_DIR)/$$dir" export/linux/; \
+		fi; \
+	done
+	@for f in $(GAME_ASSETS); do \
+		[ -f "$$f" ] && cp "$$f" export/linux/ || true; \
+	done
+	@echo "=== Linux Export complete: export/linux/game ==="
+
+export-windows:
+	@echo "=== Building Windows ==="
+	$(MAKE) -f Makefile.win
+	@echo "=== Assembling Windows export ==="
+	@mkdir -p export/windows
+	@cp $(GAME_DIR)/game.exe export/windows/
+	@for dir in $(GAME_ASSET_DIRS); do \
+		if [ -d "$(GAME_DIR)/$$dir" ]; then \
 			cp -r "$(GAME_DIR)/$$dir" export/windows/; \
 		fi; \
 	done
 	@for f in $(GAME_ASSETS); do \
-		[ -f "$$f" ] && cp "$$f" export/linux/ && cp "$$f" export/windows/ || true; \
+		[ -f "$$f" ] && cp "$$f" export/windows/ || true; \
 	done
-	@echo "=== Export complete ==="
-	@echo "  Linux:   export/linux/game"
-	@echo "  Windows: export/windows/game.exe"
+	@echo "=== Windows Export complete: export/windows/game.exe ==="
+
+ifeq ($(UNAME),Windows_NT)
+export: export-windows
+release: export
+	@echo "=== Zipping ==="
+	cd export && zip -qr ../$(GAME_NAME)-$(VERSION)-windows.zip windows/
+	@echo "=== Creating GitHub release $(VERSION) ==="
+	gh release create $(VERSION) \
+		$(GAME_NAME)-$(VERSION)-windows.zip \
+		--title "$(GAME_NAME) $(VERSION)" \
+		--notes "Windows build"
+	@rm -f $(GAME_NAME)-$(VERSION)-windows.zip
+	@echo "=== Released $(VERSION) ==="
+else
+export: export-linux export-windows
 
 release: export
 	@echo "=== Zipping ==="
@@ -119,6 +143,7 @@ release: export
 		--notes "Linux and Windows builds"
 	@rm -f $(GAME_NAME)-$(VERSION)-linux.zip $(GAME_NAME)-$(VERSION)-windows.zip
 	@echo "=== Released $(VERSION) ==="
+endif
 
 clean: clean-game
 	$(MAKE) -f Makefile.win clean

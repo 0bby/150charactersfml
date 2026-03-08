@@ -1,6 +1,6 @@
 # Cross-compile to Windows .exe using mingw-w64
 #
-# Setup:
+# Linux Setup (Cross-compiling):
 #   1. Install mingw:  sudo pacman -S mingw-w64-gcc
 #   2. Download Windows raylib 5.5 from:
 #      https://github.com/raysan5/raylib/releases/tag/5.5  (raylib-5.5_win64_mingw-w64.zip)
@@ -8,6 +8,17 @@
 #        deps/raylib-win/lib/libraylib.a
 #        deps/raylib-win/include/raylib.h
 #   4. Run:  make -f Makefile.win
+#
+# Local Windows Build (using w64devkit):
+#   1. Ensure w64devkit is in your path (e.g., $env:PATH = "C:\raylib\w64devkit\bin;" + $env:PATH)
+#   2. Setup deps/raylib-win/ with raylib.h, raymath.h, rlgl.h, and libraylib.a:
+#        mkdir -p deps/raylib-win/include; mkdir -p deps/raylib-win/lib
+#        cp C:\raylib\raylib\src\raylib.h deps/raylib-win/include/
+#        cp C:\raylib\raylib\src\raymath.h deps/raylib-win/include/
+#        cp C:\raylib\raylib\src\rlgl.h deps/raylib-win/include/
+#        cp C:\raylib\raylib\src\libraylib.a deps/raylib-win/lib/
+#   3. Compile:  make -f Makefile.win
+#   4. Run:      cd raylib; .\game.exe
 
 CC = x86_64-w64-mingw32-gcc
 CFLAGS = -Wall -Wextra -O2

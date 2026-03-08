@@ -62,5 +62,8 @@ void DrawMap(ActMap *map);
 // Reset map scroll to show bottom (layer 0)
 void ResetMapScroll(void);
 
+// Scroll map to center on a specific layer
+void ScrollMapToLayer(int layer);
+
 // Get a random event type for an event node
 MapEventType GetRandomEvent(uint32_t seed);

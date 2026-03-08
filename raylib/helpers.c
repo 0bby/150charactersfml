@@ -1,1163 +1,1313 @@
-#include "game.h"
 #include "helpers.h"
+#include "game.h"
 #include "items.h"
 #include "synergies.h"
 #include <math.h>
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
+
 
 //------------------------------------------------------------------------------------
 // Animation Helpers
 //------------------------------------------------------------------------------------
 ModelAnimation *GetAnimArray(UnitType *type, AnimState state) {
-    switch (state) {
-        case ANIM_IDLE:   return type->idleAnims;
-        case ANIM_SCARED: return type->scaredAnims ? type->scaredAnims : type->anims;
-        case ANIM_ATTACK: return type->attackAnims;
-        case ANIM_CAST:   return type->castAnims;
-        default:          return type->anims;  // ANIM_WALK and fallback
-    }
+  switch (state) {
+  case ANIM_IDLE:
+    return type->idleAnims;
+  case ANIM_SCARED:
+    return type->scaredAnims ? type->scaredAnims : type->anims;
+  case ANIM_ATTACK:
+    return type->attackAnims;
+  case ANIM_CAST:
+    return type->castAnims;
+  default:
+    return type->anims; // ANIM_WALK and fallback
+  }
 }
 
 //------------------------------------------------------------------------------------
 // Unit Utilities
 //------------------------------------------------------------------------------------
 // Count active units for a specific team
-int CountTeamUnits(Unit units[], int unitCount, Team team)
-{
-    int count = 0;
-    for (int i = 0; i < unitCount; i++)
-        if (units[i].active && units[i].team == team) count++;
-    return count;
+int CountTeamUnits(Unit units[], int unitCount, Team team) {
+  int count = 0;
+  for (int i = 0; i < unitCount; i++)
+    if (units[i].active && units[i].team == team)
+      count++;
+  return count;
 }
 
 // Returns true if spawn succeeded
-bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team)
-{
-    if (*unitCount >= MAX_UNITS) return false;
-    // Enforce blue team cap
-    if (team == TEAM_BLUE && CountTeamUnits(units, *unitCount, TEAM_BLUE) >= BLUE_TEAM_MAX_SIZE)
-        return false;
-    const UnitStats *stats = &UNIT_STATS[typeIndex];
-    units[*unitCount] = (Unit){
-        .typeIndex      = typeIndex,
-        .position       = (Vector3){ 0.0f, 0.0f, 0.0f },
-        .team           = team,
-        .currentHealth  = stats->health,
-        .attackCooldown = 0.0f,
-        .targetIndex    = -1,
-        .active         = true,
-        .selected       = false,
-        .dragging       = false,
-        .facingAngle    = (team == TEAM_BLUE) ? 180.0f : 0.0f,
-        .currentAnim    = ANIM_IDLE,
-        .animFrame      = GetRandomValue(0, 999),
-        .scaleOverride  = 1.0f,
-        .hpMultiplier   = 1.0f,
-        .dmgMultiplier  = 1.0f,
-        .speedMultiplier = 1.0f,
-        .shieldHP       = 0.0f,
-        .abilityCastDelay = 0.0f,
-        .chargeTarget   = -1,
-        .itemId         = -1,
-    };
-    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-        units[*unitCount].abilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
-            .cooldownRemaining = 0, .triggered = false };
-    }
-    units[*unitCount].nextAbilitySlot = 0;
-    (*unitCount)++;
-    return true;
+bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team) {
+  if (*unitCount >= MAX_UNITS)
+    return false;
+  // Enforce blue team cap
+  if (team == TEAM_BLUE &&
+      CountTeamUnits(units, *unitCount, TEAM_BLUE) >= BLUE_TEAM_MAX_SIZE)
+    return false;
+  const UnitStats *stats = &UNIT_STATS[typeIndex];
+  units[*unitCount] = (Unit){
+      .typeIndex = typeIndex,
+      .position = (Vector3){0.0f, 0.0f, 0.0f},
+      .team = team,
+      .currentHealth = stats->health,
+      .attackCooldown = 0.0f,
+      .targetIndex = -1,
+      .active = true,
+      .selected = false,
+      .dragging = false,
+      .facingAngle = (team == TEAM_BLUE) ? 180.0f : 0.0f,
+      .currentAnim = ANIM_IDLE,
+      .animFrame = GetRandomValue(0, 999),
+      .scaleOverride = 1.0f,
+      .hpMultiplier = 1.0f,
+      .dmgMultiplier = 1.0f,
+      .speedMultiplier = 1.0f,
+      .shieldHP = 0.0f,
+      .abilityCastDelay = 0.0f,
+      .chargeTarget = -1,
+      .itemId = -1,
+  };
+  for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+    units[*unitCount].abilities[a] = (AbilitySlot){.abilityId = -1,
+                                                   .level = 0,
+                                                   .cooldownRemaining = 0,
+                                                   .triggered = false};
+  }
+  units[*unitCount].nextAbilitySlot = 0;
+  (*unitCount)++;
+  return true;
 }
 
-BoundingBox GetUnitBounds(Unit *unit, UnitType *type)
-{
-    BoundingBox b = type->baseBounds;
-    float s = type->scale;
-    Vector3 p = unit->position;
-    return (BoundingBox){
-        (Vector3){ p.x + b.min.x * s, p.y + b.min.y * s, p.z + b.min.z * s },
-        (Vector3){ p.x + b.max.x * s, p.y + b.max.y * s, p.z + b.max.z * s }
-    };
+BoundingBox GetUnitBounds(Unit *unit, UnitType *type) {
+  BoundingBox b = type->baseBounds;
+  float s = type->scale;
+  Vector3 p = unit->position;
+  return (BoundingBox){
+      (Vector3){p.x + b.min.x * s, p.y + b.min.y * s, p.z + b.min.z * s},
+      (Vector3){p.x + b.max.x * s, p.y + b.max.y * s, p.z + b.max.z * s}};
 }
 
-Color GetTeamTint(Team team)
-{
-    if (team == TEAM_BLUE) return (Color){ 100, 140, 255, 255 };
-    else                   return (Color){ 255, 110, 110, 255 };
+Color GetTeamTint(Team team) {
+  if (team == TEAM_BLUE)
+    return (Color){100, 140, 255, 255};
+  else
+    return (Color){255, 110, 110, 255};
 }
 
 // Distance on the XZ plane
-float DistXZ(Vector3 a, Vector3 b)
-{
-    float dx = a.x - b.x;
-    float dz = a.z - b.z;
-    return sqrtf(dx * dx + dz * dz);
+float DistXZ(Vector3 a, Vector3 b) {
+  float dx = a.x - b.x;
+  float dz = a.z - b.z;
+  return sqrtf(dx * dx + dz * dz);
 }
 
 // Find index of closest active enemy (-1 if none)
-int FindClosestEnemy(Unit units[], int unitCount, int selfIndex)
-{
-    Team myTeam = units[selfIndex].team;
-    float bestDist = 1e30f;
-    int bestIdx = -1;
-    for (int j = 0; j < unitCount; j++)
-    {
-        if (j == selfIndex || !units[j].active) continue;
-        if (units[j].team == myTeam) continue;
-        float d = DistXZ(units[selfIndex].position, units[j].position);
-        if (d < bestDist) { bestDist = d; bestIdx = j; }
+int FindClosestEnemy(Unit units[], int unitCount, int selfIndex) {
+  Team myTeam = units[selfIndex].team;
+  float bestDist = 1e30f;
+  int bestIdx = -1;
+  for (int j = 0; j < unitCount; j++) {
+    if (j == selfIndex || !units[j].active)
+      continue;
+    if (units[j].team == myTeam)
+      continue;
+    float d = DistXZ(units[selfIndex].position, units[j].position);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = j;
     }
-    return bestIdx;
+  }
+  return bestIdx;
 }
 
 // Get ability level for a unit (-1 if not found)
-int GetUnitAbilityLevel(Unit units[], int unitIndex, int abilityId)
-{
-    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-        if (units[unitIndex].abilities[a].abilityId == abilityId)
-            return units[unitIndex].abilities[a].level;
-    }
-    return -1;
+int GetUnitAbilityLevel(Unit units[], int unitIndex, int abilityId) {
+  for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+    if (units[unitIndex].abilities[a].abilityId == abilityId)
+      return units[unitIndex].abilities[a].level;
+  }
+  return -1;
 }
 
 // Count active units per team
-void CountTeams(Unit units[], int unitCount, int *blueAlive, int *redAlive)
-{
-    *blueAlive = 0;
-    *redAlive  = 0;
-    for (int i = 0; i < unitCount; i++)
-    {
-        if (!units[i].active) continue;
-        if (units[i].team == TEAM_BLUE) (*blueAlive)++;
-        else (*redAlive)++;
-    }
+void CountTeams(Unit units[], int unitCount, int *blueAlive, int *redAlive) {
+  *blueAlive = 0;
+  *redAlive = 0;
+  for (int i = 0; i < unitCount; i++) {
+    if (!units[i].active)
+      continue;
+    if (units[i].team == TEAM_BLUE)
+      (*blueAlive)++;
+    else
+      (*redAlive)++;
+  }
 }
 
 // Save unit layout for round-reset
-void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[], int *snapCount)
-{
-    *snapCount = unitCount;
-    for (int i = 0; i < unitCount; i++)
-    {
-        snaps[i].typeIndex = units[i].typeIndex;
-        snaps[i].position = units[i].position;
-        snaps[i].team     = units[i].team;
-        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
-            snaps[i].abilities[a] = units[i].abilities[a];
-        snaps[i].rarity = units[i].rarity;
-        snaps[i].hpMultiplier = units[i].hpMultiplier;
-        snaps[i].dmgMultiplier = units[i].dmgMultiplier;
-        snaps[i].speedMultiplier = units[i].speedMultiplier;
-        snaps[i].itemId = units[i].itemId;
-    }
+void SaveSnapshot(Unit units[], int unitCount, UnitSnapshot snaps[],
+                  int *snapCount) {
+  *snapCount = unitCount;
+  for (int i = 0; i < unitCount; i++) {
+    snaps[i].typeIndex = units[i].typeIndex;
+    snaps[i].position = units[i].position;
+    snaps[i].team = units[i].team;
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+      snaps[i].abilities[a] = units[i].abilities[a];
+    snaps[i].rarity = units[i].rarity;
+    snaps[i].hpMultiplier = units[i].hpMultiplier;
+    snaps[i].dmgMultiplier = units[i].dmgMultiplier;
+    snaps[i].speedMultiplier = units[i].speedMultiplier;
+    snaps[i].itemId = units[i].itemId;
+  }
 }
 
 // Restore units from snapshot (full HP, ready to fight again)
-void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[], int snapCount)
-{
-    *unitCount = snapCount;
-    for (int i = 0; i < snapCount; i++)
-    {
-        const UnitStats *stats = &UNIT_STATS[snaps[i].typeIndex];
-        units[i] = (Unit){
-            .typeIndex      = snaps[i].typeIndex,
-            .position       = snaps[i].position,
-            .team           = snaps[i].team,
-            .currentHealth  = stats->health * snaps[i].hpMultiplier,
-            .attackCooldown = 0.0f,
-            .targetIndex    = -1,
-            .active         = true,
-            .selected       = false,
-            .dragging       = false,
-            .facingAngle    = (snaps[i].team == TEAM_BLUE) ? 180.0f : 0.0f,
-            .currentAnim    = ANIM_IDLE,
-            .animFrame      = GetRandomValue(0, 999),
-            .scaleOverride  = 1.0f,
-            .hpMultiplier   = snaps[i].hpMultiplier,
-            .dmgMultiplier  = snaps[i].dmgMultiplier,
-            .speedMultiplier = snaps[i].speedMultiplier,
-            .shieldHP       = 0.0f,
-            .abilityCastDelay = 0.0f,
-            .chargeTarget   = -1,
-        };
-        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
-            units[i].abilities[a] = snaps[i].abilities[a];
-        units[i].rarity = snaps[i].rarity;
-        units[i].itemId = snaps[i].itemId;
-    }
+void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[],
+                     int snapCount) {
+  *unitCount = snapCount;
+  for (int i = 0; i < snapCount; i++) {
+    const UnitStats *stats = &UNIT_STATS[snaps[i].typeIndex];
+    units[i] = (Unit){
+        .typeIndex = snaps[i].typeIndex,
+        .position = snaps[i].position,
+        .team = snaps[i].team,
+        .currentHealth = stats->health * snaps[i].hpMultiplier,
+        .attackCooldown = 0.0f,
+        .targetIndex = -1,
+        .active = true,
+        .selected = false,
+        .dragging = false,
+        .facingAngle = (snaps[i].team == TEAM_BLUE) ? 180.0f : 0.0f,
+        .currentAnim = ANIM_IDLE,
+        .animFrame = GetRandomValue(0, 999),
+        .scaleOverride = 1.0f,
+        .hpMultiplier = snaps[i].hpMultiplier,
+        .dmgMultiplier = snaps[i].dmgMultiplier,
+        .speedMultiplier = snaps[i].speedMultiplier,
+        .shieldHP = 0.0f,
+        .abilityCastDelay = 0.0f,
+        .chargeTarget = -1,
+    };
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+      units[i].abilities[a] = snaps[i].abilities[a];
+    units[i].rarity = snaps[i].rarity;
+    units[i].itemId = snaps[i].itemId;
+  }
 }
 
 //------------------------------------------------------------------------------------
 // Modifier Helpers
 //------------------------------------------------------------------------------------
-bool UnitHasModifier(Modifier modifiers[], int unitIndex, ModifierType type)
-{
-    for (int m = 0; m < MAX_MODIFIERS; m++)
-        if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type)
-            return true;
-    return false;
+bool UnitHasModifier(Modifier modifiers[], int unitIndex, ModifierType type) {
+  for (int m = 0; m < MAX_MODIFIERS; m++)
+    if (modifiers[m].active && modifiers[m].unitIndex == unitIndex &&
+        modifiers[m].type == type)
+      return true;
+  return false;
 }
 
-float GetModifierValue(Modifier modifiers[], int unitIndex, ModifierType type)
-{
-    bool stacks = ModifierTypeStacks(type);
-    float result = 0.0f;
-    for (int m = 0; m < MAX_MODIFIERS; m++) {
-        if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type) {
-            if (stacks) result += modifiers[m].value;
-            else if (modifiers[m].value > result) result = modifiers[m].value;
-        }
+float GetModifierValue(Modifier modifiers[], int unitIndex, ModifierType type) {
+  bool stacks = ModifierTypeStacks(type);
+  float result = 0.0f;
+  for (int m = 0; m < MAX_MODIFIERS; m++) {
+    if (modifiers[m].active && modifiers[m].unitIndex == unitIndex &&
+        modifiers[m].type == type) {
+      if (stacks)
+        result += modifiers[m].value;
+      else if (modifiers[m].value > result)
+        result = modifiers[m].value;
     }
-    return result;
+  }
+  return result;
 }
 
-void AddModifier(Modifier modifiers[], int unitIndex, ModifierType type, float duration, float value)
-{
-    // Spell Protect blocks negative modifiers (stun)
-    if (type == MOD_STUN && UnitHasModifier(modifiers, unitIndex, MOD_SPELL_PROTECT))
+void AddModifier(Modifier modifiers[], int unitIndex, ModifierType type,
+                 float duration, float value) {
+  // Spell Protect blocks negative modifiers (stun)
+  if (type == MOD_STUN &&
+      UnitHasModifier(modifiers, unitIndex, MOD_SPELL_PROTECT))
+    return;
+
+  // Dedup: if same (type, unitIndex) already active, refresh duration to max
+  // Skip dedup for stacking modifier types (they allow multiple instances)
+  if (!ModifierTypeStacks(type)) {
+    for (int m = 0; m < MAX_MODIFIERS; m++) {
+      if (modifiers[m].active && modifiers[m].unitIndex == unitIndex &&
+          modifiers[m].type == type) {
+        if (duration > modifiers[m].duration)
+          modifiers[m].duration = duration;
+        if (duration > modifiers[m].maxDuration)
+          modifiers[m].maxDuration = duration;
+        if (value > modifiers[m].value)
+          modifiers[m].value = value;
         return;
-
-    // Dedup: if same (type, unitIndex) already active, refresh duration to max
-    // Skip dedup for stacking modifier types (they allow multiple instances)
-    if (!ModifierTypeStacks(type)) {
-        for (int m = 0; m < MAX_MODIFIERS; m++) {
-            if (modifiers[m].active && modifiers[m].unitIndex == unitIndex && modifiers[m].type == type) {
-                if (duration > modifiers[m].duration)
-                    modifiers[m].duration = duration;
-                if (duration > modifiers[m].maxDuration)
-                    modifiers[m].maxDuration = duration;
-                if (value > modifiers[m].value)
-                    modifiers[m].value = value;
-                return;
-            }
-        }
+      }
     }
+  }
 
-    for (int m = 0; m < MAX_MODIFIERS; m++) {
-        if (!modifiers[m].active) {
-            modifiers[m] = (Modifier){ .type = type, .unitIndex = unitIndex,
-                .duration = duration, .maxDuration = duration, .value = value, .active = true };
-            return;
-        }
+  for (int m = 0; m < MAX_MODIFIERS; m++) {
+    if (!modifiers[m].active) {
+      modifiers[m] = (Modifier){.type = type,
+                                .unitIndex = unitIndex,
+                                .duration = duration,
+                                .maxDuration = duration,
+                                .value = value,
+                                .active = true};
+      return;
     }
+  }
 }
 
-void ClearAllModifiers(Modifier modifiers[])
-{
-    for (int m = 0; m < MAX_MODIFIERS; m++) modifiers[m].active = false;
+void ClearAllModifiers(Modifier modifiers[]) {
+  for (int m = 0; m < MAX_MODIFIERS; m++)
+    modifiers[m].active = false;
 }
 
 //------------------------------------------------------------------------------------
 // Projectile Helpers
 //------------------------------------------------------------------------------------
 void SpawnProjectile(Projectile projectiles[], ProjectileType type,
-    Vector3 startPos, int targetIndex, int sourceIndex, Team sourceTeam, int level,
-    float speed, float damage, float stunDur, Color color)
-{
-    for (int p = 0; p < MAX_PROJECTILES; p++) {
-        if (!projectiles[p].active) {
-            projectiles[p] = (Projectile){
-                .type = type, .position = (Vector3){ startPos.x, startPos.y + 3.0f, startPos.z },
-                .targetIndex = targetIndex, .sourceIndex = sourceIndex, .sourceTeam = sourceTeam,
-                .speed = speed, .damage = damage, .stunDuration = stunDur,
-                .bouncesRemaining = 0, .bounceRange = 0, .lastHitUnit = -1,
-                .level = level, .color = color, .active = true,
-                .chargeTimer = 0.2f, .chargeMax = 0.2f,
-            };
-            return;
-        }
+                     Vector3 startPos, int targetIndex, int sourceIndex,
+                     Team sourceTeam, int level, float speed, float damage,
+                     float stunDur, Color color) {
+  for (int p = 0; p < MAX_PROJECTILES; p++) {
+    if (!projectiles[p].active) {
+      projectiles[p] = (Projectile){
+          .type = type,
+          .position = (Vector3){startPos.x, startPos.y + 3.0f, startPos.z},
+          .targetIndex = targetIndex,
+          .sourceIndex = sourceIndex,
+          .sourceTeam = sourceTeam,
+          .speed = speed,
+          .damage = damage,
+          .stunDuration = stunDur,
+          .bouncesRemaining = 0,
+          .bounceRange = 0,
+          .lastHitUnit = -1,
+          .level = level,
+          .color = color,
+          .active = true,
+          .chargeTimer = 0.2f,
+          .chargeMax = 0.2f,
+      };
+      return;
     }
+  }
 }
 
-void ClearAllProjectiles(Projectile projectiles[])
-{
-    for (int p = 0; p < MAX_PROJECTILES; p++) projectiles[p].active = false;
+void ClearAllProjectiles(Projectile projectiles[]) {
+  for (int p = 0; p < MAX_PROJECTILES; p++)
+    projectiles[p].active = false;
 }
 
 //------------------------------------------------------------------------------------
 // Particle Helpers
 //------------------------------------------------------------------------------------
-void ClearAllParticles(Particle particles[])
-{
-    for (int i = 0; i < MAX_PARTICLES; i++) particles[i].active = false;
+void ClearAllParticles(Particle particles[]) {
+  for (int i = 0; i < MAX_PARTICLES; i++)
+    particles[i].active = false;
 }
 
-void SpawnParticle(Particle particles[], Vector3 pos, Vector3 vel, float life, float size, Color color)
-{
-    for (int i = 0; i < MAX_PARTICLES; i++) {
-        if (particles[i].active) continue;
-        particles[i] = (Particle){
-            .position = pos, .velocity = vel,
-            .life = life, .maxLife = life,
-            .color = color, .size = size, .active = true
-        };
-        return;
-    }
+void SpawnParticle(Particle particles[], Vector3 pos, Vector3 vel, float life,
+                   float size, Color color) {
+  for (int i = 0; i < MAX_PARTICLES; i++) {
+    if (particles[i].active)
+      continue;
+    particles[i] = (Particle){.position = pos,
+                              .velocity = vel,
+                              .life = life,
+                              .maxLife = life,
+                              .color = color,
+                              .size = size,
+                              .active = true};
+    return;
+  }
 }
 
-void UpdateParticles(Particle particles[], float dt)
-{
-    for (int i = 0; i < MAX_PARTICLES; i++) {
-        if (!particles[i].active) continue;
-        particles[i].life -= dt;
-        if (particles[i].life <= 0) { particles[i].active = false; continue; }
-        particles[i].position.x += particles[i].velocity.x * dt;
-        particles[i].position.y += particles[i].velocity.y * dt;
-        particles[i].position.z += particles[i].velocity.z * dt;
-        // Gravity
-        particles[i].velocity.y -= 15.0f * dt;
-        // Fade out
-        float alpha = particles[i].life / particles[i].maxLife;
-        particles[i].color.a = (unsigned char)(255.0f * alpha);
+void UpdateParticles(Particle particles[], float dt) {
+  for (int i = 0; i < MAX_PARTICLES; i++) {
+    if (!particles[i].active)
+      continue;
+    particles[i].life -= dt;
+    if (particles[i].life <= 0) {
+      particles[i].active = false;
+      continue;
     }
+    particles[i].position.x += particles[i].velocity.x * dt;
+    particles[i].position.y += particles[i].velocity.y * dt;
+    particles[i].position.z += particles[i].velocity.z * dt;
+    // Gravity
+    particles[i].velocity.y -= 15.0f * dt;
+    // Fade out
+    float alpha = particles[i].life / particles[i].maxLife;
+    particles[i].color.a = (unsigned char)(255.0f * alpha);
+  }
 }
 
 //------------------------------------------------------------------------------------
 // Shop & Inventory Helpers
 //------------------------------------------------------------------------------------
-void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round)
-{
-    if (*gold < cost) return;
-    *gold -= cost;
-    (void)round;
-    for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
-        if (shopSlots[i].locked) continue;
-        shopSlots[i].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
-        shopSlots[i].level = 0;
-    }
+void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round) {
+  if (*gold < cost)
+    return;
+  *gold -= cost;
+  (void)round;
+  for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
+    if (shopSlots[i].locked)
+      continue;
+    shopSlots[i].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
+    shopSlots[i].level = 0;
+  }
 }
 
-void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold)
-{
-    if (slot->abilityId < 0) return;
-    int cost = ABILITY_DEFS[slot->abilityId].goldCost;
-    if (*gold < cost) return;
-    slot->locked = false;
+void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[],
+                int unitCount, int *gold) {
+  if (slot->abilityId < 0)
+    return;
+  int cost = ABILITY_DEFS[slot->abilityId].goldCost;
+  if (*gold < cost)
+    return;
+  slot->locked = false;
 
-    // Auto-combine: check if this ability already exists on a blue unit or in inventory
-    // Upgrade existing instance instead of creating duplicate
-    for (int i = 0; i < unitCount; i++) {
-        if (!units[i].active || units[i].team != TEAM_BLUE) continue;
-        for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-            if (units[i].abilities[a].abilityId == slot->abilityId &&
-                units[i].abilities[a].level < ABILITY_MAX_LEVELS - 1) {
-                units[i].abilities[a].level++;
-                *gold -= cost;
-                slot->abilityId = -1;
-                return;
-            }
-        }
+  // Auto-combine: check if this ability already exists on a blue unit or in
+  // inventory Upgrade existing instance instead of creating duplicate
+  for (int i = 0; i < unitCount; i++) {
+    if (!units[i].active || units[i].team != TEAM_BLUE)
+      continue;
+    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+      if (units[i].abilities[a].abilityId == slot->abilityId &&
+          units[i].abilities[a].level < ABILITY_MAX_LEVELS - 1) {
+        units[i].abilities[a].level++;
+        *gold -= cost;
+        slot->abilityId = -1;
+        return;
+      }
     }
-    for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) {
-        if (inventory[i].abilityId == slot->abilityId &&
-            inventory[i].level < ABILITY_MAX_LEVELS - 1) {
-            inventory[i].level++;
-            *gold -= cost;
-            slot->abilityId = -1;
-            return;
-        }
+  }
+  for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) {
+    if (inventory[i].abilityId == slot->abilityId &&
+        inventory[i].level < ABILITY_MAX_LEVELS - 1) {
+      inventory[i].level++;
+      *gold -= cost;
+      slot->abilityId = -1;
+      return;
     }
+  }
 
-    // No existing copy — place in first empty inventory slot
-    for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) {
-        if (inventory[i].abilityId < 0) {
-            inventory[i].abilityId = slot->abilityId;
-            inventory[i].level = slot->level;
-            *gold -= cost;
-            slot->abilityId = -1;
-            return;
-        }
+  // No existing copy — place in first empty inventory slot
+  for (int i = 0; i < MAX_INVENTORY_SLOTS; i++) {
+    if (inventory[i].abilityId < 0) {
+      inventory[i].abilityId = slot->abilityId;
+      inventory[i].level = slot->level;
+      *gold -= cost;
+      slot->abilityId = -1;
+      return;
     }
-    // Inventory full — do nothing
+  }
+  // Inventory full — do nothing
 }
 
-void AssignRandomAbilities(Unit *unit, int numAbilities)
-{
-    for (int a = 0; a < numAbilities && a < MAX_ABILITIES_PER_UNIT; a++) {
-        unit->abilities[a].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
-        unit->abilities[a].level = GetRandomValue(0, 1);
-        unit->abilities[a].cooldownRemaining = 0;
-        unit->abilities[a].triggered = false;
-    }
+void AssignRandomAbilities(Unit *unit, int numAbilities) {
+  for (int a = 0; a < numAbilities && a < MAX_ABILITIES_PER_UNIT; a++) {
+    unit->abilities[a].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);
+    unit->abilities[a].level = GetRandomValue(0, 1);
+    unit->abilities[a].cooldownRemaining = 0;
+    unit->abilities[a].triggered = false;
+  }
 }
 
 //------------------------------------------------------------------------------------
 // Floating Text Helpers
 //------------------------------------------------------------------------------------
-void SpawnFloatingText(FloatingText texts[], Vector3 pos, const char *str, Color color, float life)
-{
-    SpawnFloatingTextEx(texts, pos, str, color, life, 0, 0.0f);
+void SpawnFloatingText(FloatingText texts[], Vector3 pos, const char *str,
+                       Color color, float life) {
+  SpawnFloatingTextEx(texts, pos, str, color, life, 0, 0.0f);
 }
 
-void SpawnFloatingTextEx(FloatingText texts[], Vector3 pos, const char *str, Color color, float life, int fontSize, float driftX)
-{
-    for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
-        if (!texts[i].active) {
-            texts[i].position = pos;
-            texts[i].position.y += 5.0f; // start slightly above unit
-            strncpy(texts[i].text, str, 31);
-            texts[i].text[31] = '\0';
-            texts[i].color = color;
-            texts[i].life = life;
-            texts[i].maxLife = life;
-            texts[i].fontSize = fontSize;
-            texts[i].driftX = driftX;
-            texts[i].active = true;
-            return;
-        }
+void SpawnFloatingTextEx(FloatingText texts[], Vector3 pos, const char *str,
+                         Color color, float life, int fontSize, float driftX) {
+  for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
+    if (!texts[i].active) {
+      texts[i].position = pos;
+      texts[i].position.y += 5.0f; // start slightly above unit
+      strncpy(texts[i].text, str, 31);
+      texts[i].text[31] = '\0';
+      texts[i].color = color;
+      texts[i].life = life;
+      texts[i].maxLife = life;
+      texts[i].fontSize = fontSize;
+      texts[i].driftX = driftX;
+      texts[i].active = true;
+      return;
     }
+  }
 }
 
-void UpdateFloatingTexts(FloatingText texts[], float dt)
-{
-    for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
-        if (!texts[i].active) continue;
-        texts[i].life -= dt;
-        if (texts[i].life <= 0) { texts[i].active = false; continue; }
-        texts[i].position.y += 15.0f * dt; // drift upward
+void UpdateFloatingTexts(FloatingText texts[], float dt) {
+  for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
+    if (!texts[i].active)
+      continue;
+    texts[i].life -= dt;
+    if (texts[i].life <= 0) {
+      texts[i].active = false;
+      continue;
     }
+    texts[i].position.y += 15.0f * dt; // drift upward
+  }
 }
 
-void ClearAllFloatingTexts(FloatingText texts[])
-{
-    for (int i = 0; i < MAX_FLOATING_TEXTS; i++) texts[i].active = false;
+void ClearAllFloatingTexts(FloatingText texts[]) {
+  for (int i = 0; i < MAX_FLOATING_TEXTS; i++)
+    texts[i].active = false;
 }
 
 //------------------------------------------------------------------------------------
 // Screen Shake Helpers
 //------------------------------------------------------------------------------------
-void TriggerShake(ScreenShake *shake, float intensity, float duration)
-{
-    // Only override if new shake is stronger than remaining shake
-    float remaining = shake->intensity * (shake->duration > 0 ? shake->timer / shake->duration : 0);
-    if (intensity > remaining) {
-        shake->intensity = intensity;
-        shake->duration = duration;
-        shake->timer = duration;
-    }
+void TriggerShake(ScreenShake *shake, float intensity, float duration) {
+  // Only override if new shake is stronger than remaining shake
+  float remaining = shake->intensity *
+                    (shake->duration > 0 ? shake->timer / shake->duration : 0);
+  if (intensity > remaining) {
+    shake->intensity = intensity;
+    shake->duration = duration;
+    shake->timer = duration;
+  }
 }
 
-void UpdateShake(ScreenShake *shake, float dt)
-{
-    if (shake->timer <= 0) {
-        shake->offset = (Vector3){ 0, 0, 0 };
-        return;
-    }
-    shake->timer -= dt;
-    if (shake->timer <= 0) {
-        shake->timer = 0;
-        shake->offset = (Vector3){ 0, 0, 0 };
-        return;
-    }
-    float factor = shake->intensity * (shake->timer / shake->duration);
-    shake->offset.x = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
-    shake->offset.y = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
-    shake->offset.z = 0;
+void UpdateShake(ScreenShake *shake, float dt) {
+  if (shake->timer <= 0) {
+    shake->offset = (Vector3){0, 0, 0};
+    return;
+  }
+  shake->timer -= dt;
+  if (shake->timer <= 0) {
+    shake->timer = 0;
+    shake->offset = (Vector3){0, 0, 0};
+    return;
+  }
+  float factor = shake->intensity * (shake->timer / shake->duration);
+  shake->offset.x = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
+  shake->offset.y = ((GetRandomValue(0, 200) - 100) / 100.0f) * factor;
+  shake->offset.z = 0;
 }
 
 //------------------------------------------------------------------------------------
 // Statue Spawn Helpers
 //------------------------------------------------------------------------------------
-void StartStatueSpawn(StatueSpawn *spawn, int unitIndex)
-{
-    spawn->phase = SSPAWN_DELAY;
-    spawn->unitIndex = unitIndex;
-    spawn->timer = SPAWN_ANIM_DELAY;
-    spawn->currentY = SPAWN_ANIM_START_Y;
-    spawn->velocityY = 0.0f;
-    spawn->targetY = 0.0f;
-    spawn->trailTimer = 0.0f;
-    // Random directional drift: offset at top that converges to landing spot
-    float driftAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
-    float driftDist = (float)GetRandomValue(20, 60);  // 20-60 units of horizontal offset
-    spawn->driftX = cosf(driftAngle) * driftDist;
-    spawn->driftZ = sinf(driftAngle) * driftDist;
+void StartStatueSpawn(StatueSpawn *spawn, int unitIndex) {
+  spawn->phase = SSPAWN_DELAY;
+  spawn->unitIndex = unitIndex;
+  spawn->timer = SPAWN_ANIM_DELAY;
+  spawn->currentY = SPAWN_ANIM_START_Y;
+  spawn->velocityY = 0.0f;
+  spawn->targetY = 0.0f;
+  spawn->trailTimer = 0.0f;
+  // Random directional drift: offset at top that converges to landing spot
+  float driftAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
+  float driftDist =
+      (float)GetRandomValue(20, 60); // 20-60 units of horizontal offset
+  spawn->driftX = cosf(driftAngle) * driftDist;
+  spawn->driftZ = sinf(driftAngle) * driftDist;
 }
 
-void UpdateStatueSpawn(StatueSpawn *spawn, Particle particles[], ScreenShake *shake, Vector3 unitWorldPos, float dt)
-{
-    if (spawn->phase == SSPAWN_INACTIVE || spawn->phase == SSPAWN_DONE) return;
+void UpdateStatueSpawn(StatueSpawn *spawn, Particle particles[],
+                       ScreenShake *shake, Vector3 unitWorldPos, float dt) {
+  if (spawn->phase == SSPAWN_INACTIVE || spawn->phase == SSPAWN_DONE)
+    return;
 
-    if (spawn->phase == SSPAWN_DELAY) {
-        spawn->timer -= dt;
-        if (spawn->timer <= 0.0f) {
-            spawn->phase = SSPAWN_FALLING;
-            spawn->timer = 0.0f;
-        }
-        return;
+  if (spawn->phase == SSPAWN_DELAY) {
+    spawn->timer -= dt;
+    if (spawn->timer <= 0.0f) {
+      spawn->phase = SSPAWN_FALLING;
+      spawn->timer = 0.0f;
     }
+    return;
+  }
 
-    if (spawn->phase == SSPAWN_FALLING) {
-        // Apply gravity (accelerate downward)
-        spawn->velocityY += SPAWN_ANIM_GRAVITY * dt;
-        spawn->currentY -= spawn->velocityY * dt;
+  if (spawn->phase == SSPAWN_FALLING) {
+    // Apply gravity (accelerate downward)
+    spawn->velocityY += SPAWN_ANIM_GRAVITY * dt;
+    spawn->currentY -= spawn->velocityY * dt;
 
-        // Check ground collision
-        if (spawn->currentY <= spawn->targetY) {
-            spawn->currentY = spawn->targetY;
-            spawn->phase = SSPAWN_DONE;
+    // Check ground collision
+    if (spawn->currentY <= spawn->targetY) {
+      spawn->currentY = spawn->targetY;
+      spawn->phase = SSPAWN_DONE;
 
-            // Impact particles — stone chunks burst outward
-            Vector3 impactPos = { unitWorldPos.x, spawn->targetY, unitWorldPos.z };
-            for (int i = 0; i < SPAWN_ANIM_IMPACT_PARTICLES; i++) {
-                float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
-                float speed = (float)GetRandomValue(20, 80) / 10.0f;
-                Vector3 vel = {
-                    cosf(angle) * speed,
-                    (float)GetRandomValue(30, 100) / 10.0f,  // upward burst
-                    sinf(angle) * speed
-                };
-                int shade = GetRandomValue(100, 180);
-                int r = GetRandomValue(0, 1);
-                Color stoneColor;
-                if (r) {
-                    // Gray stone
-                    stoneColor = (Color){ (unsigned char)shade, (unsigned char)shade, (unsigned char)(shade - 10), 255 };
-                } else {
-                    // Brown stone
-                    stoneColor = (Color){ (unsigned char)shade, (unsigned char)(shade * 3 / 5), (unsigned char)(shade / 3), 255 };
-                }
-                float sz = (float)GetRandomValue(4, 12) / 10.0f;
-                SpawnParticle(particles, impactPos, vel, 0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, stoneColor);
-            }
-
-            // Screen shake on impact
-            TriggerShake(shake, SPAWN_ANIM_SHAKE_INTENSITY, SPAWN_ANIM_SHAKE_DURATION);
+      // Impact particles — stone chunks burst outward
+      Vector3 impactPos = {unitWorldPos.x, spawn->targetY, unitWorldPos.z};
+      for (int i = 0; i < SPAWN_ANIM_IMPACT_PARTICLES; i++) {
+        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+        float speed = (float)GetRandomValue(20, 80) / 10.0f;
+        Vector3 vel = {cosf(angle) * speed,
+                       (float)GetRandomValue(30, 100) / 10.0f, // upward burst
+                       sinf(angle) * speed};
+        int shade = GetRandomValue(100, 180);
+        int r = GetRandomValue(0, 1);
+        Color stoneColor;
+        if (r) {
+          // Gray stone
+          stoneColor = (Color){(unsigned char)shade, (unsigned char)shade,
+                               (unsigned char)(shade - 10), 255};
+        } else {
+          // Brown stone
+          stoneColor =
+              (Color){(unsigned char)shade, (unsigned char)(shade * 3 / 5),
+                      (unsigned char)(shade / 3), 255};
         }
+        float sz = (float)GetRandomValue(4, 12) / 10.0f;
+        SpawnParticle(particles, impactPos, vel,
+                      0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz,
+                      stoneColor);
+      }
+
+      // Screen shake on impact
+      TriggerShake(shake, SPAWN_ANIM_SHAKE_INTENSITY,
+                   SPAWN_ANIM_SHAKE_DURATION);
     }
+  }
 }
 
-bool IsUnitInStatueSpawn(const StatueSpawn *spawn, int unitIndex)
-{
-    return spawn->phase != SSPAWN_INACTIVE && spawn->unitIndex == unitIndex;
+bool IsUnitInStatueSpawn(const StatueSpawn *spawn, int unitIndex) {
+  return spawn->phase != SSPAWN_INACTIVE && spawn->unitIndex == unitIndex;
 }
 
 //------------------------------------------------------------------------------------
 // Plaza Smoke Poof
 //------------------------------------------------------------------------------------
-void SpawnPoofBurst(Particle particles[], Vector3 pos, int count)
-{
-    for (int i = 0; i < count; i++) {
-        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
-        float speed = (float)GetRandomValue(20, 60) / 10.0f;
-        Vector3 vel = {
-            cosf(angle) * speed,
-            (float)GetRandomValue(10, 40) / 10.0f,
-            sinf(angle) * speed
-        };
-        int shade = GetRandomValue(160, 230);
-        Color smokeColor = { (unsigned char)shade, (unsigned char)shade, (unsigned char)shade, 255 };
-        float sz = (float)GetRandomValue(5, 15) / 10.0f;
-        SpawnParticle(particles, pos, vel,
-            0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, smokeColor);
-    }
+void SpawnPoofBurst(Particle particles[], Vector3 pos, int count) {
+  for (int i = 0; i < count; i++) {
+    float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+    float speed = (float)GetRandomValue(20, 60) / 10.0f;
+    Vector3 vel = {cosf(angle) * speed, (float)GetRandomValue(10, 40) / 10.0f,
+                   sinf(angle) * speed};
+    int shade = GetRandomValue(160, 230);
+    Color smokeColor = {(unsigned char)shade, (unsigned char)shade,
+                        (unsigned char)shade, 255};
+    float sz = (float)GetRandomValue(5, 15) / 10.0f;
+    SpawnParticle(particles, pos, vel,
+                  0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, smokeColor);
+  }
 }
 
 //------------------------------------------------------------------------------------
 // Drawing Helpers
 //------------------------------------------------------------------------------------
-void DrawArc3D(Vector3 center, float radius, float fraction, Color color)
-{
-    if (fraction <= 0.0f) return;
-    if (fraction > 1.0f) fraction = 1.0f;
-    float maxAngle = fraction * 2.0f * PI;
-    float step = 0.1f;
-    for (float angle = 0.0f; angle < maxAngle; angle += step) {
-        float nextAngle = angle + step;
-        if (nextAngle > maxAngle) nextAngle = maxAngle;
-        Vector3 a = { center.x + cosf(angle) * radius, center.y, center.z + sinf(angle) * radius };
-        Vector3 b = { center.x + cosf(nextAngle) * radius, center.y, center.z + sinf(nextAngle) * radius };
-        DrawLine3D(a, b, color);
-    }
+void DrawArc3D(Vector3 center, float radius, float fraction, Color color) {
+  if (fraction <= 0.0f)
+    return;
+  if (fraction > 1.0f)
+    fraction = 1.0f;
+  float maxAngle = fraction * 2.0f * PI;
+  float step = 0.1f;
+  for (float angle = 0.0f; angle < maxAngle; angle += step) {
+    float nextAngle = angle + step;
+    if (nextAngle > maxAngle)
+      nextAngle = maxAngle;
+    Vector3 a = {center.x + cosf(angle) * radius, center.y,
+                 center.z + sinf(angle) * radius};
+    Vector3 b = {center.x + cosf(nextAngle) * radius, center.y,
+                 center.z + sinf(nextAngle) * radius};
+    DrawLine3D(a, b, color);
+  }
 }
 
 //------------------------------------------------------------------------------------
 // Fissure Helpers
 //------------------------------------------------------------------------------------
 void SpawnFissure(Fissure fissures[], Vector3 casterPos, Vector3 targetPos,
-    float length, float width, float duration, Team team, int sourceIndex)
-{
-    float dx = targetPos.x - casterPos.x;
-    float dz = targetPos.z - casterPos.z;
-    float angle = atan2f(dx, dz) * (180.0f / PI);
-    float dist = sqrtf(dx * dx + dz * dz);
-    // Place fissure center halfway along the direction
-    float halfLen = length / 2.0f;
-    float norm = (dist > 0.001f) ? 1.0f / dist : 0.0f;
-    Vector3 center = {
-        casterPos.x + dx * norm * halfLen,
-        0.0f,
-        casterPos.z + dz * norm * halfLen,
-    };
-    for (int i = 0; i < MAX_FISSURES; i++) {
-        if (!fissures[i].active) {
-            fissures[i] = (Fissure){
-                .position = center, .rotation = angle,
-                .length = length, .width = width,
-                .duration = duration, .active = true,
-                .sourceTeam = team, .sourceIndex = sourceIndex,
-            };
-            return;
-        }
+                  float length, float width, float duration, Team team,
+                  int sourceIndex) {
+  float dx = targetPos.x - casterPos.x;
+  float dz = targetPos.z - casterPos.z;
+  float angle = atan2f(dx, dz) * (180.0f / PI);
+  float dist = sqrtf(dx * dx + dz * dz);
+  // Place fissure center halfway along the direction
+  float halfLen = length / 2.0f;
+  float norm = (dist > 0.001f) ? 1.0f / dist : 0.0f;
+  Vector3 center = {
+      casterPos.x + dx * norm * halfLen,
+      0.0f,
+      casterPos.z + dz * norm * halfLen,
+  };
+  for (int i = 0; i < MAX_FISSURES; i++) {
+    if (!fissures[i].active) {
+      fissures[i] = (Fissure){
+          .position = center,
+          .rotation = angle,
+          .length = length,
+          .width = width,
+          .duration = duration,
+          .active = true,
+          .sourceTeam = team,
+          .sourceIndex = sourceIndex,
+      };
+      return;
     }
+  }
 }
 
-void UpdateFissures(Fissure fissures[], float dt)
-{
-    for (int i = 0; i < MAX_FISSURES; i++) {
-        if (!fissures[i].active) continue;
-        fissures[i].duration -= dt;
-        if (fissures[i].duration <= 0) fissures[i].active = false;
-    }
+void UpdateFissures(Fissure fissures[], float dt) {
+  for (int i = 0; i < MAX_FISSURES; i++) {
+    if (!fissures[i].active)
+      continue;
+    fissures[i].duration -= dt;
+    if (fissures[i].duration <= 0)
+      fissures[i].active = false;
+  }
 }
 
-void ClearAllFissures(Fissure fissures[])
-{
-    for (int i = 0; i < MAX_FISSURES; i++) fissures[i].active = false;
+void ClearAllFissures(Fissure fissures[]) {
+  for (int i = 0; i < MAX_FISSURES; i++)
+    fissures[i].active = false;
 }
 
 // Check if a point collides with any fissure (for movement blocking)
-bool CheckFissureCollision(Fissure fissures[], Vector3 pos, float unitRadius)
-{
-    for (int i = 0; i < MAX_FISSURES; i++) {
-        if (!fissures[i].active) continue;
-        // Transform pos into fissure-local space
-        float dx = pos.x - fissures[i].position.x;
-        float dz = pos.z - fissures[i].position.z;
-        float rad = fissures[i].rotation * (PI / 180.0f);
-        float cosA = cosf(-rad), sinA = sinf(-rad);
-        float localX = dx * cosA - dz * sinA;
-        float localZ = dx * sinA + dz * cosA;
-        float halfL = fissures[i].length / 2.0f + unitRadius;
-        float halfW = fissures[i].width / 2.0f + unitRadius;
-        if (fabsf(localX) < halfW && fabsf(localZ) < halfL)
-            return true;
-    }
-    return false;
+bool CheckFissureCollision(Fissure fissures[], Vector3 pos, float unitRadius) {
+  for (int i = 0; i < MAX_FISSURES; i++) {
+    if (!fissures[i].active)
+      continue;
+    // Transform pos into fissure-local space
+    float dx = pos.x - fissures[i].position.x;
+    float dz = pos.z - fissures[i].position.z;
+    float rad = fissures[i].rotation * (PI / 180.0f);
+    float cosA = cosf(-rad), sinA = sinf(-rad);
+    float localX = dx * cosA - dz * sinA;
+    float localZ = dx * sinA + dz * cosA;
+    float halfL = fissures[i].length / 2.0f + unitRadius;
+    float halfW = fissures[i].width / 2.0f + unitRadius;
+    if (fabsf(localX) < halfW && fabsf(localZ) < halfL)
+      return true;
+  }
+  return false;
 }
 
 // Resolve collision: return the closest valid position outside fissures
-Vector3 ResolveFissureCollision(Fissure fissures[], Vector3 pos, Vector3 oldPos, float unitRadius)
-{
-    (void)oldPos; // reserved for future fallback logic
-    for (int i = 0; i < MAX_FISSURES; i++) {
-        if (!fissures[i].active) continue;
-        float dx = pos.x - fissures[i].position.x;
-        float dz = pos.z - fissures[i].position.z;
-        float rad = fissures[i].rotation * (PI / 180.0f);
-        float cosA = cosf(-rad), sinA = sinf(-rad);
-        float localX = dx * cosA - dz * sinA;
-        float localZ = dx * sinA + dz * cosA;
-        float halfL = fissures[i].length / 2.0f + unitRadius;
-        float halfW = fissures[i].width / 2.0f + unitRadius;
-        if (fabsf(localX) < halfW && fabsf(localZ) < halfL) {
-            // Push out along the shortest axis
-            float overlapX = halfW - fabsf(localX);
-            float overlapZ = halfL - fabsf(localZ);
-            if (overlapX < overlapZ)
-                localX += (localX >= 0 ? overlapX : -overlapX);
-            else
-                localZ += (localZ >= 0 ? overlapZ : -overlapZ);
-            // Transform back to world space
-            float cosB = cosf(rad), sinB = sinf(rad);
-            pos.x = fissures[i].position.x + localX * cosB - localZ * sinB;
-            pos.z = fissures[i].position.z + localX * sinB + localZ * cosB;
-        }
+Vector3 ResolveFissureCollision(Fissure fissures[], Vector3 pos, Vector3 oldPos,
+                                float unitRadius) {
+  (void)oldPos; // reserved for future fallback logic
+  for (int i = 0; i < MAX_FISSURES; i++) {
+    if (!fissures[i].active)
+      continue;
+    float dx = pos.x - fissures[i].position.x;
+    float dz = pos.z - fissures[i].position.z;
+    float rad = fissures[i].rotation * (PI / 180.0f);
+    float cosA = cosf(-rad), sinA = sinf(-rad);
+    float localX = dx * cosA - dz * sinA;
+    float localZ = dx * sinA + dz * cosA;
+    float halfL = fissures[i].length / 2.0f + unitRadius;
+    float halfW = fissures[i].width / 2.0f + unitRadius;
+    if (fabsf(localX) < halfW && fabsf(localZ) < halfL) {
+      // Push out along the shortest axis
+      float overlapX = halfW - fabsf(localX);
+      float overlapZ = halfL - fabsf(localZ);
+      if (overlapX < overlapZ)
+        localX += (localX >= 0 ? overlapX : -overlapX);
+      else
+        localZ += (localZ >= 0 ? overlapZ : -overlapZ);
+      // Transform back to world space
+      float cosB = cosf(rad), sinB = sinf(rad);
+      pos.x = fissures[i].position.x + localX * cosB - localZ * sinB;
+      pos.z = fissures[i].position.z + localX * sinB + localZ * cosB;
     }
-    return pos;
+  }
+  return pos;
 }
 
-// (ability cast handlers, combat helpers, and projectile spawners moved to abilities_cast.c)
-
+// (ability cast handlers, combat helpers, and projectile spawners moved to
+// abilities_cast.c)
 
 //------------------------------------------------------------------------------------
 // Wave Spawning System
 //------------------------------------------------------------------------------------
 
 // Assign N random non-duplicate abilities at a specific level
-static void AssignAbilitiesAtLevel(Unit *unit, int numAbilities, int level)
-{
-    int used[ABILITY_COUNT] = {0};
-    for (int a = 0; a < numAbilities && a < MAX_ABILITIES_PER_UNIT; a++) {
-        int id;
-        int attempts = 0;
-        do {
-            id = GetRandomValue(0, ABILITY_COUNT - 1);
-            attempts++;
-        } while (used[id] && attempts < 50);
-        used[id] = 1;
-        unit->abilities[a].abilityId = id;
-        unit->abilities[a].level = level;
-        unit->abilities[a].cooldownRemaining = 0;
-        unit->abilities[a].triggered = false;
-    }
+static void AssignAbilitiesAtLevel(Unit *unit, int numAbilities, int level) {
+  int used[ABILITY_COUNT] = {0};
+  for (int a = 0; a < numAbilities && a < MAX_ABILITIES_PER_UNIT; a++) {
+    int id;
+    int attempts = 0;
+    do {
+      id = GetRandomValue(0, ABILITY_COUNT - 1);
+      attempts++;
+    } while (used[id] && attempts < 50);
+    used[id] = 1;
+    unit->abilities[a].abilityId = id;
+    unit->abilities[a].level = level;
+    unit->abilities[a].cooldownRemaining = 0;
+    unit->abilities[a].triggered = false;
+  }
 }
 
-// Assign N random non-duplicate abilities, distributing totalLevelBudget points randomly
-// Each point adds +1 level to a random ability (capped at max level)
-static void AssignAbilitiesWithBudget(Unit *unit, int numAbilities, int totalLevelBudget)
-{
-    if (numAbilities > MAX_ABILITIES_PER_UNIT) numAbilities = MAX_ABILITIES_PER_UNIT;
-    int used[ABILITY_COUNT] = {0};
-    for (int a = 0; a < numAbilities; a++) {
-        int id;
-        int attempts = 0;
-        do {
-            id = GetRandomValue(0, ABILITY_COUNT - 1);
-            attempts++;
-        } while (used[id] && attempts < 50);
-        used[id] = 1;
-        unit->abilities[a].abilityId = id;
-        unit->abilities[a].level = 0;
-        unit->abilities[a].cooldownRemaining = 0;
-        unit->abilities[a].triggered = false;
-    }
-    // Distribute budget points randomly across abilities
-    for (int p = 0; p < totalLevelBudget; p++) {
-        int slot = GetRandomValue(0, numAbilities - 1);
-        if (unit->abilities[slot].level < ABILITY_MAX_LEVELS - 1)
-            unit->abilities[slot].level++;
-    }
+// Assign N random non-duplicate abilities, distributing totalLevelBudget points
+// randomly Each point adds +1 level to a random ability (capped at max level)
+static void AssignAbilitiesWithBudget(Unit *unit, int numAbilities,
+                                      int totalLevelBudget) {
+  if (numAbilities > MAX_ABILITIES_PER_UNIT)
+    numAbilities = MAX_ABILITIES_PER_UNIT;
+  int used[ABILITY_COUNT] = {0};
+  for (int a = 0; a < numAbilities; a++) {
+    int id;
+    int attempts = 0;
+    do {
+      id = GetRandomValue(0, ABILITY_COUNT - 1);
+      attempts++;
+    } while (used[id] && attempts < 50);
+    used[id] = 1;
+    unit->abilities[a].abilityId = id;
+    unit->abilities[a].level = 0;
+    unit->abilities[a].cooldownRemaining = 0;
+    unit->abilities[a].triggered = false;
+  }
+  // Distribute budget points randomly across abilities
+  for (int p = 0; p < totalLevelBudget; p++) {
+    int slot = GetRandomValue(0, numAbilities - 1);
+    if (unit->abilities[slot].level < ABILITY_MAX_LEVELS - 1)
+      unit->abilities[slot].level++;
+  }
 }
 
 // Find a valid spawn position on the red half (Z < 0), not overlapping others
-Vector3 FindValidSpawnPos(Unit units[], int unitCount, float minDist)
-{
-    for (int attempt = 0; attempt < 30; attempt++) {
-        float x = (float)GetRandomValue(-80, 80);
-        float z = (float)GetRandomValue(-90, -20);
-        bool valid = true;
-        for (int i = 0; i < unitCount; i++) {
-            if (!units[i].active) continue;
-            float dx = units[i].position.x - x;
-            float dz = units[i].position.z - z;
-            if (sqrtf(dx*dx + dz*dz) < minDist) { valid = false; break; }
-        }
-        if (valid) return (Vector3){ x, 0.0f, z };
+Vector3 FindValidSpawnPos(Unit units[], int unitCount, float minDist) {
+  for (int attempt = 0; attempt < 30; attempt++) {
+    float x = (float)GetRandomValue(-80, 80);
+    float z = (float)GetRandomValue(-90, -20);
+    bool valid = true;
+    for (int i = 0; i < unitCount; i++) {
+      if (!units[i].active)
+        continue;
+      float dx = units[i].position.x - x;
+      float dz = units[i].position.z - z;
+      if (sqrtf(dx * dx + dz * dz) < minDist) {
+        valid = false;
+        break;
+      }
     }
-    // Fallback: just pick a random spot
-    return (Vector3){ (float)GetRandomValue(-80, 80), 0.0f, (float)GetRandomValue(-90, -20) };
+    if (valid)
+      return (Vector3){x, 0.0f, z};
+  }
+  // Fallback: just pick a random spot
+  return (Vector3){(float)GetRandomValue(-80, 80), 0.0f,
+                   (float)GetRandomValue(-90, -20)};
 }
 
 // Remove all red (enemy) units
-void ClearRedUnits(Unit units[], int *unitCount)
-{
-    // Compact: move active blues to front, drop reds
-    int write = 0;
-    for (int read = 0; read < *unitCount; read++) {
-        if (units[read].team == TEAM_RED) continue;
-        if (write != read) units[write] = units[read];
-        write++;
-    }
-    *unitCount = write;
+void ClearRedUnits(Unit units[], int *unitCount) {
+  // Compact: move active blues to front, drop reds
+  int write = 0;
+  for (int read = 0; read < *unitCount; read++) {
+    if (units[read].team == TEAM_RED)
+      continue;
+    if (write != read)
+      units[write] = units[read];
+    write++;
+  }
+  *unitCount = write;
 }
 
 // Remove inactive blue units and compact the array
-void CompactBlueUnits(Unit units[], int *unitCount)
-{
-    int write = 0;
-    for (int read = 0; read < *unitCount; read++) {
-        if (units[read].team == TEAM_BLUE && !units[read].active) continue;
-        if (write != read) units[write] = units[read];
-        write++;
-    }
-    *unitCount = write;
+void CompactBlueUnits(Unit units[], int *unitCount) {
+  int write = 0;
+  for (int read = 0; read < *unitCount; read++) {
+    if (units[read].team == TEAM_BLUE && !units[read].active)
+      continue;
+    if (write != read)
+      units[write] = units[read];
+    write++;
+  }
+  *unitCount = write;
 }
 
 // Static wave definitions for rounds 1-5
 static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
     // Round 1: 1 enemy, 1 weak ability (slightly tougher)
-    { .count = 1, .entries = {
-        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.1f, .dmgMult = 1.0f, .scaleMult = 1.0f },
-    }},
+    {.count = 1,
+     .entries =
+         {
+             {.unitType = -1,
+              .numAbilities = 1,
+              .abilityLevel = 0,
+              .hpMult = 1.1f,
+              .dmgMult = 1.0f,
+              .scaleMult = 1.0f},
+         }},
     // Round 2: 2 enemies, 1 ability each
-    { .count = 2, .entries = {
-        { .unitType = 0, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.15f, .dmgMult = 1.05f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.15f, .dmgMult = 1.05f, .scaleMult = 1.0f },
-    }},
+    {.count = 2,
+     .entries =
+         {
+             {.unitType = 0,
+              .numAbilities = 1,
+              .abilityLevel = 0,
+              .hpMult = 1.15f,
+              .dmgMult = 1.05f,
+              .scaleMult = 1.0f},
+             {.unitType = 1,
+              .numAbilities = 1,
+              .abilityLevel = 0,
+              .hpMult = 1.15f,
+              .dmgMult = 1.05f,
+              .scaleMult = 1.0f},
+         }},
     // Round 3: 2 enemies, 2 abilities each
-    { .count = 2, .entries = {
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.3f, .dmgMult = 1.1f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.3f, .dmgMult = 1.1f, .scaleMult = 1.0f },
-    }},
+    {.count = 2,
+     .entries =
+         {
+             {.unitType = 0,
+              .numAbilities = 2,
+              .abilityLevel = 0,
+              .hpMult = 1.3f,
+              .dmgMult = 1.1f,
+              .scaleMult = 1.0f},
+             {.unitType = 1,
+              .numAbilities = 2,
+              .abilityLevel = 0,
+              .hpMult = 1.3f,
+              .dmgMult = 1.1f,
+              .scaleMult = 1.0f},
+         }},
     // Round 4: 3 enemies, 2 abilities level 0-1
-    { .count = 3, .entries = {
-        { .unitType = 0, .numAbilities = 2, .abilityLevel = 0, .hpMult = 1.45f, .dmgMult = 1.15f, .scaleMult = 1.0f },
-        { .unitType = 1, .numAbilities = 2, .abilityLevel = 1, .hpMult = 1.45f, .dmgMult = 1.15f, .scaleMult = 1.0f },
-        { .unitType = -1, .numAbilities = 1, .abilityLevel = 0, .hpMult = 1.45f, .dmgMult = 1.15f, .scaleMult = 1.0f },
-    }},
+    {.count = 3,
+     .entries =
+         {
+             {.unitType = 0,
+              .numAbilities = 2,
+              .abilityLevel = 0,
+              .hpMult = 1.45f,
+              .dmgMult = 1.15f,
+              .scaleMult = 1.0f},
+             {.unitType = 1,
+              .numAbilities = 2,
+              .abilityLevel = 1,
+              .hpMult = 1.45f,
+              .dmgMult = 1.15f,
+              .scaleMult = 1.0f},
+             {.unitType = -1,
+              .numAbilities = 1,
+              .abilityLevel = 0,
+              .hpMult = 1.45f,
+              .dmgMult = 1.15f,
+              .scaleMult = 1.0f},
+         }},
     // Round 5: BOSS — single massive unit, 4 abilities all level 2
-    { .count = 1, .entries = {
-        { .unitType = -1, .numAbilities = 4, .abilityLevel = 2, .hpMult = 4.0f, .dmgMult = 1.5f, .scaleMult = 2.5f },
-    }},
+    {.count = 1,
+     .entries =
+         {
+             {.unitType = -1,
+              .numAbilities = 4,
+              .abilityLevel = 2,
+              .hpMult = 4.0f,
+              .dmgMult = 1.5f,
+              .scaleMult = 2.5f},
+         }},
 };
 
 // Spawn a wave of enemies for the given round (0-indexed)
-void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount)
-{
-    (void)unitTypeCount; // use VALID_UNIT_TYPES instead
-    if (round < TOTAL_ROUNDS) {
-        // Scripted wave (rounds 0-4)
-        const WaveDef *wave = &WAVE_DEFS[round];
-        for (int e = 0; e < wave->count; e++) {
-            int type = wave->entries[e].unitType;
-            if (type < 0) type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
-            if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
-                Unit *u = &units[*unitCount - 1];
-                u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
-                u->scaleOverride = wave->entries[e].scaleMult;
-                u->hpMultiplier = wave->entries[e].hpMult;
-                u->dmgMultiplier = wave->entries[e].dmgMult;
-                u->currentHealth = UNIT_STATS[type].health * wave->entries[e].hpMult;
-                if (wave->entries[e].numAbilities > 0) {
-                    AssignAbilitiesAtLevel(u, wave->entries[e].numAbilities, wave->entries[e].abilityLevel);
-                }
-            }
+void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount) {
+  (void)unitTypeCount; // use VALID_UNIT_TYPES instead
+  if (round < TOTAL_ROUNDS) {
+    // Scripted wave (rounds 0-4)
+    const WaveDef *wave = &WAVE_DEFS[round];
+    for (int e = 0; e < wave->count; e++) {
+      int type = wave->entries[e].unitType;
+      if (type < 0)
+        type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
+      if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
+        Unit *u = &units[*unitCount - 1];
+        u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
+        u->scaleOverride = wave->entries[e].scaleMult;
+        u->hpMultiplier = wave->entries[e].hpMult;
+        u->dmgMultiplier = wave->entries[e].dmgMult;
+        u->currentHealth = UNIT_STATS[type].health * wave->entries[e].hpMult;
+        if (wave->entries[e].numAbilities > 0) {
+          AssignAbilitiesAtLevel(u, wave->entries[e].numAbilities,
+                                 wave->entries[e].abilityLevel);
         }
-    } else {
-        // Infinite scaling (round 6+)
-        // Extra enemy only added every 5-round milestone; other rounds upgrade abilities
-        int extraRounds = round - TOTAL_ROUNDS;  // 0 for round 6, 1 for round 7, etc.
-        int bonusUnits = (extraRounds + 1) / 7;  // +1 enemy every 7 rounds past scripted
-        int abilityPoints = extraRounds + 1 - bonusUnits;
-        int enemyCount = 3 + bonusUnits;
-        if (enemyCount > MAX_WAVE_ENEMIES) enemyCount = MAX_WAVE_ENEMIES;
-        // Distribute ability points: each point is either a new ability or a level-up
-        int numAb = 1 + abilityPoints / 3;
-        if (numAb > MAX_ABILITIES_PER_UNIT) numAb = MAX_ABILITIES_PER_UNIT;
-        int abLevel = (abilityPoints > 0) ? (abilityPoints - 1) / 3 : 0;
-        if (abLevel > ABILITY_MAX_LEVELS - 1) abLevel = ABILITY_MAX_LEVELS - 1;
-        // Stats scale gently
-        float hpScale = 1.2f + 0.06f * (float)(extraRounds + 1);
-        float dmgScale = 1.0f + 0.03f * (float)(extraRounds + 1);
-
-        // Boss at every milestone (every 5th round, 0-indexed: 4, 9, 14, ...)
-        bool isMilestone = (round > 0 && round % 5 == 4);
-        if (isMilestone) {
-            // Spawn boss unit first
-            int bossType = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
-            if (SpawnUnit(units, unitCount, bossType, TEAM_RED)) {
-                Unit *boss = &units[*unitCount - 1];
-                boss->position = FindValidSpawnPos(units, *unitCount, 10.0f);
-                float bossScale = 2.0f + 0.1f * (float)(round / 5);
-                if (bossScale > 3.5f) bossScale = 3.5f;
-                boss->scaleOverride = bossScale;
-                boss->hpMultiplier = hpScale * 3.0f;
-                boss->dmgMultiplier = dmgScale * 1.3f;
-                boss->currentHealth = UNIT_STATS[bossType].health * boss->hpMultiplier;
-                int bossAb = numAb + 1;
-                if (bossAb > MAX_ABILITIES_PER_UNIT) bossAb = MAX_ABILITIES_PER_UNIT;
-                int bossLevel = abLevel + 1;
-                if (bossLevel > ABILITY_MAX_LEVELS - 1) bossLevel = ABILITY_MAX_LEVELS - 1;
-                int bossBudget = bossLevel * bossAb;
-                AssignAbilitiesWithBudget(boss, bossAb, bossBudget);
-            }
-            // Scale down remaining normal units on milestone waves
-            for (int e = 0; e < enemyCount - 1; e++) {
-                int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
-                if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
-                    Unit *u = &units[*unitCount - 1];
-                    u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
-                    u->scaleOverride = 0.8f;
-                    float hpJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
-                    float dmgJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
-                    u->hpMultiplier = hpScale * 0.8f * hpJitter;
-                    u->dmgMultiplier = dmgScale * 0.8f * dmgJitter;
-                    u->currentHealth = UNIT_STATS[type].health * u->hpMultiplier;
-                    int unitAb = numAb + (GetRandomValue(0, 1) ? 1 : 0);
-                    if (unitAb > MAX_ABILITIES_PER_UNIT) unitAb = MAX_ABILITIES_PER_UNIT;
-                    int totalBudget = abLevel * unitAb + GetRandomValue(-1, 1);
-                    if (totalBudget < 0) totalBudget = 0;
-                    AssignAbilitiesWithBudget(u, unitAb, totalBudget);
-                }
-            }
-        } else {
-        for (int e = 0; e < enemyCount; e++) {
-            int type = VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
-            if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
-                Unit *u = &units[*unitCount - 1];
-                u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
-                u->scaleOverride = 1.0f;
-                // Per-unit HP/dmg jitter: 0.85-1.15x
-                float hpJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
-                float dmgJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
-                u->hpMultiplier = hpScale * hpJitter;
-                u->dmgMultiplier = dmgScale * dmgJitter;
-                u->currentHealth = UNIT_STATS[type].health * u->hpMultiplier;
-                // Budget-based ability assignment for varied enemy builds
-                int unitAb = numAb + (GetRandomValue(0, 1) ? 1 : 0);
-                if (unitAb > MAX_ABILITIES_PER_UNIT) unitAb = MAX_ABILITIES_PER_UNIT;
-                int totalBudget = abLevel * unitAb + GetRandomValue(-1, 1);
-                if (totalBudget < 0) totalBudget = 0;
-                AssignAbilitiesWithBudget(u, unitAb, totalBudget);
-            }
-        }
-        }
+      }
     }
+  } else {
+    // Infinite scaling (round 6+)
+    // Extra enemy only added every 5-round milestone; other rounds upgrade
+    // abilities
+    int extraRounds =
+        round - TOTAL_ROUNDS; // 0 for round 6, 1 for round 7, etc.
+    int bonusUnits =
+        (extraRounds + 1) / 7; // +1 enemy every 7 rounds past scripted
+    int abilityPoints = extraRounds + 1 - bonusUnits;
+    int enemyCount = 3 + bonusUnits;
+    if (enemyCount > MAX_WAVE_ENEMIES)
+      enemyCount = MAX_WAVE_ENEMIES;
+    // Distribute ability points: each point is either a new ability or a
+    // level-up
+    int numAb = 1 + abilityPoints / 3;
+    if (numAb > MAX_ABILITIES_PER_UNIT)
+      numAb = MAX_ABILITIES_PER_UNIT;
+    int abLevel = (abilityPoints > 0) ? (abilityPoints - 1) / 3 : 0;
+    if (abLevel > ABILITY_MAX_LEVELS - 1)
+      abLevel = ABILITY_MAX_LEVELS - 1;
+    // Stats scale gently
+    float hpScale = 1.2f + 0.06f * (float)(extraRounds + 1);
+    float dmgScale = 1.0f + 0.03f * (float)(extraRounds + 1);
+
+    // Boss at every milestone (every 5th round, 0-indexed: 4, 9, 14, ...)
+    bool isMilestone = (round > 0 && round % 5 == 4);
+    if (isMilestone) {
+      // Spawn boss unit first
+      int bossType =
+          VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
+      if (SpawnUnit(units, unitCount, bossType, TEAM_RED)) {
+        Unit *boss = &units[*unitCount - 1];
+        boss->position = FindValidSpawnPos(units, *unitCount, 10.0f);
+        float bossScale = 2.0f + 0.1f * (float)(round / 5);
+        if (bossScale > 3.5f)
+          bossScale = 3.5f;
+        boss->scaleOverride = bossScale;
+        boss->hpMultiplier = hpScale * 3.0f;
+        boss->dmgMultiplier = dmgScale * 1.3f;
+        boss->currentHealth = UNIT_STATS[bossType].health * boss->hpMultiplier;
+        int bossAb = numAb + 1;
+        if (bossAb > MAX_ABILITIES_PER_UNIT)
+          bossAb = MAX_ABILITIES_PER_UNIT;
+        int bossLevel = abLevel + 1;
+        if (bossLevel > ABILITY_MAX_LEVELS - 1)
+          bossLevel = ABILITY_MAX_LEVELS - 1;
+        int bossBudget = bossLevel * bossAb;
+        AssignAbilitiesWithBudget(boss, bossAb, bossBudget);
+      }
+      // Scale down remaining normal units on milestone waves
+      for (int e = 0; e < enemyCount - 1; e++) {
+        int type =
+            VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
+        if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
+          Unit *u = &units[*unitCount - 1];
+          u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
+          u->scaleOverride = 0.8f;
+          float hpJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
+          float dmgJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
+          u->hpMultiplier = hpScale * 0.8f * hpJitter;
+          u->dmgMultiplier = dmgScale * 0.8f * dmgJitter;
+          u->currentHealth = UNIT_STATS[type].health * u->hpMultiplier;
+          int unitAb = numAb + (GetRandomValue(0, 1) ? 1 : 0);
+          if (unitAb > MAX_ABILITIES_PER_UNIT)
+            unitAb = MAX_ABILITIES_PER_UNIT;
+          int totalBudget = abLevel * unitAb + GetRandomValue(-1, 1);
+          if (totalBudget < 0)
+            totalBudget = 0;
+          AssignAbilitiesWithBudget(u, unitAb, totalBudget);
+        }
+      }
+    } else {
+      for (int e = 0; e < enemyCount; e++) {
+        int type =
+            VALID_UNIT_TYPES[GetRandomValue(0, VALID_UNIT_TYPE_COUNT - 1)];
+        if (SpawnUnit(units, unitCount, type, TEAM_RED)) {
+          Unit *u = &units[*unitCount - 1];
+          u->position = FindValidSpawnPos(units, *unitCount, 10.0f);
+          u->scaleOverride = 1.0f;
+          // Per-unit HP/dmg jitter: 0.85-1.15x
+          float hpJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
+          float dmgJitter = 0.85f + GetRandomValue(0, 30) / 100.0f;
+          u->hpMultiplier = hpScale * hpJitter;
+          u->dmgMultiplier = dmgScale * dmgJitter;
+          u->currentHealth = UNIT_STATS[type].health * u->hpMultiplier;
+          // Budget-based ability assignment for varied enemy builds
+          int unitAb = numAb + (GetRandomValue(0, 1) ? 1 : 0);
+          if (unitAb > MAX_ABILITIES_PER_UNIT)
+            unitAb = MAX_ABILITIES_PER_UNIT;
+          int totalBudget = abLevel * unitAb + GetRandomValue(-1, 1);
+          if (totalBudget < 0)
+            totalBudget = 0;
+          AssignAbilitiesWithBudget(u, unitAb, totalBudget);
+        }
+      }
+    }
+  }
 }
 
 //------------------------------------------------------------------------------------
 // Synergy System
 //------------------------------------------------------------------------------------
-void ApplyUnitRarity(Unit *unit)
-{
-    if (unit->rarity == RARITY_COMMON) return;
-    float mult = (unit->rarity == RARITY_LEGENDARY)
-               ? RARITY_MULT_LEGENDARY : RARITY_MULT_RARE;
-    float oldMax = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
-    unit->hpMultiplier *= mult;
-    unit->dmgMultiplier *= mult;
-    unit->speedMultiplier *= mult;
-    float newMax = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
-    if (oldMax > 0) unit->currentHealth *= (newMax / oldMax);
+void ApplyUnitRarity(Unit *unit) {
+  if (unit->rarity == RARITY_COMMON)
+    return;
+  float mult = (unit->rarity == RARITY_LEGENDARY) ? RARITY_MULT_LEGENDARY
+                                                  : RARITY_MULT_RARE;
+  float oldMax = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
+  unit->hpMultiplier *= mult;
+  unit->dmgMultiplier *= mult;
+  unit->speedMultiplier *= mult;
+  float newMax = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
+  if (oldMax > 0)
+    unit->currentHealth *= (newMax / oldMax);
 }
 
-void ApplyRarityBuffs(Unit units[], int unitCount)
-{
-    for (int i = 0; i < unitCount; i++) {
-        if (!units[i].active) continue;
-        ApplyUnitRarity(&units[i]);
-    }
+void ApplyRarityBuffs(Unit units[], int unitCount) {
+  for (int i = 0; i < unitCount; i++) {
+    if (!units[i].active)
+      continue;
+    ApplyUnitRarity(&units[i]);
+  }
 }
 
 void ApplyItemEffects(Unit *unit, int unitIndex, Modifier modifiers[]) {
-    if (unit->itemId < 0 || unit->itemId >= ITEM_COUNT) return;
-    const ItemDef *item = &ITEM_DEFS[unit->itemId];
-    switch (item->effectType) {
-        case IEFF_HP_MULT:
-            unit->hpMultiplier *= item->effectValue;
-            unit->currentHealth = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
-            break;
-        case IEFF_DMG_MULT:
-            unit->dmgMultiplier *= item->effectValue;
-            break;
-        case IEFF_SPEED_MULT:
-            unit->speedMultiplier *= item->effectValue;
-            break;
-        case IEFF_MODIFIER:
-            AddModifier(modifiers, unitIndex, (ModifierType)item->modType,
-                        item->modDuration, item->effectValue);
-            break;
+  if (unit->itemId < 0 || unit->itemId >= ITEM_COUNT)
+    return;
+  const ItemDef *item = &ITEM_DEFS[unit->itemId];
+  switch (item->effectType) {
+  case IEFF_HP_MULT:
+    unit->hpMultiplier *= item->effectValue;
+    unit->currentHealth =
+        UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier;
+    break;
+  case IEFF_DMG_MULT:
+    unit->dmgMultiplier *= item->effectValue;
+    break;
+  case IEFF_SPEED_MULT:
+    unit->speedMultiplier *= item->effectValue;
+    break;
+  case IEFF_MODIFIER:
+    AddModifier(modifiers, unitIndex, (ModifierType)item->modType,
+                item->modDuration, item->effectValue);
+    break;
+  }
+}
+
+void SpawnMushling(Unit units[], int *unitCount, int parentIndex) {
+  if (*unitCount >= MAX_UNITS)
+    return;
+  Unit *parent = &units[parentIndex];
+  const UnitStats *stats = &UNIT_STATS[parent->typeIndex];
+  int idx = *unitCount;
+  units[idx] = (Unit){
+      .typeIndex = parent->typeIndex,
+      .position = {parent->position.x + ((GetRandomValue(0, 1) * 2 - 1) * 3.0f),
+                   0.0f,
+                   parent->position.z +
+                       ((GetRandomValue(0, 1) * 2 - 1) * 3.0f)},
+      .team = parent->team,
+      .currentHealth = stats->health * parent->hpMultiplier * 0.5f,
+      .attackCooldown = 0.0f,
+      .targetIndex = -1,
+      .active = true,
+      .selected = false,
+      .dragging = false,
+      .facingAngle = parent->facingAngle,
+      .currentAnim = ANIM_IDLE,
+      .animFrame = GetRandomValue(0, 999),
+      .scaleOverride = 0.5f,
+      .hpMultiplier = parent->hpMultiplier * 0.5f,
+      .dmgMultiplier = parent->dmgMultiplier * 0.5f,
+      .speedMultiplier = parent->speedMultiplier,
+      .shieldHP = 0.0f,
+      .abilityCastDelay = 0.0f,
+      .chargeTarget = -1,
+      .isMushling = true,
+  };
+  for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+    units[idx].abilities[a] = (AbilitySlot){.abilityId = -1,
+                                            .level = 0,
+                                            .cooldownRemaining = 0,
+                                            .triggered = false};
+  (*unitCount)++;
+}
+
+void CheckMushroomSpawn(Unit units[], int *unitCount, int damagedUnit,
+                        float damage) {
+  if (damagedUnit < 0 || damagedUnit >= *unitCount)
+    return;
+  Unit *u = &units[damagedUnit];
+  if (!u->active || u->isMushling || u->hasSpawnedMushling)
+    return;
+  if (u->mushroomSpawnThresh <= 0)
+    return;
+  u->damageTaken += damage;
+  if (u->damageTaken >= u->mushroomSpawnThresh) {
+    u->hasSpawnedMushling = true;
+    SpawnMushling(units, unitCount, damagedUnit);
+  }
+}
+
+void ApplySynergies(Unit units[], int unitCount) {
+  for (int team = 0; team < 2; team++) {
+    Team t = (Team)team;
+
+    for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
+      const SynergyDef *syn = &SYNERGY_DEFS[s];
+
+      // Count units matching any of the required types on this team
+      int matchCount = 0;
+      if (syn->requireAllTypes) {
+        // Count distinct required types present (for multi-type synergies)
+        bool typePresent[4] = {0};
+        for (int i = 0; i < unitCount; i++) {
+          if (!units[i].active || units[i].team != t)
+            continue;
+          for (int r = 0; r < syn->requiredTypeCount; r++) {
+            if (units[i].typeIndex == syn->requiredTypes[r])
+              typePresent[r] = true;
+          }
+        }
+        for (int r = 0; r < syn->requiredTypeCount; r++)
+          if (typePresent[r])
+            matchCount++;
+      } else {
+        for (int i = 0; i < unitCount; i++) {
+          if (!units[i].active || units[i].team != t)
+            continue;
+          for (int r = 0; r < syn->requiredTypeCount; r++) {
+            if (units[i].typeIndex == syn->requiredTypes[r]) {
+              matchCount++;
+              break;
+            }
+          }
+        }
+      }
+
+      // Find highest tier met
+      int bestTier = -1;
+      for (int tier = 0; tier < syn->tierCount; tier++) {
+        if (matchCount >= syn->tiers[tier].minUnits)
+          bestTier = tier;
+      }
+      if (bestTier < 0)
+        continue;
+
+      // Apply buffs to target units on this team
+      for (int i = 0; i < unitCount; i++) {
+        if (!units[i].active || units[i].team != t)
+          continue;
+
+        bool isTarget = false;
+        if (syn->targetType < 0) {
+          // -1 = buff all matching types
+          for (int r = 0; r < syn->requiredTypeCount; r++) {
+            if (units[i].typeIndex == syn->requiredTypes[r]) {
+              isTarget = true;
+              break;
+            }
+          }
+        } else {
+          isTarget = (units[i].typeIndex == syn->targetType);
+        }
+        if (!isTarget)
+          continue;
+
+        units[i].speedMultiplier *= syn->tiers[bestTier].speedMult;
+        units[i].dmgMultiplier *= syn->tiers[bestTier].dmgMult;
+
+        if (syn->tiers[bestTier].hpMult != 1.0f) {
+          float oldMax =
+              UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+          units[i].hpMultiplier *= syn->tiers[bestTier].hpMult;
+          float newMax =
+              UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+          // Scale current health proportionally
+          if (oldMax > 0)
+            units[i].currentHealth *= (newMax / oldMax);
+        }
+      }
     }
-}
+  }
 
-void SpawnMushling(Unit units[], int *unitCount, int parentIndex)
-{
-    if (*unitCount >= MAX_UNITS) return;
-    Unit *parent = &units[parentIndex];
-    const UnitStats *stats = &UNIT_STATS[parent->typeIndex];
-    int idx = *unitCount;
-    units[idx] = (Unit){
-        .typeIndex      = parent->typeIndex,
-        .position       = { parent->position.x + ((GetRandomValue(0,1)*2-1) * 3.0f),
-                            0.0f,
-                            parent->position.z + ((GetRandomValue(0,1)*2-1) * 3.0f) },
-        .team           = parent->team,
-        .currentHealth  = stats->health * parent->hpMultiplier * 0.5f,
-        .attackCooldown = 0.0f,
-        .targetIndex    = -1,
-        .active         = true,
-        .selected       = false,
-        .dragging       = false,
-        .facingAngle    = parent->facingAngle,
-        .currentAnim    = ANIM_IDLE,
-        .animFrame      = GetRandomValue(0, 999),
-        .scaleOverride  = 0.5f,
-        .hpMultiplier   = parent->hpMultiplier * 0.5f,
-        .dmgMultiplier  = parent->dmgMultiplier * 0.5f,
-        .speedMultiplier = parent->speedMultiplier,
-        .shieldHP       = 0.0f,
-        .abilityCastDelay = 0.0f,
-        .chargeTarget   = -1,
-        .isMushling     = true,
-    };
-    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
-        units[idx].abilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
-            .cooldownRemaining = 0, .triggered = false };
-    (*unitCount)++;
-}
-
-void CheckMushroomSpawn(Unit units[], int *unitCount, int damagedUnit, float damage)
-{
-    if (damagedUnit < 0 || damagedUnit >= *unitCount) return;
-    Unit *u = &units[damagedUnit];
-    if (!u->active || u->isMushling || u->hasSpawnedMushling) return;
-    if (u->mushroomSpawnThresh <= 0) return;
-    u->damageTaken += damage;
-    if (u->damageTaken >= u->mushroomSpawnThresh) {
-        u->hasSpawnedMushling = true;
-        SpawnMushling(units, unitCount, damagedUnit);
-    }
-}
-
-void ApplySynergies(Unit units[], int unitCount)
-{
+  // Mushroom Fort: set spawn thresholds on non-mushling mushrooms
+  // Synergy index 1 = Mushroom Fort; thresholds: tier0=50%, tier1=25%,
+  // tier2=12.5%
+  {
+    const float thresholds[] = {0.50f, 0.25f, 0.125f};
     for (int team = 0; team < 2; team++) {
-        Team t = (Team)team;
-
-        for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
-            const SynergyDef *syn = &SYNERGY_DEFS[s];
-
-            // Count units matching any of the required types on this team
-            int matchCount = 0;
-            if (syn->requireAllTypes) {
-                // Count distinct required types present (for multi-type synergies)
-                bool typePresent[4] = {0};
-                for (int i = 0; i < unitCount; i++) {
-                    if (!units[i].active || units[i].team != t) continue;
-                    for (int r = 0; r < syn->requiredTypeCount; r++) {
-                        if (units[i].typeIndex == syn->requiredTypes[r])
-                            typePresent[r] = true;
-                    }
-                }
-                for (int r = 0; r < syn->requiredTypeCount; r++)
-                    if (typePresent[r]) matchCount++;
-            } else {
-                for (int i = 0; i < unitCount; i++) {
-                    if (!units[i].active || units[i].team != t) continue;
-                    for (int r = 0; r < syn->requiredTypeCount; r++) {
-                        if (units[i].typeIndex == syn->requiredTypes[r]) {
-                            matchCount++;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Find highest tier met
-            int bestTier = -1;
-            for (int tier = 0; tier < syn->tierCount; tier++) {
-                if (matchCount >= syn->tiers[tier].minUnits)
-                    bestTier = tier;
-            }
-            if (bestTier < 0) continue;
-
-            // Apply buffs to target units on this team
-            for (int i = 0; i < unitCount; i++) {
-                if (!units[i].active || units[i].team != t) continue;
-
-                bool isTarget = false;
-                if (syn->targetType < 0) {
-                    // -1 = buff all matching types
-                    for (int r = 0; r < syn->requiredTypeCount; r++) {
-                        if (units[i].typeIndex == syn->requiredTypes[r]) {
-                            isTarget = true;
-                            break;
-                        }
-                    }
-                } else {
-                    isTarget = (units[i].typeIndex == syn->targetType);
-                }
-                if (!isTarget) continue;
-
-                units[i].speedMultiplier *= syn->tiers[bestTier].speedMult;
-                units[i].dmgMultiplier *= syn->tiers[bestTier].dmgMult;
-
-                if (syn->tiers[bestTier].hpMult != 1.0f) {
-                    float oldMax = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
-                    units[i].hpMultiplier *= syn->tiers[bestTier].hpMult;
-                    float newMax = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
-                    // Scale current health proportionally
-                    if (oldMax > 0)
-                        units[i].currentHealth *= (newMax / oldMax);
-                }
-            }
+      Team t = (Team)team;
+      // Count mushrooms on this team
+      int mushCount = 0;
+      for (int i = 0; i < unitCount; i++) {
+        if (!units[i].active || units[i].team != t)
+          continue;
+        if (units[i].typeIndex == 0 && !units[i].isMushling)
+          mushCount++;
+      }
+      if (mushCount < 2)
+        continue;
+      int tier = -1;
+      if (mushCount >= 4)
+        tier = 2;
+      else if (mushCount >= 3)
+        tier = 1;
+      else if (mushCount >= 2)
+        tier = 0;
+      if (tier < 0)
+        continue;
+      for (int i = 0; i < unitCount; i++) {
+        if (!units[i].active || units[i].team != t)
+          continue;
+        if (units[i].typeIndex == 0 && !units[i].isMushling) {
+          float maxHP =
+              UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
+          units[i].mushroomSpawnThresh = maxHP * thresholds[tier];
         }
+      }
     }
-
-    // Mushroom Fort: set spawn thresholds on non-mushling mushrooms
-    // Synergy index 1 = Mushroom Fort; thresholds: tier0=50%, tier1=25%, tier2=12.5%
-    {
-        const float thresholds[] = { 0.50f, 0.25f, 0.125f };
-        for (int team = 0; team < 2; team++) {
-            Team t = (Team)team;
-            // Count mushrooms on this team
-            int mushCount = 0;
-            for (int i = 0; i < unitCount; i++) {
-                if (!units[i].active || units[i].team != t) continue;
-                if (units[i].typeIndex == 0 && !units[i].isMushling) mushCount++;
-            }
-            if (mushCount < 2) continue;
-            int tier = -1;
-            if (mushCount >= 4) tier = 2;
-            else if (mushCount >= 3) tier = 1;
-            else if (mushCount >= 2) tier = 0;
-            if (tier < 0) continue;
-            for (int i = 0; i < unitCount; i++) {
-                if (!units[i].active || units[i].team != t) continue;
-                if (units[i].typeIndex == 0 && !units[i].isMushling) {
-                    float maxHP = UNIT_STATS[units[i].typeIndex].health * units[i].hpMultiplier;
-                    units[i].mushroomSpawnThresh = maxHP * thresholds[tier];
-                }
-            }
-        }
-    }
+  }
 }
 
 //------------------------------------------------------------------------------------
 // Visual Juice Helpers
 //------------------------------------------------------------------------------------
-void SpawnDeathExplosion(Particle particles[], Vector3 pos, Team team)
-{
-    Color baseColor = (team == TEAM_BLUE) ? (Color){100, 150, 255, 255} : (Color){255, 100, 100, 255};
-    for (int i = 0; i < 20; i++) {
-        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
-        float upAngle = (float)GetRandomValue(20, 70) * DEG2RAD;
-        float speed = (float)GetRandomValue(30, 80) / 10.0f;
-        Vector3 vel = {
-            cosf(angle) * cosf(upAngle) * speed,
-            sinf(upAngle) * speed,
-            sinf(angle) * cosf(upAngle) * speed
-        };
-        // Vary color slightly
-        Color c = baseColor;
-        c.r = (unsigned char)fminf(255, c.r + GetRandomValue(-30, 30));
-        c.g = (unsigned char)fminf(255, c.g + GetRandomValue(-30, 30));
-        c.b = (unsigned char)fminf(255, c.b + GetRandomValue(-30, 30));
-        float sz = (float)GetRandomValue(5, 15) / 10.0f;
-        SpawnParticle(particles, pos, vel, 0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, c);
-    }
+void SpawnDeathExplosion(Particle particles[], Vector3 pos, Team team) {
+  Color baseColor = (team == TEAM_BLUE) ? (Color){100, 150, 255, 255}
+                                        : (Color){255, 100, 100, 255};
+  for (int i = 0; i < 20; i++) {
+    float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+    float upAngle = (float)GetRandomValue(20, 70) * DEG2RAD;
+    float speed = (float)GetRandomValue(30, 80) / 10.0f;
+    Vector3 vel = {cosf(angle) * cosf(upAngle) * speed, sinf(upAngle) * speed,
+                   sinf(angle) * cosf(upAngle) * speed};
+    // Vary color slightly
+    Color c = baseColor;
+    c.r = (unsigned char)fminf(255, c.r + GetRandomValue(-30, 30));
+    c.g = (unsigned char)fminf(255, c.g + GetRandomValue(-30, 30));
+    c.b = (unsigned char)fminf(255, c.b + GetRandomValue(-30, 30));
+    float sz = (float)GetRandomValue(5, 15) / 10.0f;
+    SpawnParticle(particles, pos, vel,
+                  0.6f + (float)GetRandomValue(0, 4) / 10.0f, sz, c);
+  }
 }
 
-void SpawnDamageNumber(FloatingText texts[], Vector3 pos, float damage, bool isAbility)
-{
-    int dmgInt = (int)(damage + 0.5f);
-    if (dmgInt <= 0) return;
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", dmgInt);
-    // Color: red for big hits, orange for ability, yellow for normal
-    Color c;
-    int fontSize;
-    if (dmgInt >= 15) {
-        c = (Color){255, 60, 60, 255};
-        fontSize = 22;
-    } else if (isAbility) {
-        c = (Color){255, 160, 40, 255};
-        fontSize = 18;
-    } else {
-        c = (Color){255, 230, 50, 255};
-        fontSize = 14;
-    }
-    float driftX = (float)GetRandomValue(-40, 40);
-    SpawnFloatingTextEx(texts, pos, buf, c, 0.8f, fontSize, driftX);
+void SpawnDamageNumber(FloatingText texts[], Vector3 pos, float damage,
+                       bool isAbility) {
+  int dmgInt = (int)(damage + 0.5f);
+  if (dmgInt <= 0)
+    return;
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%d", dmgInt);
+  // Color: red for big hits, orange for ability, yellow for normal
+  Color c;
+  int fontSize;
+  if (dmgInt >= 15) {
+    c = (Color){255, 60, 60, 255};
+    fontSize = 22;
+  } else if (isAbility) {
+    c = (Color){255, 160, 40, 255};
+    fontSize = 18;
+  } else {
+    c = (Color){255, 230, 50, 255};
+    fontSize = 14;
+  }
+  float driftX = (float)GetRandomValue(-40, 40);
+  SpawnFloatingTextEx(texts, pos, buf, c, 0.8f, fontSize, driftX);
 }
 
-void SpawnMeleeImpact(Particle particles[], Vector3 pos)
-{
-    for (int i = 0; i < 5; i++) {
-        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
-        float speed = (float)GetRandomValue(10, 40) / 10.0f;
-        Vector3 vel = {
-            cosf(angle) * speed,
-            (float)GetRandomValue(10, 30) / 10.0f,
-            sinf(angle) * speed
-        };
-        int shade = GetRandomValue(140, 200);
-        Color c = { (unsigned char)shade, (unsigned char)(shade * 4/5), (unsigned char)(shade * 3/5), 255 };
-        float sz = (float)GetRandomValue(3, 7) / 10.0f;
-        SpawnParticle(particles, pos, vel, 0.3f, sz, c);
-    }
+void SpawnMeleeImpact(Particle particles[], Vector3 pos) {
+  for (int i = 0; i < 5; i++) {
+    float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+    float speed = (float)GetRandomValue(10, 40) / 10.0f;
+    Vector3 vel = {cosf(angle) * speed, (float)GetRandomValue(10, 30) / 10.0f,
+                   sinf(angle) * speed};
+    int shade = GetRandomValue(140, 200);
+    Color c = {(unsigned char)shade, (unsigned char)(shade * 4 / 5),
+               (unsigned char)(shade * 3 / 5), 255};
+    float sz = (float)GetRandomValue(3, 7) / 10.0f;
+    SpawnParticle(particles, pos, vel, 0.3f, sz, c);
+  }
 }
 
 //------------------------------------------------------------------------------------
@@ -1165,13 +1315,13 @@ void SpawnMeleeImpact(Particle particles[], Vector3 pos)
 //------------------------------------------------------------------------------------
 
 // Look up ability ID by 2-char abbreviation, returns -1 if not found
-static int LookupAbilityAbbrev(const char *abbrev)
-{
-    for (int i = 0; i < ABILITY_COUNT; i++) {
-        if (ABILITY_DEFS[i].abbrev[0] == abbrev[0] && ABILITY_DEFS[i].abbrev[1] == abbrev[1])
-            return i;
-    }
-    return -1;
+static int LookupAbilityAbbrev(const char *abbrev) {
+  for (int i = 0; i < ABILITY_COUNT; i++) {
+    if (ABILITY_DEFS[i].abbrev[0] == abbrev[0] &&
+        ABILITY_DEFS[i].abbrev[1] == abbrev[1])
+      return i;
+  }
+  return -1;
 }
 
 // Parse a unit code string into type index and abilities.
@@ -1179,138 +1329,152 @@ static int LookupAbilityAbbrev(const char *abbrev)
 // Each slot is 3 chars (abbrev + level 1-3) or 2 chars "XX" (empty).
 // Single-digit input = legacy format (type with no abilities).
 // Returns true on success.
-bool ParseUnitCode(const char *code, int *outTypeIndex, AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT])
-{
-    if (!code || !code[0]) {
-        fprintf(stderr, "[ParseUnitCode] Empty input\n");
-        return false;
-    }
+bool ParseUnitCode(const char *code, int *outTypeIndex,
+                   AbilitySlot outAbilities[MAX_ABILITIES_PER_UNIT]) {
+  if (!code || !code[0]) {
+    fprintf(stderr, "[ParseUnitCode] Empty input\n");
+    return false;
+  }
 
-    // Initialize abilities to empty
-    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-        outAbilities[a] = (AbilitySlot){ .abilityId = -1, .level = 0,
-            .cooldownRemaining = 0, .triggered = false };
-    }
+  // Initialize abilities to empty
+  for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+    outAbilities[a] = (AbilitySlot){.abilityId = -1,
+                                    .level = 0,
+                                    .cooldownRemaining = 0,
+                                    .triggered = false};
+  }
 
-    // Type digit
-    if (code[0] < '0' || code[0] > '5') {
-        fprintf(stderr, "[ParseUnitCode] Invalid type digit '%c'\n", code[0]);
-        return false;
-    }
-    *outTypeIndex = code[0] - '0';
+  // Type digit
+  if (code[0] < '0' || code[0] > '5') {
+    fprintf(stderr, "[ParseUnitCode] Invalid type digit '%c'\n", code[0]);
+    return false;
+  }
+  *outTypeIndex = code[0] - '0';
 
-    // Legacy format: single digit = type with no abilities
-    if (code[1] == '\0') return true;
-
-    // Parse 4 ability slots
-    const char *p = code + 1;
-    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-        if (*p == '\0') break;  // fewer than 4 slots is OK
-
-        // Check for empty slot "XX"
-        if (p[0] == 'X' && p[1] == 'X') {
-            p += 2;
-            continue;
-        }
-
-        // Need at least 3 chars: 2-char abbrev + 1-digit level
-        if (!p[0] || !p[1] || !p[2]) {
-            fprintf(stderr, "[ParseUnitCode] Truncated ability at slot %d\n", a);
-            return false;
-        }
-
-        char abbrev[3] = { p[0], p[1], '\0' };
-        int abilityId = LookupAbilityAbbrev(abbrev);
-        if (abilityId < 0) {
-            fprintf(stderr, "[ParseUnitCode] Unknown ability '%s' at slot %d\n", abbrev, a);
-            return false;
-        }
-
-        int level = p[2] - '0';
-        if (level < 1 || level > ABILITY_MAX_LEVELS) {
-            fprintf(stderr, "[ParseUnitCode] Invalid level '%c' at slot %d\n", p[2], a);
-            return false;
-        }
-
-        outAbilities[a].abilityId = abilityId;
-        outAbilities[a].level = level - 1;  // displayed 1-3, stored 0-2
-        p += 3;
-    }
-
+  // Legacy format: single digit = type with no abilities
+  if (code[1] == '\0')
     return true;
+
+  // Parse 4 ability slots
+  const char *p = code + 1;
+  for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+    if (*p == '\0')
+      break; // fewer than 4 slots is OK
+
+    // Check for empty slot "XX"
+    if (p[0] == 'X' && p[1] == 'X') {
+      p += 2;
+      continue;
+    }
+
+    // Need at least 3 chars: 2-char abbrev + 1-digit level
+    if (!p[0] || !p[1] || !p[2]) {
+      fprintf(stderr, "[ParseUnitCode] Truncated ability at slot %d\n", a);
+      return false;
+    }
+
+    char abbrev[3] = {p[0], p[1], '\0'};
+    int abilityId = LookupAbilityAbbrev(abbrev);
+    if (abilityId < 0) {
+      fprintf(stderr, "[ParseUnitCode] Unknown ability '%s' at slot %d\n",
+              abbrev, a);
+      return false;
+    }
+
+    int level = p[2] - '0';
+    if (level < 1 || level > ABILITY_MAX_LEVELS) {
+      fprintf(stderr, "[ParseUnitCode] Invalid level '%c' at slot %d\n", p[2],
+              a);
+      return false;
+    }
+
+    outAbilities[a].abilityId = abilityId;
+    outAbilities[a].level = level - 1; // displayed 1-3, stored 0-2
+    p += 3;
+  }
+
+  return true;
 }
 
 // Format a unit's type and abilities into a unit code string.
 // Returns the number of characters written (excluding null terminator).
 // buf must be at least 14 bytes.
-int FormatUnitCode(int typeIndex, const AbilitySlot abilities[MAX_ABILITIES_PER_UNIT], char *buf, int bufSize)
-{
-    if (bufSize < 14) { buf[0] = '\0'; return 0; }
+int FormatUnitCode(int typeIndex,
+                   const AbilitySlot abilities[MAX_ABILITIES_PER_UNIT],
+                   char *buf, int bufSize) {
+  if (bufSize < 14) {
+    buf[0] = '\0';
+    return 0;
+  }
 
-    int pos = 0;
-    buf[pos++] = '0' + (typeIndex % 6);
+  int pos = 0;
+  buf[pos++] = '0' + (typeIndex % 6);
 
-    for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-        if (abilities[a].abilityId >= 0 && abilities[a].abilityId < ABILITY_COUNT) {
-            const char *abbrev = ABILITY_DEFS[abilities[a].abilityId].abbrev;
-            buf[pos++] = abbrev[0];
-            buf[pos++] = abbrev[1];
-            buf[pos++] = '1' + abilities[a].level;  // stored 0-2, displayed 1-3
-        } else {
-            buf[pos++] = 'X';
-            buf[pos++] = 'X';
-        }
+  for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+    if (abilities[a].abilityId >= 0 && abilities[a].abilityId < ABILITY_COUNT) {
+      const char *abbrev = ABILITY_DEFS[abilities[a].abilityId].abbrev;
+      buf[pos++] = abbrev[0];
+      buf[pos++] = abbrev[1];
+      buf[pos++] = '1' + abilities[a].level; // stored 0-2, displayed 1-3
+    } else {
+      buf[pos++] = 'X';
+      buf[pos++] = 'X';
     }
-    buf[pos] = '\0';
-    return pos;
+  }
+  buf[pos] = '\0';
+  return pos;
 }
 
 //------------------------------------------------------------------------------------
 // Battle Log Helpers (client-only)
 //------------------------------------------------------------------------------------
 #ifndef SERVER_BUILD
-void BattleLogClear(BattleLog *log)
-{
-    log->count = 0;
-    log->scroll = 0;
+void BattleLogClear(BattleLog *log) {
+  log->count = 0;
+  log->scroll = 0;
 }
 
-static void BattleLogAdd(BattleLog *log, BattleLogType type, float time, const char *text, Color color)
-{
-    if (log->count < MAX_BATTLE_LOG) {
-        BattleLogEntry *e = &log->entries[log->count++];
-        e->type = type;
-        e->timestamp = time;
-        snprintf(e->text, sizeof(e->text), "%s", text);
-        e->color = color;
-    }
+static void BattleLogAdd(BattleLog *log, BattleLogType type, float time,
+                         const char *text, Color color) {
+  if (log->count < MAX_BATTLE_LOG) {
+    BattleLogEntry *e = &log->entries[log->count++];
+    e->type = type;
+    e->timestamp = time;
+    snprintf(e->text, sizeof(e->text), "%s", text);
+    e->color = color;
+  }
 }
 
-void BattleLogAddCast(BattleLog *log, float time, Team casterTeam, int casterType, int abilityId)
-{
-    const char *teamName = (casterTeam == TEAM_BLUE) ? "Blue" : "Red";
-    const char *unitName = GetUnitTypeName(casterType);
+void BattleLogAddCast(BattleLog *log, float time, Team casterTeam,
+                      int casterType, int abilityId) {
+  const char *teamName = (casterTeam == TEAM_BLUE) ? "Blue" : "Red";
+  const char *unitName = GetUnitTypeName(casterType);
+  const char *abilName = ABILITY_DEFS[abilityId].name;
+  char buf[80];
+  snprintf(buf, sizeof(buf), "%s %s cast %s", teamName, unitName, abilName);
+  Color c = (casterTeam == TEAM_BLUE) ? (Color){130, 170, 255, 255}
+                                      : (Color){255, 140, 140, 255};
+  BattleLogAdd(log, BLOG_CAST, time, buf, c);
+}
+
+void BattleLogAddKill(BattleLog *log, float time, Team killerTeam,
+                      int killerType, Team victimTeam, int victimType,
+                      int abilityId) {
+  const char *vTeamName = (victimTeam == TEAM_BLUE) ? "Blue" : "Red";
+  const char *vUnitName = GetUnitTypeName(victimType);
+  char buf[80];
+  if (abilityId >= 0 && abilityId < ABILITY_COUNT) {
     const char *abilName = ABILITY_DEFS[abilityId].name;
-    char buf[80];
-    snprintf(buf, sizeof(buf), "%s %s cast %s", teamName, unitName, abilName);
-    Color c = (casterTeam == TEAM_BLUE) ? (Color){130, 170, 255, 255} : (Color){255, 140, 140, 255};
-    BattleLogAdd(log, BLOG_CAST, time, buf, c);
-}
-
-void BattleLogAddKill(BattleLog *log, float time, Team killerTeam, int killerType, Team victimTeam, int victimType, int abilityId)
-{
-    const char *vTeamName = (victimTeam == TEAM_BLUE) ? "Blue" : "Red";
-    const char *vUnitName = GetUnitTypeName(victimType);
-    char buf[80];
-    if (abilityId >= 0 && abilityId < ABILITY_COUNT) {
-        const char *abilName = ABILITY_DEFS[abilityId].name;
-        snprintf(buf, sizeof(buf), "%s killed %s %s", abilName, vTeamName, vUnitName);
-    } else {
-        const char *kTeamName = (killerTeam == TEAM_BLUE) ? "Blue" : "Red";
-        const char *kUnitName = GetUnitTypeName(killerType);
-        snprintf(buf, sizeof(buf), "%s %s killed %s %s", kTeamName, kUnitName, vTeamName, vUnitName);
-    }
-    Color c = (killerTeam == TEAM_BLUE) ? (Color){100, 200, 255, 255} : (Color){255, 100, 100, 255};
-    BattleLogAdd(log, BLOG_KILL, time, buf, c);
+    snprintf(buf, sizeof(buf), "%s killed %s %s", abilName, vTeamName,
+             vUnitName);
+  } else {
+    const char *kTeamName = (killerTeam == TEAM_BLUE) ? "Blue" : "Red";
+    const char *kUnitName = GetUnitTypeName(killerType);
+    snprintf(buf, sizeof(buf), "%s %s killed %s %s", kTeamName, kUnitName,
+             vTeamName, vUnitName);
+  }
+  Color c = (killerTeam == TEAM_BLUE) ? (Color){100, 200, 255, 255}
+                                      : (Color){255, 100, 100, 255};
+  BattleLogAdd(log, BLOG_KILL, time, buf, c);
 }
 #endif
