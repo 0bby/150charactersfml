@@ -579,11 +579,11 @@ int main(int argc, char *argv[]) {
       "assets/goblin/environment/tiles/Tile5.obj",
   };
   Texture2D tileDiffuse =
-      LoadTexture("assets/goblin/environment/tiles/T_Tiles_BC.png");
+      LoadTexture("assets/goblin/environment/tiles/T_TilesDark_BC.png");
   Texture2D tileORM =
-      LoadTexture("assets/goblin/environment/tiles/T_Tiles_ORM.png");
+      LoadTexture("assets/goblin/environment/tiles/T_TilesDark_ORM.png");
   Texture2D tileNormal =
-      LoadTexture("assets/goblin/environment/tiles/T_Tiles_N.png");
+      LoadTexture("assets/goblin/environment/tiles/T_TilesDark_N.png");
 
   for (int i = 0; i < TILE_VARIANTS; i++) {
     tileModels[i] = LoadModel(tilePaths[i]);
