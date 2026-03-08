@@ -90,6 +90,9 @@ export-linux: deps
 	@echo "=== Assembling Linux export ==="
 	@mkdir -p export/linux
 	@cp $(GAME_TARGET) export/linux/
+ifneq ($(USE_EOS),0)
+	@cp $(EOS_SDK)/Bin/$(EOS_LIB_NAME) export/linux/
+endif
 	@for dir in $(GAME_ASSET_DIRS); do \
 		if [ -d "$(GAME_DIR)/$$dir" ]; then \
 			cp -r "$(GAME_DIR)/$$dir" export/linux/; \
