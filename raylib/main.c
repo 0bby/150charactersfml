@@ -6466,7 +6466,8 @@ int main(int argc, char *argv[]) {
             float rzo = -sxo * sinA + szo * cosA;
             Vector3 pos = {
                 cellX - rxo,
-                -tileCenters[vi].y * tileScale - 0.5f,
+                -tileCenters[vi].y * tileScale -
+                    1.0f, // moved slightly deeper into floor (was -0.5f)
                 cellZ - rzo,
             };
             DrawModelEx(tileModels[vi], pos, (Vector3){0.0f, 1.0f, 0.0f},
@@ -6615,7 +6616,8 @@ int main(int argc, char *argv[]) {
 
           Vector3 pos = {
               cellX - rxo,
-              wobbleY - tileCenters[vi].y * tileScale - 0.5f,
+              wobbleY - tileCenters[vi].y * tileScale -
+                  1.0f, // moved slightly deeper into floor (was -0.5f)
               cellZ - rzo,
           };
           // Apply tilt via rlgl matrix if wobbling
