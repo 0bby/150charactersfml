@@ -556,6 +556,77 @@ int main(int argc, char *argv[]) {
   int normalMapLoc = GetShaderLocation(lightShader, "normalMap");
   int useNormalMapLoc = GetShaderLocation(lightShader, "useNormalMap");
 
+  // --- Foliage sway shader (instanced, with wind animation) ---
+  Shader foliageShader = LoadShader(
+      TextFormat("resources/shaders/glsl%i/foliage.vs", GLSL_VERSION),
+      TextFormat("resources/shaders/glsl%i/foliage.fs", GLSL_VERSION));
+  foliageShader.locs[SHADER_LOC_VECTOR_VIEW] =
+      GetShaderLocation(foliageShader, "viewPos");
+  foliageShader.locs[SHADER_LOC_MATRIX_MODEL] =
+      GetShaderLocationAttrib(foliageShader, "instanceTransform");
+  // Sync all shared uniforms with lightShader
+  int fAmbientLoc = GetShaderLocation(foliageShader, "ambient");
+  SetShaderValue(foliageShader, fAmbientLoc,
+                 (float[4]){0.25f, 0.22f, 0.18f, 1.0f}, SHADER_UNIFORM_VEC4);
+  int fFogColorLoc = GetShaderLocation(foliageShader, "fogColor");
+  int fFogDensityLoc = GetShaderLocation(foliageShader, "fogDensity");
+  SetShaderValue(foliageShader, fFogColorLoc,
+                 (float[3]){0.176f, 0.157f, 0.137f}, SHADER_UNIFORM_VEC3);
+  SetShaderValue(foliageShader, fFogDensityLoc, &fogDensity,
+                 SHADER_UNIFORM_FLOAT);
+  int fTimeLoc = GetShaderLocation(foliageShader, "time");
+  int fLightVPLoc = GetShaderLocation(foliageShader, "lightVP");
+  int fShadowMapLoc = GetShaderLocation(foliageShader, "shadowMap");
+  int fShadowDebugLoc = GetShaderLocation(foliageShader, "shadowDebug");
+  int fNoShadowLoc = GetShaderLocation(foliageShader, "noShadow");
+  int fNormalMapLoc = GetShaderLocation(foliageShader, "normalMap");
+  int fUseNormalMapLoc = GetShaderLocation(foliageShader, "useNormalMap");
+  // Manually set lights[0] and lights[1] on foliage shader
+  // (Can't use CreateLight — its static counter is already at 2 from lightShader)
+  {
+    Light fLight0 = {0};
+    fLight0.enabled = true;
+    fLight0.type = LIGHT_DIRECTIONAL;
+    fLight0.position = (Vector3){40, 60, 30};
+    fLight0.target = Vector3Zero();
+    fLight0.color = (Color){245, 230, 200, 255};
+    fLight0.enabledLoc = GetShaderLocation(foliageShader, "lights[0].enabled");
+    fLight0.typeLoc = GetShaderLocation(foliageShader, "lights[0].type");
+    fLight0.positionLoc = GetShaderLocation(foliageShader, "lights[0].position");
+    fLight0.targetLoc = GetShaderLocation(foliageShader, "lights[0].target");
+    fLight0.colorLoc = GetShaderLocation(foliageShader, "lights[0].color");
+    UpdateLightValues(foliageShader, fLight0);
+
+    Light fLight1 = {0};
+    fLight1.enabled = true;
+    fLight1.type = LIGHT_POINT;
+    fLight1.position = (Vector3){0, 40, 0};
+    fLight1.target = Vector3Zero();
+    fLight1.color = (Color){220, 200, 170, 255};
+    fLight1.enabledLoc = GetShaderLocation(foliageShader, "lights[1].enabled");
+    fLight1.typeLoc = GetShaderLocation(foliageShader, "lights[1].type");
+    fLight1.positionLoc = GetShaderLocation(foliageShader, "lights[1].position");
+    fLight1.targetLoc = GetShaderLocation(foliageShader, "lights[1].target");
+    fLight1.colorLoc = GetShaderLocation(foliageShader, "lights[1].color");
+    UpdateLightValues(foliageShader, fLight1);
+  }
+
+  // Foliage shadow depth shader (instanced, with sway)
+  Shader foliageShadowShader = LoadShader(
+      TextFormat("resources/shaders/glsl%i/foliage_shadow.vs", GLSL_VERSION),
+      TextFormat("resources/shaders/glsl%i/shadow_depth.fs", GLSL_VERSION));
+  foliageShadowShader.locs[SHADER_LOC_MATRIX_MODEL] =
+      GetShaderLocationAttrib(foliageShadowShader, "instanceTransform");
+  int fsTimeLoc = GetShaderLocation(foliageShadowShader, "time");
+
+  // Foliage model indices (envModels 8-12)
+#define FOLIAGE_MODEL_FIRST 8
+#define FOLIAGE_MODEL_LAST 12
+#define FOLIAGE_MODEL_COUNT (FOLIAGE_MODEL_LAST - FOLIAGE_MODEL_FIRST + 1)
+#define MAX_FOLIAGE_INSTANCES 64
+  Matrix foliageTransforms[FOLIAGE_MODEL_COUNT][MAX_FOLIAGE_INSTANCES];
+  int foliageInstanceCounts[FOLIAGE_MODEL_COUNT];
+
   // Assign lighting shader to all loaded models
   for (int i = 0; i < unitTypeCount; i++) {
     if (!unitTypes[i].loaded)
@@ -1206,7 +1277,7 @@ int main(int argc, char *argv[]) {
       em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
       em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
           em->ormTexture;
-      em->model.materials[m].shader = lightShader;
+      em->model.materials[m].shader = foliageShader;
     }
     if (em->model.meshCount > 0) {
       BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
@@ -1241,7 +1312,7 @@ int main(int argc, char *argv[]) {
       em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
       em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
           em->ormTexture;
-      em->model.materials[m].shader = lightShader;
+      em->model.materials[m].shader = foliageShader;
     }
     if (em->model.meshCount > 0) {
       BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
@@ -1276,7 +1347,7 @@ int main(int argc, char *argv[]) {
       em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
       em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
           em->ormTexture;
-      em->model.materials[m].shader = lightShader;
+      em->model.materials[m].shader = foliageShader;
     }
     if (em->model.meshCount > 0) {
       BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
@@ -1311,7 +1382,7 @@ int main(int argc, char *argv[]) {
       em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
       em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
           em->ormTexture;
-      em->model.materials[m].shader = lightShader;
+      em->model.materials[m].shader = foliageShader;
     }
     if (em->model.meshCount > 0) {
       BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
@@ -1346,7 +1417,7 @@ int main(int argc, char *argv[]) {
       em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
       em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
           em->ormTexture;
-      em->model.materials[m].shader = lightShader;
+      em->model.materials[m].shader = foliageShader;
     }
     if (em->model.meshCount > 0) {
       BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
@@ -1896,6 +1967,13 @@ int main(int argc, char *argv[]) {
                           camera.position.z};
     SetShaderValue(lightShader, lightShader.locs[SHADER_LOC_VECTOR_VIEW],
                    cameraPos, SHADER_UNIFORM_VEC3);
+    SetShaderValue(foliageShader, foliageShader.locs[SHADER_LOC_VECTOR_VIEW],
+                   cameraPos, SHADER_UNIFORM_VEC3);
+    // Update foliage time uniform
+    float foliageTime = (float)GetTime();
+    SetShaderValue(foliageShader, fTimeLoc, &foliageTime, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(foliageShadowShader, fsTimeLoc, &foliageTime,
+                   SHADER_UNIFORM_FLOAT);
 
     //------------------------------------------------------------------------------
     // PHASE: PLAZA — 3D plaza with roaming enemies, interactive objects
@@ -6613,12 +6691,15 @@ int main(int argc, char *argv[]) {
         for (int m = 0; m < tileModels[i].materialCount; m++)
           tileModels[i].materials[m].shader = shadowDepthShader;
       // Swap env model materials to shadow depth shader (covers ground, stairs,
-      // circle, etc.)
+      // circle, etc.) — foliage uses foliageShadowShader for instanced sway
       for (int ei = 0; ei < envModelCount; ei++) {
         if (!envModels[ei].loaded)
           continue;
+        Shader shadowShd = (ei >= FOLIAGE_MODEL_FIRST && ei <= FOLIAGE_MODEL_LAST)
+                               ? foliageShadowShader
+                               : shadowDepthShader;
         for (int m = 0; m < envModels[ei].model.materialCount; m++)
-          envModels[ei].model.materials[m].shader = shadowDepthShader;
+          envModels[ei].model.materials[m].shader = shadowShd;
       }
 
       // Draw shadow-casting geometry
@@ -6652,10 +6733,13 @@ int main(int argc, char *argv[]) {
         }
       }
       // Draw env pieces (shadow pass — includes ground, stairs, circle)
+      // Collect foliage instance transforms for instanced draw
+      memset(foliageInstanceCounts, 0, sizeof(foliageInstanceCounts));
       for (int ep = 0; ep < envPieceCount; ep++) {
         if (!envPieces[ep].active)
           continue;
-        EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+        int mi = envPieces[ep].modelIndex;
+        EnvModelDef *emd = &envModels[mi];
         if (!emd->loaded)
           continue;
         float es = envPieces[ep].scale;
@@ -6670,10 +6754,32 @@ int main(int argc, char *argv[]) {
             MatrixMultiply(matTransform, MatrixRotateZ(p.rotationZ * DEG2RAD));
         matTransform =
             MatrixMultiply(matTransform, MatrixTranslate(pos.x, pos.y, pos.z));
+        // Foliage: collect for instanced draw
+        if (mi >= FOLIAGE_MODEL_FIRST && mi <= FOLIAGE_MODEL_LAST) {
+          int fi = mi - FOLIAGE_MODEL_FIRST;
+          if (foliageInstanceCounts[fi] < MAX_FOLIAGE_INSTANCES) {
+            foliageTransforms[fi][foliageInstanceCounts[fi]] =
+                MatrixMultiply(emd->model.transform, matTransform);
+            foliageInstanceCounts[fi]++;
+          }
+          continue; // skip per-piece draw
+        }
         Matrix oldTransform = emd->model.transform;
         emd->model.transform = MatrixMultiply(oldTransform, matTransform);
         DrawModel(emd->model, (Vector3){0, 0, 0}, 1.0f, WHITE);
         emd->model.transform = oldTransform;
+      }
+      // Instanced draw for foliage (shadow pass)
+      for (int fi = 0; fi < FOLIAGE_MODEL_COUNT; fi++) {
+        if (foliageInstanceCounts[fi] == 0)
+          continue;
+        int mi = FOLIAGE_MODEL_FIRST + fi;
+        EnvModelDef *emd = &envModels[mi];
+        for (int mi2 = 0; mi2 < emd->model.meshCount; mi2++) {
+          DrawMeshInstanced(emd->model.meshes[mi2],
+                            emd->model.materials[emd->model.meshMaterial[mi2]],
+                            foliageTransforms[fi], foliageInstanceCounts[fi]);
+        }
       }
       for (int i = 0; i < unitCount; i++) {
         if (!units[i].active)
@@ -6708,11 +6814,15 @@ int main(int argc, char *argv[]) {
         for (int m = 0; m < tileModels[i].materialCount; m++)
           tileModels[i].materials[m].shader = lightShader;
       // Restore lighting shader on env model materials
+      // (foliage models get foliageShader, others get lightShader)
       for (int ei = 0; ei < envModelCount; ei++) {
         if (!envModels[ei].loaded)
           continue;
+        Shader restoreShd = (ei >= FOLIAGE_MODEL_FIRST && ei <= FOLIAGE_MODEL_LAST)
+                                ? foliageShader
+                                : lightShader;
         for (int m = 0; m < envModels[ei].model.materialCount; m++)
-          envModels[ei].model.materials[m].shader = lightShader;
+          envModels[ei].model.materials[m].shader = restoreShd;
       }
 
       rlDrawRenderBatchActive();
@@ -6726,6 +6836,9 @@ int main(int argc, char *argv[]) {
     rlEnableTexture(shadowRT.depth.id);
     SetShaderValue(lightShader, shadowMapLoc, (int[]){2}, SHADER_UNIFORM_INT);
     SetShaderValueMatrix(lightShader, lightVPLoc, lightVP);
+    // Also bind shadow map + lightVP to foliage shader
+    SetShaderValue(foliageShader, fShadowMapLoc, (int[]){2}, SHADER_UNIFORM_INT);
+    SetShaderValueMatrix(foliageShader, fLightVPLoc, lightVP);
 
     // Render 3D scene into offscreen texture (for SSAO post-process)
     BeginTextureMode(sceneRT);
@@ -6816,13 +6929,37 @@ int main(int argc, char *argv[]) {
                    SHADER_UNIFORM_INT);
 
     // Draw env pieces (main render pass — includes ground, stairs, circle)
+    // Collect foliage instances for batch draw
+    memset(foliageInstanceCounts, 0, sizeof(foliageInstanceCounts));
     for (int ep = 0; ep < envPieceCount; ep++) {
       if (!envPieces[ep].active)
         continue;
-      EnvModelDef *emd = &envModels[envPieces[ep].modelIndex];
+      int mi = envPieces[ep].modelIndex;
+      EnvModelDef *emd = &envModels[mi];
       if (!emd->loaded)
         continue;
       float es = envPieces[ep].scale;
+      EnvPiece p = envPieces[ep];
+      Vector3 pos = p.position;
+      Matrix matS = MatrixScale(es, es, es);
+      Matrix matTransform =
+          MatrixMultiply(matS, MatrixRotateX(p.rotationX * DEG2RAD));
+      matTransform =
+          MatrixMultiply(matTransform, MatrixRotateY(p.rotationY * DEG2RAD));
+      matTransform =
+          MatrixMultiply(matTransform, MatrixRotateZ(p.rotationZ * DEG2RAD));
+      matTransform =
+          MatrixMultiply(matTransform, MatrixTranslate(pos.x, pos.y, pos.z));
+      // Foliage: collect for instanced draw
+      if (mi >= FOLIAGE_MODEL_FIRST && mi <= FOLIAGE_MODEL_LAST) {
+        int fi = mi - FOLIAGE_MODEL_FIRST;
+        if (foliageInstanceCounts[fi] < MAX_FOLIAGE_INSTANCES) {
+          foliageTransforms[fi][foliageInstanceCounts[fi]] =
+              MatrixMultiply(emd->model.transform, matTransform);
+          foliageInstanceCounts[fi]++;
+        }
+        continue; // skip per-piece draw
+      }
       Color eTint = WHITE;
       if (debugMode && ep == envSelectedPiece)
         eTint = (Color){150, 255, 150, 255};
@@ -6837,21 +6974,35 @@ int main(int argc, char *argv[]) {
         SetShaderValue(lightShader, useNormalMapLoc, (int[]){0},
                        SHADER_UNIFORM_INT);
       }
-      EnvPiece p = envPieces[ep];
-      Vector3 pos = p.position;
-      Matrix matS = MatrixScale(es, es, es);
-      Matrix matTransform =
-          MatrixMultiply(matS, MatrixRotateX(p.rotationX * DEG2RAD));
-      matTransform =
-          MatrixMultiply(matTransform, MatrixRotateY(p.rotationY * DEG2RAD));
-      matTransform =
-          MatrixMultiply(matTransform, MatrixRotateZ(p.rotationZ * DEG2RAD));
-      matTransform =
-          MatrixMultiply(matTransform, MatrixTranslate(pos.x, pos.y, pos.z));
       Matrix oldTransform = emd->model.transform;
       emd->model.transform = MatrixMultiply(oldTransform, matTransform);
       DrawModel(emd->model, (Vector3){0, 0, 0}, 1.0f, eTint);
       emd->model.transform = oldTransform;
+    }
+    // Instanced draw for foliage (main render pass)
+    {
+      EnvModelDef *grassBig = &envModels[FOLIAGE_MODEL_FIRST];
+      if (grassBig->normalTexture.id > 0) {
+        rlActiveTextureSlot(3);
+        rlEnableTexture(grassBig->normalTexture.id);
+        SetShaderValue(foliageShader, fNormalMapLoc, (int[]){3},
+                       SHADER_UNIFORM_INT);
+        SetShaderValue(foliageShader, fUseNormalMapLoc, (int[]){1},
+                       SHADER_UNIFORM_INT);
+      }
+      for (int fi = 0; fi < FOLIAGE_MODEL_COUNT; fi++) {
+        if (foliageInstanceCounts[fi] == 0)
+          continue;
+        int mi = FOLIAGE_MODEL_FIRST + fi;
+        EnvModelDef *emd = &envModels[mi];
+        for (int mi2 = 0; mi2 < emd->model.meshCount; mi2++) {
+          DrawMeshInstanced(emd->model.meshes[mi2],
+                            emd->model.materials[emd->model.meshMaterial[mi2]],
+                            foliageTransforms[fi], foliageInstanceCounts[fi]);
+        }
+      }
+      SetShaderValue(foliageShader, fUseNormalMapLoc, (int[]){0},
+                     SHADER_UNIFORM_INT);
     }
     // Reset normal map after env pieces so other models don't use it
     SetShaderValue(lightShader, useNormalMapLoc, (int[]){0},
