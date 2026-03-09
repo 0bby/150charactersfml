@@ -4,7 +4,6 @@
 #include "unit_stats.h"
 #include <stdint.h>
 
-
 //------------------------------------------------------------------------------------
 // Data Structures & Constants
 //------------------------------------------------------------------------------------
@@ -448,7 +447,7 @@ typedef struct {
 // Environment Piece Editor
 //------------------------------------------------------------------------------------
 #define MAX_ENV_PIECES 32
-#define MAX_ENV_MODELS 8
+#define MAX_ENV_MODELS 16
 
 typedef struct {
   const char *name; // display name for UI

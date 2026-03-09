@@ -1187,6 +1187,181 @@ int main(int argc, char *argv[]) {
     envModelCount++;
   }
 
+  // 8: GrassBig (loads shared foliage textures)
+  {
+    EnvModelDef *em = &envModels[envModelCount];
+    em->name = "GrassBig";
+    em->modelPath = "assets/goblin/environment/foliage/GrassBig.obj";
+    em->texturePath = "assets/goblin/environment/foliage/T_Foliage_BC.png";
+    em->ormTexturePath = "assets/goblin/environment/foliage/T_Foliage_ORM.png";
+    em->normalTexturePath = "assets/goblin/environment/foliage/T_Foliage_N.png";
+    em->texture = LoadTexture(em->texturePath);
+    em->ormTexture = LoadTexture(em->ormTexturePath);
+    em->normalTexture = LoadTexture(em->normalTexturePath);
+    em->model = LoadModel(em->modelPath);
+    for (int mi = 0; mi < em->model.meshCount; mi++)
+      GenMeshTangents(&em->model.meshes[mi]);
+    for (int m = 0; m < em->model.materialCount; m++) {
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+      em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
+          em->ormTexture;
+      em->model.materials[m].shader = lightShader;
+    }
+    if (em->model.meshCount > 0) {
+      BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+      float cx = (bb.min.x + bb.max.x) * 0.5f;
+      float by = bb.min.y;
+      float cz = (bb.min.z + bb.max.z) * 0.5f;
+      float h = bb.max.y - bb.min.y;
+      float s = 15.0f / h;
+      em->model.transform =
+          MatrixMultiply(MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+    }
+    em->loaded = true;
+    envModelCount++;
+  }
+  // 9: GrassSmall (shares foliage textures with GrassBig)
+  {
+    EnvModelDef *em = &envModels[envModelCount];
+    EnvModelDef *grassBig = &envModels[envModelCount - 1];
+    em->name = "GrassSmall";
+    em->modelPath = "assets/goblin/environment/foliage/GrassSmall.obj";
+    em->texturePath = grassBig->texturePath;
+    em->ormTexturePath = grassBig->ormTexturePath;
+    em->normalTexturePath = grassBig->normalTexturePath;
+    em->texture = grassBig->texture;       // shared — do NOT unload separately
+    em->ormTexture = grassBig->ormTexture; // shared
+    em->normalTexture = grassBig->normalTexture; // shared
+    em->model = LoadModel(em->modelPath);
+    for (int mi = 0; mi < em->model.meshCount; mi++)
+      GenMeshTangents(&em->model.meshes[mi]);
+    for (int m = 0; m < em->model.materialCount; m++) {
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+      em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
+          em->ormTexture;
+      em->model.materials[m].shader = lightShader;
+    }
+    if (em->model.meshCount > 0) {
+      BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+      float cx = (bb.min.x + bb.max.x) * 0.5f;
+      float by = bb.min.y;
+      float cz = (bb.min.z + bb.max.z) * 0.5f;
+      float h = bb.max.y - bb.min.y;
+      float s = 15.0f / h;
+      em->model.transform =
+          MatrixMultiply(MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+    }
+    em->loaded = true;
+    envModelCount++;
+  }
+  // 10: GroundFoliage (shares foliage textures with GrassBig)
+  {
+    EnvModelDef *em = &envModels[envModelCount];
+    EnvModelDef *grassBig = &envModels[8]; // GrassBig
+    em->name = "GroundFoliage";
+    em->modelPath = "assets/goblin/environment/foliage/GroundFoliage.obj";
+    em->texturePath = grassBig->texturePath;
+    em->ormTexturePath = grassBig->ormTexturePath;
+    em->normalTexturePath = grassBig->normalTexturePath;
+    em->texture = grassBig->texture;             // shared
+    em->ormTexture = grassBig->ormTexture;       // shared
+    em->normalTexture = grassBig->normalTexture; // shared
+    em->model = LoadModel(em->modelPath);
+    for (int mi = 0; mi < em->model.meshCount; mi++)
+      GenMeshTangents(&em->model.meshes[mi]);
+    for (int m = 0; m < em->model.materialCount; m++) {
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+      em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
+          em->ormTexture;
+      em->model.materials[m].shader = lightShader;
+    }
+    if (em->model.meshCount > 0) {
+      BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+      float cx = (bb.min.x + bb.max.x) * 0.5f;
+      float by = bb.min.y;
+      float cz = (bb.min.z + bb.max.z) * 0.5f;
+      float h = bb.max.y - bb.min.y;
+      float s = 15.0f / h;
+      em->model.transform =
+          MatrixMultiply(MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+    }
+    em->loaded = true;
+    envModelCount++;
+  }
+  // 11: TallFoliage (shares foliage textures with GrassBig)
+  {
+    EnvModelDef *em = &envModels[envModelCount];
+    EnvModelDef *grassBig = &envModels[8]; // GrassBig
+    em->name = "TallFoliage";
+    em->modelPath = "assets/goblin/environment/foliage/TallFoliage.obj";
+    em->texturePath = grassBig->texturePath;
+    em->ormTexturePath = grassBig->ormTexturePath;
+    em->normalTexturePath = grassBig->normalTexturePath;
+    em->texture = grassBig->texture;             // shared
+    em->ormTexture = grassBig->ormTexture;       // shared
+    em->normalTexture = grassBig->normalTexture; // shared
+    em->model = LoadModel(em->modelPath);
+    for (int mi = 0; mi < em->model.meshCount; mi++)
+      GenMeshTangents(&em->model.meshes[mi]);
+    for (int m = 0; m < em->model.materialCount; m++) {
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+      em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
+          em->ormTexture;
+      em->model.materials[m].shader = lightShader;
+    }
+    if (em->model.meshCount > 0) {
+      BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+      float cx = (bb.min.x + bb.max.x) * 0.5f;
+      float by = bb.min.y;
+      float cz = (bb.min.z + bb.max.z) * 0.5f;
+      float h = bb.max.y - bb.min.y;
+      float s = 15.0f / h;
+      em->model.transform =
+          MatrixMultiply(MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+    }
+    em->loaded = true;
+    envModelCount++;
+  }
+  // 12: TallFoliageBigger (shares foliage textures with GrassBig)
+  {
+    EnvModelDef *em = &envModels[envModelCount];
+    EnvModelDef *grassBig = &envModels[8]; // GrassBig
+    em->name = "TallFoliageBigger";
+    em->modelPath = "assets/goblin/environment/foliage/TallFoliageBigger.obj";
+    em->texturePath = grassBig->texturePath;
+    em->ormTexturePath = grassBig->ormTexturePath;
+    em->normalTexturePath = grassBig->normalTexturePath;
+    em->texture = grassBig->texture;             // shared
+    em->ormTexture = grassBig->ormTexture;       // shared
+    em->normalTexture = grassBig->normalTexture; // shared
+    em->model = LoadModel(em->modelPath);
+    for (int mi = 0; mi < em->model.meshCount; mi++)
+      GenMeshTangents(&em->model.meshes[mi]);
+    for (int m = 0; m < em->model.materialCount; m++) {
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = em->texture;
+      em->model.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+      em->model.materials[m].maps[MATERIAL_MAP_METALNESS].texture =
+          em->ormTexture;
+      em->model.materials[m].shader = lightShader;
+    }
+    if (em->model.meshCount > 0) {
+      BoundingBox bb = GetMeshBoundingBox(em->model.meshes[0]);
+      float cx = (bb.min.x + bb.max.x) * 0.5f;
+      float by = bb.min.y;
+      float cz = (bb.min.z + bb.max.z) * 0.5f;
+      float h = bb.max.y - bb.min.y;
+      float s = 15.0f / h;
+      em->model.transform =
+          MatrixMultiply(MatrixTranslate(-cx, -by, -cz), MatrixScale(s, s, s));
+    }
+    em->loaded = true;
+    envModelCount++;
+  }
+
   // --- Env pieces array (populated from save file) ---
   EnvPiece envPieces[MAX_ENV_PIECES] = {0};
   int envPieceCount = 0;
