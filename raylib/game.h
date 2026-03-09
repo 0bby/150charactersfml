@@ -446,7 +446,7 @@ typedef struct {
 //------------------------------------------------------------------------------------
 // Environment Piece Editor
 //------------------------------------------------------------------------------------
-#define MAX_ENV_PIECES 32
+#define MAX_ENV_PIECES 128
 #define MAX_ENV_MODELS 16
 
 typedef struct {

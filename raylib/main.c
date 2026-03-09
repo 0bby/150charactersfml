@@ -7828,8 +7828,8 @@ int main(int argc, char *argv[]) {
                            sp->rotationX, sp->rotationY, sp->rotationZ,
                            sp->scale),
                 envColX, infoY + 14, 12, WHITE);
-            GameDrawText("[Q/E] RotY  [X/C] RotX  [\\/ Z] RotZ  [R/F] Y  [[ / "
-                         "]] Scale  [DEL] Remove",
+            GameDrawText("[WASD] Move XZ  [R/F] Y  [Q/E] RotY  [X/C] RotX  "
+                         "[\\/ Z] RotZ  [[ / ]] Scale  [DEL] Remove",
                          envColX, infoY + 28, 10, (Color){180, 180, 180, 200});
           }
         }
