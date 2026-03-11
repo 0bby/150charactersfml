@@ -844,6 +844,7 @@ int main(int argc, char *argv[]) {
   FloatingText floatingTexts[MAX_FLOATING_TEXTS] = {0};
   Fissure fissures[MAX_FISSURES] = {0};
   UnitIntro intro = {.active = false, .timer = 0.0f};
+  UnitIntro pendingIntro = {.active = false}; // deferred intro (shown after map pick)
   StatueSpawn statueSpawn = {.phase = SSPAWN_INACTIVE};
   int hoverAbilityId = -1;
   int hoverAbilityLevel = 0;
@@ -4130,20 +4131,16 @@ int main(int argc, char *argv[]) {
             }
           }
         }
-        // Check drop on sell zone (prep phase only)
+        // Check drop on sell zone (prep phase only, directly below ability inventory)
         if (!placed && dragState.abilityId >= 0) {
           int sellInvStartX =
               cardsStartX -
               (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
           int sellInvStartY = hudTop2 + hudShopH + 15 + S(16);
           int sellZW = HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap);
-          int sellZH = S(24);
+          int sellZH = S(20);
           int sellZX = sellInvStartX;
-          int sellZY = sellInvStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(8);
-          if (itemInventoryCount > 0) {
-            int itemSlotSize2 = S(28), itemSlotGap2 = S(4);
-            sellZY = sellInvStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(8) + S(14) + 2 * (itemSlotSize2 + itemSlotGap2) + S(4);
-          }
+          int sellZY = sellInvStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(2);
           Rectangle sellRect = {(float)sellZX, (float)sellZY, (float)sellZW, (float)sellZH};
           if (CheckCollisionPointRec(mouse, sellRect)) {
             SellAbility(dragState.abilityId, dragState.level, &playerGold);
@@ -6157,6 +6154,11 @@ int main(int argc, char *argv[]) {
           } else if (!firstWaveDone) {
             // First wave beaten — now generate map and enter map phase
             firstWaveDone = true;
+            // Defer intro so it plays after map pick, not over the map
+            if (intro.active) {
+              pendingIntro = intro;
+              intro.active = false;
+            }
             RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
             for (int i = 0; i < unitCount; i++) {
               units[i].nextAbilitySlot = 0;
@@ -9038,22 +9040,19 @@ int main(int argc, char *argv[]) {
                                 ilvlFsz, invAbilColor);
           }
         }
-        // Item inventory (below ability inventory)
-        int itemInvY = invStartY +
-                       HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) +
-                       S(8);
+        // Item inventory (to the left of ability inventory)
+        int itemSlotSize = hudAbilSlotSize;
+        int itemSlotGap = hudAbilSlotGap;
+        int itemCols = 2;
+        int itemInvX = invStartX - itemCols * (itemSlotSize + itemSlotGap) - S(8);
         if (itemInventoryCount > 0 || phase == PHASE_PREP) {
-          GameDrawText("ITEMS", invStartX, itemInvY, S(12),
+          GameDrawText("ITEMS", itemInvX, invLabelY, S(14),
                        (Color){160, 160, 180, 255});
-          int itemSlotSize = S(24);
-          int itemSlotGap = S(3);
-          int itemY = itemInvY + S(14);
-          int itemCols = 6; // single row to avoid clipping
           for (int ii = 0; ii < MAX_ITEMS && ii < 6; ii++) {
             int ic = ii % itemCols;
             int ir = ii / itemCols;
-            int iix = invStartX + ic * (itemSlotSize + itemSlotGap);
-            int iiy = itemY + ir * (itemSlotSize + itemSlotGap);
+            int iix = itemInvX + ic * (itemSlotSize + itemSlotGap);
+            int iiy = invStartY + ir * (itemSlotSize + itemSlotGap);
             Rectangle iiRect = {(float)iix, (float)iiy, (float)itemSlotSize,
                                 (float)itemSlotSize};
             bool iiHover = CheckCollisionPointRec(GetMousePosition(), iiRect);
@@ -9109,17 +9108,12 @@ int main(int argc, char *argv[]) {
             }
           }
         }
-      // --- Sell Zone (prep phase, below items) ---
+      // --- Sell Zone (prep phase, directly below ability inventory) ---
       if (phase == PHASE_PREP) {
         int sellW = HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap);
-        int sellH = S(24);
+        int sellH = S(20);
         int sellX = invStartX;
-        int sellY = invStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(8);
-        // Move below items if they're visible
-        if (itemInventoryCount > 0) {
-          int itemSlotSize = S(28), itemSlotGap = S(4);
-          sellY = invStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(8) + S(14) + 2 * (itemSlotSize + itemSlotGap) + S(4);
-        }
+        int sellY = invStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(2);
         bool sellHovered = CheckCollisionPointRec(GetMousePosition(),
             (Rectangle){(float)sellX, (float)sellY, (float)sellW, (float)sellH});
         bool draggingAbil = dragState.dragging && dragState.abilityId >= 0;
