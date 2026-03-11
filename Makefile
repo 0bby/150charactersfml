@@ -105,10 +105,11 @@ endif
 
 export-windows:
 	@echo "=== Building Windows ==="
-	$(MAKE) -f Makefile.win
+	$(MAKE) -f Makefile.win USE_EOS=1
 	@echo "=== Assembling Windows export ==="
 	@mkdir -p export/windows
 	@cp $(GAME_DIR)/game.exe export/windows/
+	@cp deps/eos-sdk/Bin/EOSSDK-Win64-Shipping.dll export/windows/
 	@for dir in $(GAME_ASSET_DIRS); do \
 		if [ -d "$(GAME_DIR)/$$dir" ]; then \
 			cp -r "$(GAME_DIR)/$$dir" export/windows/; \

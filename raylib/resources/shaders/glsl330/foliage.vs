@@ -7,11 +7,11 @@ in vec3 vertexNormal;
 in vec4 vertexColor;
 in vec4 vertexTangent;
 
-// Instancing: per-instance model matrix (mat4 = 4 x vec4 attributes)
-in mat4 instanceTransform;
-
 // Input uniform values
-uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 matNormal;
+uniform mat4 matView;
+uniform mat4 matProjection;
 uniform mat4 lightVP;
 uniform float time;
 
@@ -25,27 +25,33 @@ out mat3 fragTBN;
 
 void main()
 {
-    // instanceTransform already contains model.transform * envPiece transform
-    // (baked on CPU side), so no need for matModel uniform.
-    vec4 worldPos = instanceTransform * vec4(vertexPosition, 1.0);
+    vec4 worldPos = matModel * vec4(vertexPosition, 1.0);
 
     // --- Wind sway ---
-    // Height factor: sway increases from base (y=0) to top
-    // Use the local vertex Y relative to instance origin for height gradient
-    float localY = worldPos.y - instanceTransform[3].y;
-    float heightFactor = clamp(localY / 15.0, 0.0, 1.0);
-    heightFactor = heightFactor * heightFactor; // quadratic falloff - base stays still
+    // Local height relative to model origin (pivot at base)
+    float localY = worldPos.y - matModel[3].y;
+    // Normalize height: 0 at base, 1 at ~20 units up
+    float h = clamp(localY / 20.0, 0.0, 1.0);
+    // Cubic falloff: base stays completely anchored, tips get full sway
+    float bendFactor = h * h * h;
 
-    // Per-instance phase offset from world position (so each clump sways differently)
-    float phase = instanceTransform[3].x * 0.37 + instanceTransform[3].z * 0.53;
+    // Per-piece phase offset from world position (each clump sways differently)
+    float phase = matModel[3].x * 0.37 + matModel[3].z * 0.53;
 
-    // Primary wind sway (slow, large)
-    float swayX = sin(time * 1.2 + phase) * 1.8 * heightFactor;
-    float swayZ = cos(time * 0.9 + phase * 1.3) * 1.2 * heightFactor;
+    // Primary trunk/branch sway (slow, gentle)
+    float swayX = sin(time * 0.8 + phase) * 0.9 * bendFactor;
+    float swayZ = cos(time * 0.6 + phase * 1.3) * 0.6 * bendFactor;
 
-    // Secondary gust (faster, smaller, adds organic feel)
-    swayX += sin(time * 2.8 + phase * 2.1) * 0.5 * heightFactor;
-    swayZ += cos(time * 3.1 + phase * 1.7) * 0.4 * heightFactor;
+    // Secondary gust (medium speed, adds organic variation)
+    swayX += sin(time * 1.6 + phase * 2.1) * 0.3 * bendFactor;
+    swayZ += cos(time * 1.9 + phase * 1.7) * 0.25 * bendFactor;
+
+    // Leaf flutter: high-frequency, small amplitude, only at the tips
+    // Uses vertex position as extra phase so individual leaves shimmer
+    float tipFactor = h * h; // starts halfway up, strongest at tip
+    float leafPhase = vertexPosition.x * 1.7 + vertexPosition.z * 2.3;
+    swayX += sin(time * 4.5 + leafPhase + phase) * 0.15 * tipFactor;
+    swayZ += cos(time * 5.2 + leafPhase + phase * 0.8) * 0.12 * tipFactor;
 
     worldPos.x += swayX;
     worldPos.z += swayZ;
@@ -55,28 +61,23 @@ void main()
     fragColor = vec4(1.0); // OBJ meshes lack vertex colors; default to white
 
     // --- Compute sway rotation for normals ---
-    // The sway is essentially a bend: approximate the tilt at this height
-    float dSwayX_dY = (2.0 * heightFactor / max(localY, 0.1)) * swayX;
-    float dSwayZ_dY = (2.0 * heightFactor / max(localY, 0.1)) * swayZ;
+    // Approximate the tilt from bending at this height
+    float dSwayX_dY = (3.0 * h * h / max(localY, 0.5)) * swayX;
+    float dSwayZ_dY = (3.0 * h * h / max(localY, 0.5)) * swayZ;
 
-    // Clamp derivatives to avoid extreme rotations at base
-    dSwayX_dY = clamp(dSwayX_dY, -0.5, 0.5);
-    dSwayZ_dY = clamp(dSwayZ_dY, -0.5, 0.5);
+    // Clamp derivatives to avoid extreme rotations
+    dSwayX_dY = clamp(dSwayX_dY, -0.3, 0.3);
+    dSwayZ_dY = clamp(dSwayZ_dY, -0.3, 0.3);
 
-    // Build a small rotation: tilt around Z by -dSwayX_dY, tilt around X by dSwayZ_dY
-    // Using small angle approximation for the rotation matrix
+    // Small rotation from sway (small angle approximation)
     mat3 swayRot = mat3(
         1.0,        0.0,       dSwayX_dY,
         0.0,        1.0,       dSwayZ_dY,
         -dSwayX_dY, -dSwayZ_dY, 1.0
     );
 
-    // Normal matrix from instance transform (upper-left 3x3)
-    mat3 normalMat3 = mat3(
-        instanceTransform[0].xyz,
-        instanceTransform[1].xyz,
-        instanceTransform[2].xyz
-    );
+    // Normal matrix from matNormal uniform
+    mat3 normalMat3 = mat3(matNormal);
 
     vec3 N = normalize(swayRot * normalMat3 * vertexNormal);
     fragNormal = N;
@@ -89,7 +90,5 @@ void main()
     vec3 B = cross(N, T) * vertexTangent.w;
     fragTBN = mat3(T, B, N);
 
-    // mvp = projection * view (for instanced draws, matModel is identity)
-    // worldPos is already in world space, so this is correct
-    gl_Position = mvp * worldPos;
+    gl_Position = matProjection * matView * worldPos;
 }

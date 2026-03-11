@@ -37,9 +37,10 @@ GAME_LDFLAGS = -L$(RAYLIB_WIN)/lib -lraylib -lopengl32 -lgdi32 -lwinmm -lws2_32 
 ifdef USE_EOS
   EOS_SDK = deps/eos-sdk
   GAME_CFLAGS += -DUSE_EOS -I$(EOS_SDK)/include
-  # Link against EOS import lib; must ship EOSSDK-Win64-Shipping.dll alongside .exe
-  # Remove -static so the dynamic EOS lib can load
+  # Remove blanket -static; instead use selective static/dynamic linking
+  # so EOS loads dynamically but C runtime + winpthread stay static
   GAME_LDFLAGS := $(filter-out -static,$(GAME_LDFLAGS))
+  GAME_LDFLAGS += -Wl,-Bstatic -lpthread -lstdc++ -lwinpthread -Wl,-Bdynamic
   EOS_LDFLAGS = -L$(EOS_SDK)/Lib -lEOSSDK-Win64-Shipping
 endif
 

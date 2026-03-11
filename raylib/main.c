@@ -271,7 +271,7 @@ int main(int argc, char *argv[]) {
   unitTypes[0].scale = 0.10f;
   unitTypes[0].yOffset = 1.5f;
   unitTypes[1].name = "Goblin";
-  unitTypes[1].modelPath = "assets/goblin/animations/PluginGoblinWalk.glb";
+  unitTypes[1].modelPath = "assets/classes/goblin/PluginGoblinWalk.glb";
   unitTypes[1].scale = 9.0f;
   unitTypes[2].name = "Devil";
   unitTypes[2].modelPath = "assets/classes/devil/DevilIdle.glb";
@@ -307,9 +307,9 @@ int main(int argc, char *argv[]) {
   // Load goblin animations from separate GLBs
   int walkAnimCount = 0, idleAnimCount = 0;
   ModelAnimation *walkAnims = LoadModelAnimations(
-      "assets/goblin/animations/PluginGoblinWalk.glb", &walkAnimCount);
+      "assets/classes/goblin/PluginGoblinWalk.glb", &walkAnimCount);
   ModelAnimation *idleAnims = LoadModelAnimations(
-      "assets/goblin/animations/PluginGoblinIdle.glb", &idleAnimCount);
+      "assets/classes/goblin/PluginGoblinIdle.glb", &idleAnimCount);
   // Store walk anims as the main array, keep idle separate
   unitTypes[1].anims = walkAnims;
   unitTypes[1].animCount = walkAnimCount;
@@ -562,8 +562,6 @@ int main(int argc, char *argv[]) {
       TextFormat("resources/shaders/glsl%i/foliage.fs", GLSL_VERSION));
   foliageShader.locs[SHADER_LOC_VECTOR_VIEW] =
       GetShaderLocation(foliageShader, "viewPos");
-  foliageShader.locs[SHADER_LOC_MATRIX_MODEL] =
-      GetShaderLocationAttrib(foliageShader, "instanceTransform");
   // Sync all shared uniforms with lightShader
   int fAmbientLoc = GetShaderLocation(foliageShader, "ambient");
   SetShaderValue(foliageShader, fAmbientLoc,
@@ -611,21 +609,15 @@ int main(int argc, char *argv[]) {
     UpdateLightValues(foliageShader, fLight1);
   }
 
-  // Foliage shadow depth shader (instanced, with sway)
+  // Foliage shadow depth shader (with sway)
   Shader foliageShadowShader = LoadShader(
       TextFormat("resources/shaders/glsl%i/foliage_shadow.vs", GLSL_VERSION),
       TextFormat("resources/shaders/glsl%i/shadow_depth.fs", GLSL_VERSION));
-  foliageShadowShader.locs[SHADER_LOC_MATRIX_MODEL] =
-      GetShaderLocationAttrib(foliageShadowShader, "instanceTransform");
   int fsTimeLoc = GetShaderLocation(foliageShadowShader, "time");
 
   // Foliage model indices (envModels 8-12)
 #define FOLIAGE_MODEL_FIRST 8
 #define FOLIAGE_MODEL_LAST 12
-#define FOLIAGE_MODEL_COUNT (FOLIAGE_MODEL_LAST - FOLIAGE_MODEL_FIRST + 1)
-#define MAX_FOLIAGE_INSTANCES 64
-  Matrix foliageTransforms[FOLIAGE_MODEL_COUNT][MAX_FOLIAGE_INSTANCES];
-  int foliageInstanceCounts[FOLIAGE_MODEL_COUNT];
 
   // Assign lighting shader to all loaded models
   for (int i = 0; i < unitTypeCount; i++) {
@@ -643,18 +635,18 @@ int main(int argc, char *argv[]) {
   Model tileModels[TILE_VARIANTS];
   Vector3 tileCenters[TILE_VARIANTS]; // OBJ-space center offset per variant
   const char *tilePaths[TILE_VARIANTS] = {
-      "assets/goblin/environment/tiles/Tile1.obj",
-      "assets/goblin/environment/tiles/Tile2.obj",
-      "assets/goblin/environment/tiles/Tile3.obj",
-      "assets/goblin/environment/tiles/Tile4.obj",
-      "assets/goblin/environment/tiles/Tile5.obj",
+      "assets/environment/tiles/Tile1.obj",
+      "assets/environment/tiles/Tile2.obj",
+      "assets/environment/tiles/Tile3.obj",
+      "assets/environment/tiles/Tile4.obj",
+      "assets/environment/tiles/Tile5.obj",
   };
   Texture2D tileDiffuse =
-      LoadTexture("assets/goblin/environment/tiles/T_TilesDark_BC.png");
+      LoadTexture("assets/environment/tiles/T_TilesDark_BC.png");
   Texture2D tileORM =
-      LoadTexture("assets/goblin/environment/tiles/T_TilesDark_ORM.png");
+      LoadTexture("assets/environment/tiles/T_TilesDark_ORM.png");
   Texture2D tileNormal =
-      LoadTexture("assets/goblin/environment/tiles/T_TilesDark_N.png");
+      LoadTexture("assets/environment/tiles/T_TilesDark_N.png");
 
   for (int i = 0; i < TILE_VARIANTS; i++) {
     tileModels[i] = LoadModel(tilePaths[i]);
@@ -920,7 +912,7 @@ int main(int argc, char *argv[]) {
   bool isFullscreen = false;
   int focusedSlider = -1; // 0=music, 1=sfx, -1=none
   float sliderKeyTimer = 0.0f;
-  Model doorModel = LoadModel("assets/goblin/environment/door/Door.obj");
+  Model doorModel = LoadModel("assets/environment/door/Door.obj");
   for (int m = 0; m < doorModel.materialCount; m++) {
     doorModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
     doorModel.materials[m].maps[MATERIAL_MAP_METALNESS].texture = defaultORM;
@@ -938,7 +930,7 @@ int main(int argc, char *argv[]) {
         MatrixMultiply(MatrixTranslate(-dCenterX, -dBaseY, -dCenterZ),
                        MatrixScale(dScale, dScale, dScale));
   }
-  Model trophyModel = LoadModel("assets/goblin/environment/trophy/Trophy.obj");
+  Model trophyModel = LoadModel("assets/environment/trophy/Trophy.obj");
   for (int m = 0; m < trophyModel.materialCount; m++) {
     trophyModel.materials[m].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
     trophyModel.materials[m].maps[MATERIAL_MAP_METALNESS].texture = defaultORM;
@@ -958,13 +950,13 @@ int main(int argc, char *argv[]) {
   }
   // --- Environment models: ground (replaces old platform), stairs, circle ---
   Texture2D groundDiffuse =
-      LoadTexture("assets/goblin/environment/ground/T_Ground_BC.png");
+      LoadTexture("assets/environment/ground/T_Ground_BC.png");
   Texture2D groundORM =
-      LoadTexture("assets/goblin/environment/ground/T_Ground_ORM.png");
+      LoadTexture("assets/environment/ground/T_Ground_ORM.png");
   Texture2D groundNormal =
-      LoadTexture("assets/goblin/environment/ground/T_Ground_N.png");
+      LoadTexture("assets/environment/ground/T_Ground_N.png");
   Model platformModel =
-      LoadModel("assets/goblin/environment/ground/ground.obj");
+      LoadModel("assets/environment/ground/ground.obj");
   for (int mi = 0; mi < platformModel.meshCount; mi++)
     GenMeshTangents(&platformModel.meshes[mi]);
   for (int m = 0; m < platformModel.materialCount; m++) {
@@ -987,13 +979,13 @@ int main(int argc, char *argv[]) {
   }
 
   Texture2D stairsDiffuse =
-      LoadTexture("assets/goblin/environment/stairs/T_Stairs_BC.png");
+      LoadTexture("assets/environment/stairs/T_Stairs_BC.png");
   Texture2D stairsORM =
-      LoadTexture("assets/goblin/environment/stairs/T_Stairs_ORM.png");
+      LoadTexture("assets/environment/stairs/T_Stairs_ORM.png");
   Texture2D stairsNormal =
-      LoadTexture("assets/goblin/environment/stairs/T_Stairs_N.png");
+      LoadTexture("assets/environment/stairs/T_Stairs_N.png");
   Model stairsModel =
-      LoadModel("assets/goblin/environment/stairs/Stairs_LP.obj");
+      LoadModel("assets/environment/stairs/Stairs_LP.obj");
   for (int mi = 0; mi < stairsModel.meshCount; mi++)
     GenMeshTangents(&stairsModel.meshes[mi]);
   for (int m = 0; m < stairsModel.materialCount; m++) {
@@ -1015,12 +1007,12 @@ int main(int argc, char *argv[]) {
   }
 
   Texture2D circleDiffuse =
-      LoadTexture("assets/goblin/environment/circle/T_Circle_BC.png");
+      LoadTexture("assets/environment/circle/T_Circle_BC.png");
   Texture2D circleORM =
-      LoadTexture("assets/goblin/environment/circle/T_Circle_ORM.png");
+      LoadTexture("assets/environment/circle/T_Circle_ORM.png");
   Texture2D circleNormal =
-      LoadTexture("assets/goblin/environment/circle/T_Circle_N.png");
-  Model circleModel = LoadModel("assets/goblin/environment/circle/circle.obj");
+      LoadTexture("assets/environment/circle/T_Circle_N.png");
+  Model circleModel = LoadModel("assets/environment/circle/circle.obj");
   for (int mi = 0; mi < circleModel.meshCount; mi++)
     GenMeshTangents(&circleModel.meshes[mi]);
   for (int m = 0; m < circleModel.materialCount; m++) {
@@ -1058,10 +1050,10 @@ int main(int argc, char *argv[]) {
   {
     EnvModelDef *em = &envModels[envModelCount];
     em->name = "Arches";
-    em->modelPath = "assets/goblin/environment/arches/Arches.obj";
-    em->texturePath = "assets/goblin/environment/arches/T_Arches_BC.png";
-    em->ormTexturePath = "assets/goblin/environment/arches/T_Arches_ORM.png";
-    em->normalTexturePath = "assets/goblin/environment/arches/T_Arches_N.png";
+    em->modelPath = "assets/environment/arches/Arches.obj";
+    em->texturePath = "assets/environment/arches/T_Arches_BC.png";
+    em->ormTexturePath = "assets/environment/arches/T_Arches_ORM.png";
+    em->normalTexturePath = "assets/environment/arches/T_Arches_N.png";
     em->texture = LoadTexture(em->texturePath);
     em->ormTexture = LoadTexture(em->ormTexturePath);
     em->normalTexture = LoadTexture(em->normalTexturePath);
@@ -1092,10 +1084,10 @@ int main(int argc, char *argv[]) {
   {
     EnvModelDef *em = &envModels[envModelCount];
     em->name = "Wall";
-    em->modelPath = "assets/goblin/environment/wall/Wall_LP.obj";
-    em->texturePath = "assets/goblin/environment/wall/T_Wall_BC.png";
-    em->ormTexturePath = "assets/goblin/environment/wall/T_Wall_ORM.png";
-    em->normalTexturePath = "assets/goblin/environment/wall/T_Wall_N.png";
+    em->modelPath = "assets/environment/wall/Wall_LP.obj";
+    em->texturePath = "assets/environment/wall/T_Wall_BC.png";
+    em->ormTexturePath = "assets/environment/wall/T_Wall_ORM.png";
+    em->normalTexturePath = "assets/environment/wall/T_Wall_N.png";
     em->texture = LoadTexture(em->texturePath);
     em->ormTexture = LoadTexture(em->ormTexturePath);
     em->normalTexture = LoadTexture(em->normalTexturePath);
@@ -1126,7 +1118,7 @@ int main(int argc, char *argv[]) {
   {
     EnvModelDef *em = &envModels[envModelCount];
     em->name = "Stairs";
-    em->modelPath = "assets/goblin/environment/stairs/Stairs_LP.obj";
+    em->modelPath = "assets/environment/stairs/Stairs_LP.obj";
     em->texturePath = NULL;
     em->model = stairsModel; // reuse — do NOT unload separately
     em->texture = (Texture2D){0};
@@ -1138,7 +1130,7 @@ int main(int argc, char *argv[]) {
   {
     EnvModelDef *em = &envModels[envModelCount];
     em->name = "Circle";
-    em->modelPath = "assets/goblin/environment/circle/circle.obj";
+    em->modelPath = "assets/environment/circle/circle.obj";
     em->texturePath = NULL;
     em->model = circleModel; // reuse — do NOT unload separately
     em->texture = (Texture2D){0};
@@ -1150,7 +1142,7 @@ int main(int argc, char *argv[]) {
   {
     EnvModelDef *em = &envModels[envModelCount];
     em->name = "FloorTiles";
-    em->modelPath = "assets/goblin/environment/floor_tiles/FloorTiles_LP.obj";
+    em->modelPath = "assets/environment/floor_tiles/FloorTiles_LP.obj";
     em->texturePath = NULL;
     em->model = LoadModel(em->modelPath);
     for (int mi = 0; mi < em->model.meshCount; mi++)
@@ -1180,7 +1172,7 @@ int main(int argc, char *argv[]) {
   {
     EnvModelDef *em = &envModels[envModelCount];
     em->name = "Ground";
-    em->modelPath = "assets/goblin/environment/ground/ground.obj";
+    em->modelPath = "assets/environment/ground/ground.obj";
     em->texturePath = NULL;
     em->model = platformModel; // reuse — do NOT unload separately
     em->texture = (Texture2D){0};
@@ -1192,10 +1184,10 @@ int main(int argc, char *argv[]) {
   {
     EnvModelDef *em = &envModels[envModelCount];
     em->name = "PillarBig";
-    em->modelPath = "assets/goblin/environment/pillars/PillarBig_LP.obj";
-    em->texturePath = "assets/goblin/environment/pillars/T_Pillars_BC.png";
-    em->ormTexturePath = "assets/goblin/environment/pillars/T_Pillars_ORM.png";
-    em->normalTexturePath = "assets/goblin/environment/pillars/T_Pillars_N.png";
+    em->modelPath = "assets/environment/pillars/PillarBig_LP.obj";
+    em->texturePath = "assets/environment/pillars/T_Pillars_BC.png";
+    em->ormTexturePath = "assets/environment/pillars/T_Pillars_ORM.png";
+    em->normalTexturePath = "assets/environment/pillars/T_Pillars_N.png";
     em->texture = LoadTexture(em->texturePath);
     em->ormTexture = LoadTexture(em->ormTexturePath);
     em->normalTexture = LoadTexture(em->normalTexturePath);
@@ -1227,7 +1219,7 @@ int main(int argc, char *argv[]) {
     EnvModelDef *em = &envModels[envModelCount];
     EnvModelDef *pillarBig = &envModels[envModelCount - 1];
     em->name = "PillarSmall";
-    em->modelPath = "assets/goblin/environment/pillars/PillarSmall_LP.obj";
+    em->modelPath = "assets/environment/pillars/PillarSmall_LP.obj";
     em->texturePath = pillarBig->texturePath;
     em->ormTexturePath = pillarBig->ormTexturePath;
     em->normalTexturePath = pillarBig->normalTexturePath;
@@ -1262,10 +1254,10 @@ int main(int argc, char *argv[]) {
   {
     EnvModelDef *em = &envModels[envModelCount];
     em->name = "GrassBig";
-    em->modelPath = "assets/goblin/environment/foliage/GrassBig.obj";
-    em->texturePath = "assets/goblin/environment/foliage/T_Foliage_BC.png";
-    em->ormTexturePath = "assets/goblin/environment/foliage/T_Foliage_ORM.png";
-    em->normalTexturePath = "assets/goblin/environment/foliage/T_Foliage_N.png";
+    em->modelPath = "assets/environment/foliage/GrassBig.obj";
+    em->texturePath = "assets/environment/foliage/T_Foliage_BC.png";
+    em->ormTexturePath = "assets/environment/foliage/T_Foliage_ORM.png";
+    em->normalTexturePath = "assets/environment/foliage/T_Foliage_N.png";
     em->texture = LoadTexture(em->texturePath);
     em->ormTexture = LoadTexture(em->ormTexturePath);
     em->normalTexture = LoadTexture(em->normalTexturePath);
@@ -1297,7 +1289,7 @@ int main(int argc, char *argv[]) {
     EnvModelDef *em = &envModels[envModelCount];
     EnvModelDef *grassBig = &envModels[envModelCount - 1];
     em->name = "GrassSmall";
-    em->modelPath = "assets/goblin/environment/foliage/GrassSmall.obj";
+    em->modelPath = "assets/environment/foliage/GrassSmall.obj";
     em->texturePath = grassBig->texturePath;
     em->ormTexturePath = grassBig->ormTexturePath;
     em->normalTexturePath = grassBig->normalTexturePath;
@@ -1332,7 +1324,7 @@ int main(int argc, char *argv[]) {
     EnvModelDef *em = &envModels[envModelCount];
     EnvModelDef *grassBig = &envModels[8]; // GrassBig
     em->name = "GroundFoliage";
-    em->modelPath = "assets/goblin/environment/foliage/GroundFoliage.obj";
+    em->modelPath = "assets/environment/foliage/GroundFoliage.obj";
     em->texturePath = grassBig->texturePath;
     em->ormTexturePath = grassBig->ormTexturePath;
     em->normalTexturePath = grassBig->normalTexturePath;
@@ -1367,7 +1359,7 @@ int main(int argc, char *argv[]) {
     EnvModelDef *em = &envModels[envModelCount];
     EnvModelDef *grassBig = &envModels[8]; // GrassBig
     em->name = "TallFoliage";
-    em->modelPath = "assets/goblin/environment/foliage/TallFoliage.obj";
+    em->modelPath = "assets/environment/foliage/TallFoliage.obj";
     em->texturePath = grassBig->texturePath;
     em->ormTexturePath = grassBig->ormTexturePath;
     em->normalTexturePath = grassBig->normalTexturePath;
@@ -1402,7 +1394,7 @@ int main(int argc, char *argv[]) {
     EnvModelDef *em = &envModels[envModelCount];
     EnvModelDef *grassBig = &envModels[8]; // GrassBig
     em->name = "TallFoliageBigger";
-    em->modelPath = "assets/goblin/environment/foliage/TallFoliageBigger.obj";
+    em->modelPath = "assets/environment/foliage/TallFoliageBigger.obj";
     em->texturePath = grassBig->texturePath;
     em->ormTexturePath = grassBig->ormTexturePath;
     em->normalTexturePath = grassBig->normalTexturePath;
@@ -6096,23 +6088,6 @@ int main(int argc, char *argv[]) {
             deathPenalty = true;
             lastOutcomeWin = false;
             phase = PHASE_GAME_OVER;
-          } else if (currentRound > 0 && currentRound % 5 == 0) {
-            // Milestone reached — go to selection screen
-            // Restore blue units for milestone screen
-            RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
-            for (int i = 0; i < unitCount; i++) {
-              units[i].nextAbilitySlot = 0;
-              for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                units[i].abilities[a].cooldownRemaining = 0;
-                units[i].abilities[a].triggered = false;
-              }
-            }
-            ClearAllModifiers(modifiers);
-            ClearAllProjectiles(projectiles);
-            ClearAllFloatingTexts(floatingTexts);
-            ClearAllFissures(fissures);
-            ClearRedUnits(units, &unitCount);
-            phase = PHASE_MILESTONE;
           } else if (mapActive) {
             // Map mode: return to map after combat
             RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
@@ -6138,6 +6113,23 @@ int main(int argc, char *argv[]) {
               ScrollMapToLayer(actMap.currentLayer);
               phase = PHASE_MAP;
             }
+          } else if (currentRound > 0 && currentRound % 5 == 0) {
+            // Milestone reached — go to selection screen (legacy non-map mode)
+            // Restore blue units for milestone screen
+            RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
+            for (int i = 0; i < unitCount; i++) {
+              units[i].nextAbilitySlot = 0;
+              for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                units[i].abilities[a].cooldownRemaining = 0;
+                units[i].abilities[a].triggered = false;
+              }
+            }
+            ClearAllModifiers(modifiers);
+            ClearAllProjectiles(projectiles);
+            ClearAllFloatingTexts(floatingTexts);
+            ClearAllFissures(fissures);
+            ClearRedUnits(units, &unitCount);
+            phase = PHASE_MILESTONE;
           } else {
             // Normal round transition (legacy non-map mode)
             RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
@@ -6732,9 +6724,7 @@ int main(int argc, char *argv[]) {
           }
         }
       }
-      // Draw env pieces (shadow pass — includes ground, stairs, circle)
-      // Collect foliage instance transforms for instanced draw
-      memset(foliageInstanceCounts, 0, sizeof(foliageInstanceCounts));
+      // Draw env pieces (shadow pass — includes ground, stairs, circle, foliage)
       for (int ep = 0; ep < envPieceCount; ep++) {
         if (!envPieces[ep].active)
           continue;
@@ -6754,32 +6744,10 @@ int main(int argc, char *argv[]) {
             MatrixMultiply(matTransform, MatrixRotateZ(p.rotationZ * DEG2RAD));
         matTransform =
             MatrixMultiply(matTransform, MatrixTranslate(pos.x, pos.y, pos.z));
-        // Foliage: collect for instanced draw
-        if (mi >= FOLIAGE_MODEL_FIRST && mi <= FOLIAGE_MODEL_LAST) {
-          int fi = mi - FOLIAGE_MODEL_FIRST;
-          if (foliageInstanceCounts[fi] < MAX_FOLIAGE_INSTANCES) {
-            foliageTransforms[fi][foliageInstanceCounts[fi]] =
-                MatrixMultiply(emd->model.transform, matTransform);
-            foliageInstanceCounts[fi]++;
-          }
-          continue; // skip per-piece draw
-        }
         Matrix oldTransform = emd->model.transform;
         emd->model.transform = MatrixMultiply(oldTransform, matTransform);
         DrawModel(emd->model, (Vector3){0, 0, 0}, 1.0f, WHITE);
         emd->model.transform = oldTransform;
-      }
-      // Instanced draw for foliage (shadow pass)
-      for (int fi = 0; fi < FOLIAGE_MODEL_COUNT; fi++) {
-        if (foliageInstanceCounts[fi] == 0)
-          continue;
-        int mi = FOLIAGE_MODEL_FIRST + fi;
-        EnvModelDef *emd = &envModels[mi];
-        for (int mi2 = 0; mi2 < emd->model.meshCount; mi2++) {
-          DrawMeshInstanced(emd->model.meshes[mi2],
-                            emd->model.materials[emd->model.meshMaterial[mi2]],
-                            foliageTransforms[fi], foliageInstanceCounts[fi]);
-        }
       }
       for (int i = 0; i < unitCount; i++) {
         if (!units[i].active)
@@ -6928,9 +6896,7 @@ int main(int argc, char *argv[]) {
     SetShaderValue(lightShader, useNormalMapLoc, (int[]){0},
                    SHADER_UNIFORM_INT);
 
-    // Draw env pieces (main render pass — includes ground, stairs, circle)
-    // Collect foliage instances for batch draw
-    memset(foliageInstanceCounts, 0, sizeof(foliageInstanceCounts));
+    // Draw env pieces (main render pass — includes ground, stairs, circle, foliage)
     for (int ep = 0; ep < envPieceCount; ep++) {
       if (!envPieces[ep].active)
         continue;
@@ -6950,60 +6916,41 @@ int main(int argc, char *argv[]) {
           MatrixMultiply(matTransform, MatrixRotateZ(p.rotationZ * DEG2RAD));
       matTransform =
           MatrixMultiply(matTransform, MatrixTranslate(pos.x, pos.y, pos.z));
-      // Foliage: collect for instanced draw
-      if (mi >= FOLIAGE_MODEL_FIRST && mi <= FOLIAGE_MODEL_LAST) {
-        int fi = mi - FOLIAGE_MODEL_FIRST;
-        if (foliageInstanceCounts[fi] < MAX_FOLIAGE_INSTANCES) {
-          foliageTransforms[fi][foliageInstanceCounts[fi]] =
-              MatrixMultiply(emd->model.transform, matTransform);
-          foliageInstanceCounts[fi]++;
-        }
-        continue; // skip per-piece draw
-      }
       Color eTint = WHITE;
       if (debugMode && ep == envSelectedPiece)
         eTint = (Color){150, 255, 150, 255};
+      // Bind normal map for the appropriate shader
+      bool isFoliage = (mi >= FOLIAGE_MODEL_FIRST && mi <= FOLIAGE_MODEL_LAST);
       if (emd->normalTexture.id > 0) {
         rlActiveTextureSlot(3);
         rlEnableTexture(emd->normalTexture.id);
-        SetShaderValue(lightShader, normalMapLoc, (int[]){3},
-                       SHADER_UNIFORM_INT);
-        SetShaderValue(lightShader, useNormalMapLoc, (int[]){1},
-                       SHADER_UNIFORM_INT);
+        if (isFoliage) {
+          SetShaderValue(foliageShader, fNormalMapLoc, (int[]){3},
+                         SHADER_UNIFORM_INT);
+          SetShaderValue(foliageShader, fUseNormalMapLoc, (int[]){1},
+                         SHADER_UNIFORM_INT);
+        } else {
+          SetShaderValue(lightShader, normalMapLoc, (int[]){3},
+                         SHADER_UNIFORM_INT);
+          SetShaderValue(lightShader, useNormalMapLoc, (int[]){1},
+                         SHADER_UNIFORM_INT);
+        }
       } else {
-        SetShaderValue(lightShader, useNormalMapLoc, (int[]){0},
-                       SHADER_UNIFORM_INT);
+        if (isFoliage) {
+          SetShaderValue(foliageShader, fUseNormalMapLoc, (int[]){0},
+                         SHADER_UNIFORM_INT);
+        } else {
+          SetShaderValue(lightShader, useNormalMapLoc, (int[]){0},
+                         SHADER_UNIFORM_INT);
+        }
       }
       Matrix oldTransform = emd->model.transform;
       emd->model.transform = MatrixMultiply(oldTransform, matTransform);
       DrawModel(emd->model, (Vector3){0, 0, 0}, 1.0f, eTint);
       emd->model.transform = oldTransform;
     }
-    // Instanced draw for foliage (main render pass)
-    {
-      EnvModelDef *grassBig = &envModels[FOLIAGE_MODEL_FIRST];
-      if (grassBig->normalTexture.id > 0) {
-        rlActiveTextureSlot(3);
-        rlEnableTexture(grassBig->normalTexture.id);
-        SetShaderValue(foliageShader, fNormalMapLoc, (int[]){3},
-                       SHADER_UNIFORM_INT);
-        SetShaderValue(foliageShader, fUseNormalMapLoc, (int[]){1},
-                       SHADER_UNIFORM_INT);
-      }
-      for (int fi = 0; fi < FOLIAGE_MODEL_COUNT; fi++) {
-        if (foliageInstanceCounts[fi] == 0)
-          continue;
-        int mi = FOLIAGE_MODEL_FIRST + fi;
-        EnvModelDef *emd = &envModels[mi];
-        for (int mi2 = 0; mi2 < emd->model.meshCount; mi2++) {
-          DrawMeshInstanced(emd->model.meshes[mi2],
-                            emd->model.materials[emd->model.meshMaterial[mi2]],
-                            foliageTransforms[fi], foliageInstanceCounts[fi]);
-        }
-      }
-      SetShaderValue(foliageShader, fUseNormalMapLoc, (int[]){0},
-                     SHADER_UNIFORM_INT);
-    }
+    SetShaderValue(foliageShader, fUseNormalMapLoc, (int[]){0},
+                   SHADER_UNIFORM_INT);
     // Reset normal map after env pieces so other models don't use it
     SetShaderValue(lightShader, useNormalMapLoc, (int[]){0},
                    SHADER_UNIFORM_INT);
