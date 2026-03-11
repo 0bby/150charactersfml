@@ -327,10 +327,15 @@ void session_handle_msg(GameSession *s, int playerIdx, const NetMessage *msg)
         printf("[Session %s] Player %d ready (%d units)\n",
                s->lobbyCode, playerIdx, player->unitCount);
 
-        // Notify other player
+        // Notify other player with remaining prep time
         int other = 1 - playerIdx;
-        if (s->players[other].connected)
-            net_send_msg(s->players[other].sockfd, MSG_OPPONENT_READY, NULL, 0);
+        if (s->players[other].connected) {
+            uint16_t prepRemain = (uint16_t)(s->prepTimer > 0 ? (int)s->prepTimer : 0);
+            uint8_t payload[2];
+            payload[0] = (uint8_t)(prepRemain >> 8);
+            payload[1] = (uint8_t)(prepRemain & 0xFF);
+            net_send_msg(s->players[other].sockfd, MSG_OPPONENT_READY, payload, 2);
+        }
 
         // Both ready? Start combat
         if (s->players[0].ready && s->players[1].ready)
@@ -464,8 +469,10 @@ int session_tick(GameSession *s, float dt)
                     if (!s->players[p].ready && s->players[p].connected) {
                         s->players[p].ready = true;
                         int other = 1 - p;
-                        if (s->players[other].connected)
-                            net_send_msg(s->players[other].sockfd, MSG_OPPONENT_READY, NULL, 0);
+                        if (s->players[other].connected) {
+                            uint8_t payload[2] = {0, 0}; // 0 seconds remaining
+                            net_send_msg(s->players[other].sockfd, MSG_OPPONENT_READY, payload, 2);
+                        }
                     }
                 }
                 if (s->players[0].ready && s->players[1].ready)

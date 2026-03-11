@@ -194,7 +194,10 @@ static void handle_server_msg(NetClient *nc, const NetMessage *msg)
 
     case MSG_OPPONENT_READY:
         nc->opponentReady = true;
-        printf("[Net] Opponent is ready!\n");
+        nc->prepTimeRemaining = 0;
+        if (msg->size >= 2)
+            nc->prepTimeRemaining = ((int)msg->payload[0] << 8) | msg->payload[1];
+        printf("[Net] Opponent is ready! Prep time remaining: %ds\n", nc->prepTimeRemaining);
         break;
 
     case MSG_GOLD_UPDATE:
@@ -231,6 +234,9 @@ static void handle_server_msg(NetClient *nc, const NetMessage *msg)
         nc->state = NET_ERROR;
         printf("[Net] Server error: %s\n", nc->errorMsg);
         break;
+
+    case MSG_JOIN:
+        break; // ignore client-type messages echoed over P2P
 
     default:
         printf("[Net] Unknown server msg type 0x%02X\n", msg->type);

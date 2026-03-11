@@ -34,6 +34,8 @@ typedef struct {
     bool opponentReady;
     bool shopUpdated;
     bool goldUpdated;
+    bool peerDisconnected;
+    int  prepTimeRemaining;    // seconds left in prep timer (from MSG_OPPONENT_READY)
 
     // Player names
     char opponentName[32];

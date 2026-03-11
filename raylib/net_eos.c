@@ -90,6 +90,7 @@ static char                  g_joinPlayerName[32] = {0};
 
 // Joiner state
 static EOS_ProductUserId     g_joinerHostUserId = NULL;
+static EosClient            *g_activeEosClient = NULL; // set during lobby, used for disconnect callback
 
 // Connection notification IDs
 static EOS_NotificationId    g_peerConnReqNotif  = EOS_INVALID_NOTIFICATIONID;
@@ -466,6 +467,10 @@ static void EOS_CALL on_peer_connection_closed(
 {
     printf("[EOS] Peer disconnected (reason=%d)\n", (int)data->Reason);
     g_hostRemoteConnected = false;
+    // Signal to client that peer disconnected
+    if (g_activeEosClient) {
+        g_activeEosClient->peerDisconnected = true;
+    }
 }
 
 //------------------------------------------------------------------------------------
@@ -881,6 +886,7 @@ int eos_host_lobby(EosClient *ec, const char *playerName)
     strncpy(g_hostPlayerName, playerName ? playerName : "Host", sizeof(g_hostPlayerName) - 1);
 
     g_pendingLobbyClient = ec;
+    g_activeEosClient = ec;
 
     // Register for lobby member notifications
     EOS_Lobby_AddNotifyLobbyMemberStatusReceivedOptions notifOpts;
@@ -921,6 +927,7 @@ int eos_join_lobby(EosClient *ec, const char *lobbyCode, const char *playerName)
     strncpy(g_joinPlayerName, playerName ? playerName : "Player", sizeof(g_joinPlayerName) - 1);
 
     g_pendingLobbyClient = ec;
+    g_activeEosClient = ec;
 
     // Create lobby search
     EOS_Lobby_CreateLobbySearchOptions searchCreateOpts;
@@ -1052,6 +1059,9 @@ static void eos_handle_server_msg(EosClient *ec, const NetMessage *msg)
 
     case MSG_OPPONENT_READY:
         ec->opponentReady = true;
+        ec->prepTimeRemaining = 0;
+        if (msg->size >= 2)
+            ec->prepTimeRemaining = ((int)msg->payload[0] << 8) | msg->payload[1];
         break;
 
     case MSG_GOLD_UPDATE:

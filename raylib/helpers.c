@@ -408,6 +408,13 @@ void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[],
   // Inventory full — do nothing
 }
 
+void SellAbility(int abilityId, int level, int *gold) {
+  if (abilityId < 0 || abilityId >= ABILITY_COUNT) return;
+  int sellValue = ABILITY_DEFS[abilityId].goldCost / 2 + level;
+  if (sellValue < 1) sellValue = 1;
+  *gold += sellValue;
+}
+
 void AssignRandomAbilities(Unit *unit, int numAbilities) {
   for (int a = 0; a < numAbilities && a < MAX_ABILITIES_PER_UNIT; a++) {
     unit->abilities[a].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);

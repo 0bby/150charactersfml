@@ -856,6 +856,7 @@ int main(int argc, char *argv[]) {
   const float tooltipDelay = 0.5f;
   bool usedShopHotkey = false;    // hides hotkey hint after first use
   bool usedRollHotkey = false;    // hides roll hint after first use
+  bool usedLockHint = false;      // hides lock hint after first right-click lock
   bool hasDraggedUnit = false;    // hides drag hint after first drag
   char waveUpgradeText[128] = ""; // describes what changed this wave
 
@@ -1556,6 +1557,7 @@ int main(int argc, char *argv[]) {
   // Map state (Slay the Spire branching map)
   ActMap actMap = {0};
   bool mapActive = false;       // true when using map system (singleplayer)
+  bool firstWaveDone = false;   // set after beating wave 1 (triggers map)
   int mapSelectedNodeType = -1; // last selected node type
   MapEventType currentMapEvent = EVENT_FOUNTAIN;
   bool showingMapEvent = false; // true when displaying event choices
@@ -1574,6 +1576,7 @@ int main(int argc, char *argv[]) {
   bool isHosting = false;
   bool waitingForOpponent = false;
   bool opponentIsReady = false;
+  float oppReadyCountdown = 0.0f; // countdown timer when opponent is ready
   char menuError[128] = {0};
   bool currentRoundIsPve = false;
 #ifdef USE_EOS
@@ -1983,7 +1986,7 @@ int main(int argc, char *argv[]) {
         bool allGone =
             PlazaUpdateFlee(units, unitCount, plazaData, particles, dt);
         if (allGone) {
-          // All enemies fled — initialize game state and transition to map
+          // All enemies fled — initialize game state and spawn first wave
           ClearRedUnits(units, &unitCount);
           snapshotCount = 0;
           currentRound = 0;
@@ -2010,13 +2013,11 @@ int main(int argc, char *argv[]) {
           rollCost = rollCostBase;
           dragState.dragging = false;
           waveUpgradeText[0] = '\0';
-          // Generate Act 1 map and enter map phase
-          GenerateMap(&actMap, 1, (uint32_t)GetRandomValue(1, 999999));
-          ResetMapScroll();
-          mapActive = true;
-          showingMapEvent = false;
-          mapEventChoice = -1;
-          phase = PHASE_MAP;
+          // First wave: spawn directly, no map choice yet
+          mapActive = false;
+          firstWaveDone = false;
+          SpawnWave(units, &unitCount, 0, unitTypeCount);
+          phase = PHASE_PREP;
         }
       }
 
@@ -3054,6 +3055,10 @@ int main(int argc, char *argv[]) {
           showEscMenu = !showEscMenu;
       }
       // --- Multiplayer: poll network and handle server messages ---
+      if (isMultiplayer && opponentIsReady && oppReadyCountdown > 0.0f) {
+        oppReadyCountdown -= dt;
+        if (oppReadyCountdown < 0.0f) oppReadyCountdown = 0.0f;
+      }
       if (isMultiplayer) {
 #ifdef USE_EOS
         if (useEos)
@@ -3083,6 +3088,13 @@ int main(int argc, char *argv[]) {
           plazaState = PLAZA_ROAMING;
           phase = PHASE_PLAZA;
         }
+        // Peer disconnected — treat as game over
+        if (NC_FLAG(peerDisconnected)) {
+          NC_CLEAR(peerDisconnected);
+          lastOutcomeWin = true;
+          roundResultText = "Opponent disconnected";
+          phase = PHASE_GAME_OVER;
+        }
         if (NC_FLAG(shopUpdated)) {
           NC_CLEAR(shopUpdated);
           for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
@@ -3102,6 +3114,7 @@ int main(int argc, char *argv[]) {
           NC_CLEAR(opponentReady);
           waitingForOpponent = false;
           opponentIsReady = true;
+          oppReadyCountdown = (float)NC_FLAG(prepTimeRemaining);
         }
         // Combat started — server sends serialized units
         if (NC_FLAG(combatStarted)) {
@@ -3955,8 +3968,32 @@ int main(int argc, char *argv[]) {
                          (float)shopCardH};
           if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
             shopSlots[s].locked = !shopSlots[s].locked;
+            usedLockHint = true;
             PlaySound(sfxUiBuy);
             break;
+          }
+        }
+        // Right-click on inventory slot to sell
+        if (!dragState.dragging) {
+          int sw2 = GetScreenWidth(), sh2 = GetScreenHeight();
+          int hudTop2 = sh2 - hudTotalH;
+          int totalCardsW2 = BLUE_TEAM_MAX_SIZE * hudCardW + (BLUE_TEAM_MAX_SIZE - 1) * hudCardSpacing;
+          int cardsStartX2 = (sw2 - totalCardsW2) / 2;
+          int rcInvStartX = cardsStartX2 - (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
+          int rcInvStartY = hudTop2 + hudShopH + 15 + S(16);
+          for (int inv = 0; inv < MAX_INVENTORY_SLOTS; inv++) {
+            int col = inv % HUD_INVENTORY_COLS;
+            int row = inv / HUD_INVENTORY_COLS;
+            int ix = rcInvStartX + col * (hudAbilSlotSize + hudAbilSlotGap);
+            int iy = rcInvStartY + row * (hudAbilSlotSize + hudAbilSlotGap);
+            Rectangle ir = {(float)ix, (float)iy, (float)hudAbilSlotSize, (float)hudAbilSlotSize};
+            if (CheckCollisionPointRec(mouse, ir) && inventory[inv].abilityId >= 0) {
+              SellAbility(inventory[inv].abilityId, inventory[inv].level, &playerGold);
+              inventory[inv].abilityId = -1;
+              inventory[inv].level = 0;
+              PlaySound(sfxUiBuy);
+              break;
+            }
           }
         }
       }
@@ -4091,6 +4128,27 @@ int main(int argc, char *argv[]) {
               }
               placed = true;
             }
+          }
+        }
+        // Check drop on sell zone (prep phase only)
+        if (!placed && dragState.abilityId >= 0) {
+          int sellInvStartX =
+              cardsStartX -
+              (HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap)) - 20;
+          int sellInvStartY = hudTop2 + hudShopH + 15 + S(16);
+          int sellZW = HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap);
+          int sellZH = S(24);
+          int sellZX = sellInvStartX;
+          int sellZY = sellInvStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(8);
+          if (itemInventoryCount > 0) {
+            int itemSlotSize2 = S(28), itemSlotGap2 = S(4);
+            sellZY = sellInvStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(8) + S(14) + 2 * (itemSlotSize2 + itemSlotGap2) + S(4);
+          }
+          Rectangle sellRect = {(float)sellZX, (float)sellZY, (float)sellZW, (float)sellZH};
+          if (CheckCollisionPointRec(mouse, sellRect)) {
+            SellAbility(dragState.abilityId, dragState.level, &playerGold);
+            PlaySound(sfxUiBuy);
+            placed = true;
           }
         }
         // Not placed — return to source
@@ -4245,23 +4303,22 @@ int main(int argc, char *argv[]) {
         memcpy(unitsBefore, units, sizeof(Unit) * unitCount);
         memcpy(projBefore, projectiles, sizeof(Projectile) * MAX_PROJECTILES);
 
-        // Run all catch-up ticks — only the LAST tick emits CombatEvents
+        // Run all catch-up ticks — accumulate CombatEvents across all ticks
         CombatEvent combatEvents[MAX_COMBAT_EVENTS];
         int combatEventCount = 0;
         for (int tick = 0; tick < ticksToRun; tick++) {
           combatAccum -= COMBAT_DT;
-          if (tick == ticksToRun - 1) {
-            CombatTick(units, &unitCount, modifiers, projectiles, fissures,
-                       COMBAT_DT, combatEvents, &combatEventCount);
-          } else {
-            CombatTick(units, &unitCount, modifiers, projectiles, fissures,
-                       COMBAT_DT, NULL, NULL);
-          }
+          CombatEvent tickEvents[MAX_COMBAT_EVENTS];
+          int tickEventCount = 0;
+          CombatTick(units, &unitCount, modifiers, projectiles, fissures,
+                     COMBAT_DT, tickEvents, &tickEventCount);
+          for (int te = 0; te < tickEventCount && combatEventCount < MAX_COMBAT_EVENTS; te++)
+            combatEvents[combatEventCount++] = tickEvents[te];
         }
         if (combatAccum > 4.0f * COMBAT_DT)
           combatAccum = 4.0f * COMBAT_DT;
 
-        // === Process CombatEvents (from last tick only) ===
+        // === Process CombatEvents (accumulated from all ticks) ===
         for (int e = 0; e < combatEventCount; e++) {
           switch (combatEvents[e].type) {
           case COMBAT_EVT_SHAKE:
@@ -4486,23 +4543,22 @@ int main(int argc, char *argv[]) {
         memcpy(unitsBefore, units, sizeof(Unit) * unitCount);
         memcpy(projBefore, projectiles, sizeof(Projectile) * MAX_PROJECTILES);
 
-        // Run all catch-up ticks — only the LAST tick emits CombatEvents
+        // Run all catch-up ticks — accumulate CombatEvents across all ticks
         CombatEvent combatEvents[MAX_COMBAT_EVENTS];
         int combatEventCount = 0;
         for (int tick = 0; tick < ticksToRun; tick++) {
           combatAccum -= COMBAT_DT;
-          if (tick == ticksToRun - 1) {
-            CombatTick(units, &unitCount, modifiers, projectiles, fissures,
-                       COMBAT_DT, combatEvents, &combatEventCount);
-          } else {
-            CombatTick(units, &unitCount, modifiers, projectiles, fissures,
-                       COMBAT_DT, NULL, NULL);
-          }
+          CombatEvent tickEvents[MAX_COMBAT_EVENTS];
+          int tickEventCount = 0;
+          CombatTick(units, &unitCount, modifiers, projectiles, fissures,
+                     COMBAT_DT, tickEvents, &tickEventCount);
+          for (int te = 0; te < tickEventCount && combatEventCount < MAX_COMBAT_EVENTS; te++)
+            combatEvents[combatEventCount++] = tickEvents[te];
         }
         if (combatAccum > 4.0f * COMBAT_DT)
           combatAccum = 4.0f * COMBAT_DT;
 
-        // === Process CombatEvents (from last tick only) ===
+        // === Process CombatEvents (accumulated from all ticks) ===
         for (int e = 0; e < combatEventCount; e++) {
           switch (combatEvents[e].type) {
           case COMBAT_EVT_SHAKE:
@@ -5931,6 +5987,16 @@ int main(int argc, char *argv[]) {
           ClearAllFloatingTexts(floatingTexts);
           ClearAllFissures(fissures);
         }
+        // Peer disconnected during combat
+        if (NC_FLAG(peerDisconnected)) {
+          NC_CLEAR(peerDisconnected);
+          lastOutcomeWin = true;
+          roundResultText = "Opponent disconnected";
+          phase = PHASE_GAME_OVER;
+          ClearAllParticles(particles);
+          ClearAllFloatingTexts(floatingTexts);
+          ClearAllFissures(fissures);
+        }
       } else {
         int ba, ra;
         CountTeams(units, unitCount, &ba, &ra);
@@ -6088,6 +6154,31 @@ int main(int argc, char *argv[]) {
             deathPenalty = true;
             lastOutcomeWin = false;
             phase = PHASE_GAME_OVER;
+          } else if (!firstWaveDone) {
+            // First wave beaten — now generate map and enter map phase
+            firstWaveDone = true;
+            RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
+            for (int i = 0; i < unitCount; i++) {
+              units[i].nextAbilitySlot = 0;
+              for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
+                units[i].abilities[a].cooldownRemaining = 0;
+                units[i].abilities[a].triggered = false;
+              }
+            }
+            ClearAllModifiers(modifiers);
+            ClearAllProjectiles(projectiles);
+            ClearAllFloatingTexts(floatingTexts);
+            ClearAllFissures(fissures);
+            ClearRedUnits(units, &unitCount);
+            playerGold += roundGoldReward + goldInterest;
+            RollShop(shopSlots, &playerGold, 0, currentRound);
+            rollCost = rollCostBase;
+            GenerateMap(&actMap, 1, (uint32_t)GetRandomValue(1, 999999));
+            ResetMapScroll();
+            mapActive = true;
+            showingMapEvent = false;
+            mapEventChoice = -1;
+            phase = PHASE_MAP;
           } else if (mapActive) {
             // Map mode: return to map after combat
             RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
@@ -8010,9 +8101,13 @@ int main(int argc, char *argv[]) {
         GameDrawText(pt, dPlayBtn.x + (playBtnW - ptw) / 2,
                      dPlayBtn.y + (playBtnH - playFontSz) / 2, playFontSz,
                      WHITE);
-        // Opponent ready indicator
+        // Opponent ready indicator with countdown
         if (isMultiplayer && opponentIsReady) {
-          const char *oppTxt = "OPPONENT READY";
+          const char *oppTxt;
+          if (oppReadyCountdown > 0.0f)
+            oppTxt = TextFormat("STARTING IN %ds", (int)oppReadyCountdown + 1);
+          else
+            oppTxt = "OPPONENT READY";
           int oppFsz = S(14);
           int oppW = GameMeasureText(oppTxt, oppFsz);
           float oppPulse = 0.5f + 0.5f * sinf((float)GetTime() * 4.0f);
@@ -8090,57 +8185,40 @@ int main(int argc, char *argv[]) {
         const char *oppName =
             netClient.opponentName[0] ? netClient.opponentName : "???";
 #endif
-        int mpNameSz = S(14);
-        int hpBarW = S(80), hpBarH = S(10);
-        int hpY = S(36);
+        // Stacked health bars (top-left, near gold)
+        int hpBarW = S(100), hpBarH = S(8);
+        int hpX = S(10), hpY = S(6);
+        int mpNameSz = S(12);
+        int hpGap = S(2);
 
-        // YOU health
-        const char *youLabel = TextFormat("YOU (%s)", playerName);
-        int youW = GameMeasureText(youLabel, mpNameSz);
-        int youBarX = sw / 2 - youW - S(16) - hpBarW;
-        GameDrawText(youLabel, youBarX - youW - S(6), hpY, mpNameSz, DARKBLUE);
-        // HP bar background
-        DrawRectangle(sw / 2 - hpBarW - S(12), hpY, hpBarW, hpBarH,
-                      (Color){40, 40, 50, 200});
-        // HP bar fill
+        // Player health bar
+        GameDrawText(playerName, hpX, hpY, mpNameSz, (Color){120, 200, 255, 255});
+        int barY1 = hpY + mpNameSz + S(2);
+        DrawRectangle(hpX, barY1, hpBarW, hpBarH, (Color){40, 40, 50, 200});
         float youPct = (float)myHp / 20.0f;
-        if (youPct < 0)
-          youPct = 0;
-        Color youBarCol = youPct > 0.5f    ? (Color){50, 180, 50, 255}
-                          : youPct > 0.25f ? ORANGE
-                                           : RED;
-        DrawRectangle(sw / 2 - hpBarW - S(12), hpY, (int)(hpBarW * youPct),
-                      hpBarH, youBarCol);
-        DrawRectangleLinesEx((Rectangle){(float)(sw / 2 - hpBarW - S(12)),
-                                         (float)hpY, (float)hpBarW,
-                                         (float)hpBarH},
+        if (youPct < 0) youPct = 0;
+        DrawRectangle(hpX, barY1, (int)(hpBarW * youPct), hpBarH,
+                      (Color){50, 180, 50, 255});
+        DrawRectangleLinesEx((Rectangle){(float)hpX, (float)barY1,
+                             (float)hpBarW, (float)hpBarH},
                              1, (Color){100, 100, 120, 200});
-        // HP number
         const char *youHpTxt = TextFormat("%d", myHp);
-        GameDrawText(youHpTxt, sw / 2 - S(8), hpY, mpNameSz, WHITE);
+        GameDrawText(youHpTxt, hpX + hpBarW + S(4), barY1, mpNameSz, WHITE);
 
-        // OPPONENT health
-        const char *oppLabel = TextFormat("OPP (%s)", oppName);
-        int oppBarX = sw / 2 + S(24);
-        // HP number
-        const char *oppHpTxt = TextFormat("%d", oppHp);
-        GameDrawText(oppHpTxt, sw / 2 + S(12), hpY, mpNameSz, WHITE);
-        // HP bar
-        DrawRectangle(oppBarX, hpY, hpBarW, hpBarH, (Color){40, 40, 50, 200});
+        // Opponent health bar
+        int oppLabelY = barY1 + hpBarH + hpGap;
+        GameDrawText(oppName, hpX, oppLabelY, mpNameSz, (Color){255, 120, 120, 255});
+        int barY2 = oppLabelY + mpNameSz + S(2);
+        DrawRectangle(hpX, barY2, hpBarW, hpBarH, (Color){40, 40, 50, 200});
         float oppPct = (float)oppHp / 20.0f;
-        if (oppPct < 0)
-          oppPct = 0;
-        Color oppBarCol = oppPct > 0.5f    ? (Color){180, 50, 50, 255}
-                          : oppPct > 0.25f ? ORANGE
-                                           : (Color){50, 180, 50, 255};
-        DrawRectangle(oppBarX, hpY, (int)(hpBarW * oppPct), hpBarH, oppBarCol);
-        DrawRectangleLinesEx((Rectangle){(float)oppBarX, (float)hpY,
-                                         (float)hpBarW, (float)hpBarH},
+        if (oppPct < 0) oppPct = 0;
+        DrawRectangle(hpX, barY2, (int)(hpBarW * oppPct), hpBarH,
+                      (Color){180, 50, 50, 255});
+        DrawRectangleLinesEx((Rectangle){(float)hpX, (float)barY2,
+                             (float)hpBarW, (float)hpBarH},
                              1, (Color){100, 100, 120, 200});
-        // Label
-        int oppLabelW = GameMeasureText(oppLabel, mpNameSz);
-        GameDrawText(oppLabel, oppBarX + hpBarW + S(6), hpY, mpNameSz, MAROON);
-        (void)oppLabelW;
+        const char *oppHpTxt = TextFormat("%d", oppHp);
+        GameDrawText(oppHpTxt, hpX + hpBarW + S(4), barY2, mpNameSz, WHITE);
       }
 
       // Phase label
@@ -8967,10 +9045,10 @@ int main(int argc, char *argv[]) {
         if (itemInventoryCount > 0 || phase == PHASE_PREP) {
           GameDrawText("ITEMS", invStartX, itemInvY, S(12),
                        (Color){160, 160, 180, 255});
-          int itemSlotSize = S(28);
-          int itemSlotGap = S(4);
+          int itemSlotSize = S(24);
+          int itemSlotGap = S(3);
           int itemY = itemInvY + S(14);
-          int itemCols = 3;
+          int itemCols = 6; // single row to avoid clipping
           for (int ii = 0; ii < MAX_ITEMS && ii < 6; ii++) {
             int ic = ii % itemCols;
             int ir = ii / itemCols;
@@ -9031,7 +9109,39 @@ int main(int argc, char *argv[]) {
             }
           }
         }
+      // --- Sell Zone (prep phase, below items) ---
+      if (phase == PHASE_PREP) {
+        int sellW = HUD_INVENTORY_COLS * (hudAbilSlotSize + hudAbilSlotGap);
+        int sellH = S(24);
+        int sellX = invStartX;
+        int sellY = invStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(8);
+        // Move below items if they're visible
+        if (itemInventoryCount > 0) {
+          int itemSlotSize = S(28), itemSlotGap = S(4);
+          sellY = invStartY + HUD_INVENTORY_ROWS * (hudAbilSlotSize + hudAbilSlotGap) + S(8) + S(14) + 2 * (itemSlotSize + itemSlotGap) + S(4);
+        }
+        bool sellHovered = CheckCollisionPointRec(GetMousePosition(),
+            (Rectangle){(float)sellX, (float)sellY, (float)sellW, (float)sellH});
+        bool draggingAbil = dragState.dragging && dragState.abilityId >= 0;
+        Color sellBg = (sellHovered && draggingAbil) ? (Color){120, 40, 40, 255} : (Color){60, 30, 30, 200};
+        DrawRectangle(sellX, sellY, sellW, sellH, sellBg);
+        DrawRectangleLinesEx((Rectangle){(float)sellX, (float)sellY, (float)sellW, (float)sellH},
+                             1, (Color){200, 60, 60, 255});
+        // Show sell value if dragging an ability
+        const char *sellLabel;
+        if (draggingAbil) {
+          int sellVal = ABILITY_DEFS[dragState.abilityId].goldCost / 2 + dragState.level;
+          if (sellVal < 1) sellVal = 1;
+          sellLabel = TextFormat("SELL (%dg)", sellVal);
+        } else {
+          sellLabel = "SELL";
+        }
+        int sellFsz = S(12);
+        int slw = GameMeasureText(sellLabel, sellFsz);
+        GameDrawText(sellLabel, sellX + (sellW - slw) / 2, sellY + (sellH - sellFsz) / 2,
+                     sellFsz, (Color){255, 100, 100, 255});
       }
+      } // end Inventory block
 
       // --- Synergy Panel (right of unit cards) ---
       {
@@ -9279,6 +9389,23 @@ int main(int argc, char *argv[]) {
             else
               DrawRectangleLines(scx, scy, shopCardW, shopCardH,
                                  (Color){90, 90, 110, 255});
+            // Upgrade indicator glow: check if any unit or inventory has this ability
+            {
+              bool wouldUpgrade = false;
+              for (int ui = 0; ui < unitCount && !wouldUpgrade; ui++) {
+                if (!units[ui].active || units[ui].team != TEAM_BLUE) continue;
+                for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
+                  if (units[ui].abilities[a].abilityId == shopSlots[s].abilityId) { wouldUpgrade = true; break; }
+              }
+              for (int inv = 0; inv < MAX_INVENTORY_SLOTS && !wouldUpgrade; inv++)
+                if (inventory[inv].abilityId == shopSlots[s].abilityId) { wouldUpgrade = true; break; }
+              if (wouldUpgrade) {
+                float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 4.0f);
+                unsigned char upAlpha = (unsigned char)(150 + (int)(pulse * 105));
+                DrawRectangleLinesEx((Rectangle){(float)scx, (float)scy, (float)shopCardW, (float)shopCardH},
+                                     2, (Color){100, 255, 255, upAlpha});
+              }
+            }
             const char *sname =
                 TextFormat("%s %dg", sdef->name, sdef->goldCost);
             int shopFontSz = S(14);
@@ -9316,6 +9443,20 @@ int main(int argc, char *argv[]) {
             GameDrawText(lockTxt, scx + shopCardW - lkW - 3, scy + 2, lkFsz,
                          (Color){0, 220, 220, 255});
           }
+        }
+
+        // Hint: right-click to lock slots
+        if (phase == PHASE_PREP && !usedLockHint) {
+          const char *lhint = "Right-click to lock slots";
+          int lhSz = S(12);
+          int lhW = GameMeasureText(lhint, lhSz);
+          int lhX = (hudSw - lhW) / 2;
+          int lhY = shopY + shopCardH + S(14);
+          float lhPulse = 0.5f + 0.5f * sinf((float)GetTime() * 3.0f);
+          unsigned char lhAlpha = (unsigned char)(120 + (int)(lhPulse * 100));
+          DrawRectangle(lhX - S(4), lhY - 1, lhW + S(8), lhSz + 2,
+                       (Color){20, 20, 30, (unsigned char)(lhAlpha / 2)});
+          GameDrawText(lhint, lhX, lhY, lhSz, (Color){0, 200, 200, lhAlpha});
         }
 
         // Item shop (only on shop nodes)

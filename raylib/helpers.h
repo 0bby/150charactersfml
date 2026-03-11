@@ -42,6 +42,7 @@ void UpdateParticles(Particle particles[], float dt);
 void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round);
 void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold);
 void AssignRandomAbilities(Unit *unit, int numAbilities);
+void SellAbility(int abilityId, int level, int *gold);
 
 // Floating text helpers
 void SpawnFloatingText(FloatingText texts[], Vector3 pos, const char *str, Color color, float life);
