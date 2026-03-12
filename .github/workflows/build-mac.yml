@@ -11,6 +11,9 @@ on:
 env:
   TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
 
+permissions:
+  contents: write
+
 jobs:
   build-mac:
     runs-on: macos-latest
