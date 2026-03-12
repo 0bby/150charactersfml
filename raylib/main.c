@@ -20,6 +20,11 @@
 #include <unistd.h>
 #endif
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <libgen.h>
+#endif
+
 #define RLIGHTS_IMPLEMENTATION
 #include "rlights.h"
 
@@ -85,6 +90,17 @@ static bool cgDebugOverlay = false;
 // Main
 //------------------------------------------------------------------------------------
 int main(int argc, char *argv[]) {
+#ifdef __APPLE__
+  // chdir to the executable's directory so relative asset paths work
+  // when launched from Finder (which sets cwd to $HOME)
+  {
+    char path[1024];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) == 0) {
+      chdir(dirname(path));
+    }
+  }
+#endif
   net_platform_init();
 #ifdef USE_EOS
   bool eosAlt = false;
@@ -576,8 +592,6 @@ int main(int argc, char *argv[]) {
   int fTimeLoc = GetShaderLocation(foliageShader, "time");
   int fLightVPLoc = GetShaderLocation(foliageShader, "lightVP");
   int fShadowMapLoc = GetShaderLocation(foliageShader, "shadowMap");
-  int fShadowDebugLoc = GetShaderLocation(foliageShader, "shadowDebug");
-  int fNoShadowLoc = GetShaderLocation(foliageShader, "noShadow");
   int fNormalMapLoc = GetShaderLocation(foliageShader, "normalMap");
   int fUseNormalMapLoc = GetShaderLocation(foliageShader, "useNormalMap");
   // Manually set lights[0] and lights[1] on foliage shader

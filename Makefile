@@ -28,8 +28,14 @@ ifneq ($(USE_EOS),0)
 endif
 
 ifeq ($(UNAME),Darwin)
-  GAME_CFLAGS += $(shell pkg-config --cflags raylib)
-  GAME_LDFLAGS = $(shell pkg-config --libs raylib) -lm -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
+  ifdef STATIC_RAYLIB
+    RAYLIB_MAC = deps/raylib-mac
+    GAME_CFLAGS += -I$(RAYLIB_MAC)/include
+    GAME_LDFLAGS = $(RAYLIB_MAC)/lib/libraylib.a -lm -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
+  else
+    GAME_CFLAGS += $(shell pkg-config --cflags raylib)
+    GAME_LDFLAGS = $(shell pkg-config --libs raylib) -lm -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
+  endif
 else
   ifdef STATIC_RAYLIB
     RAYLIB_LINUX = deps/raylib-linux
@@ -53,7 +59,7 @@ GAME_NAME = relic-rivals
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 # --- Targets ---
-.PHONY: all game clean clean-game clean-deps run export export-mac release deps
+.PHONY: all game clean clean-game clean-deps run export export-mac release deps deps-mac
 
 all: game
 
@@ -83,6 +89,21 @@ deps:
 		echo "=== deps/raylib-linux/lib/libraylib.a already exists, skipping ==="; \
 	fi
 
+deps-mac:
+	@if [ ! -f deps/raylib-mac/lib/libraylib.a ]; then \
+		echo "=== Building static raylib $(RAYLIB_VERSION) for macOS ==="; \
+		rm -rf deps/raylib-src; \
+		git clone --depth 1 --branch $(RAYLIB_VERSION) https://github.com/raysan5/raylib.git deps/raylib-src; \
+		cd deps/raylib-src/src && $(MAKE) PLATFORM=PLATFORM_DESKTOP GRAPHICS=GRAPHICS_API_OPENGL_33; \
+		mkdir -p ../../raylib-mac/lib ../../raylib-mac/include; \
+		cp libraylib.a ../../raylib-mac/lib/; \
+		cp raylib.h raymath.h rlgl.h ../../raylib-mac/include/; \
+		cd ../../.. && rm -rf deps/raylib-src; \
+		echo "=== Static raylib built at deps/raylib-mac/ ==="; \
+	else \
+		echo "=== deps/raylib-mac/lib/libraylib.a already exists, skipping ==="; \
+	fi
+
 export-linux: deps
 	@echo "=== Building Linux (static) ==="
 	$(MAKE) clean-game
@@ -103,10 +124,10 @@ endif
 	done
 	@echo "=== Linux Export complete: export/linux/game ==="
 
-export-mac:
-	@echo "=== Building macOS ==="
+export-mac: deps-mac
+	@echo "=== Building macOS (static) ==="
 	$(MAKE) clean-game
-	$(MAKE) game
+	$(MAKE) STATIC_RAYLIB=1 game
 	@echo "=== Assembling macOS export ==="
 	@mkdir -p export/mac
 	@cp $(GAME_TARGET) export/mac/
@@ -149,24 +170,24 @@ release: export
 	gh release create $(VERSION) \
 		$(GAME_NAME)-$(VERSION)-windows.zip \
 		--title "$(GAME_NAME) $(VERSION)" \
+		--target local-only \
 		$(if $(NOTES),--notes "$(NOTES)",--notes "")
 	@rm -f $(GAME_NAME)-$(VERSION)-windows.zip
 	@echo "=== Released $(VERSION) ==="
 else
 export: export-linux export-windows
 
-release: export
+release: export-windows
 	@echo "=== Zipping ==="
-	cd export && zip -qr ../$(GAME_NAME)-$(VERSION)-linux.zip linux/
 	cd export && zip -qr ../$(GAME_NAME)-$(VERSION)-windows.zip windows/
 	@echo "=== Creating GitHub release $(VERSION) ==="
 	gh release create $(VERSION) \
-		$(GAME_NAME)-$(VERSION)-linux.zip \
 		$(GAME_NAME)-$(VERSION)-windows.zip \
 		--title "$(GAME_NAME) $(VERSION)" \
+		--target local-only \
 		$(if $(NOTES),--notes "$(NOTES)",--notes "")
-	@rm -f $(GAME_NAME)-$(VERSION)-linux.zip $(GAME_NAME)-$(VERSION)-windows.zip
-	@echo "=== Released $(VERSION) ==="
+	@rm -f $(GAME_NAME)-$(VERSION)-windows.zip
+	@echo "=== Released $(VERSION) — CI will add Linux + Mac builds ==="
 endif
 
 clean: clean-game
