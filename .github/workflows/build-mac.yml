@@ -1,0 +1,37 @@
+name: Build macOS
+on:
+  release:
+    types: [created]
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install raylib
+        run: brew install raylib pkg-config
+
+      - name: Build game
+        run: make game
+
+      - name: Assemble export
+        run: |
+          mkdir -p export/mac
+          cp raylib/game export/mac/
+          cp deps/eos-sdk/Bin/libEOSSDK-Mac-Shipping.dylib export/mac/
+          for dir in assets fonts resources sfx music; do
+            [ -d "raylib/$dir" ] && cp -r "raylib/$dir" export/mac/
+          done
+          for f in raylib/env_layout.txt raylib/leaderboard.dat raylib/leaderboard.json; do
+            [ -f "$f" ] && cp "$f" export/mac/
+          done
+          cp raylib/*.obj raylib/*.mtl export/mac/ 2>/dev/null || true
+
+      - name: Zip
+        run: cd export && zip -qr ../relic-rivals-${{ github.event.release.tag_name }}-mac.zip mac/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: relic-rivals-${{ github.event.release.tag_name }}-mac.zip
