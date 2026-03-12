@@ -131,7 +131,7 @@ void ApplySynergies(Unit units[], int unitCount);
 
 // Wave spawning helpers
 Vector3 FindValidSpawnPos(Unit units[], int unitCount, float minDist);
-void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount);
+void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount, bool isBoss);
 void ClearRedUnits(Unit units[], int *unitCount);
 void CompactBlueUnits(Unit units[], int *unitCount);
 

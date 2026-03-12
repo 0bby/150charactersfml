@@ -862,6 +862,7 @@ int main(int argc, char *argv[]) {
   bool usedLockHint = false;      // hides lock hint after first right-click lock
   bool hasDraggedUnit = false;    // hides drag hint after first drag
   char waveUpgradeText[128] = ""; // describes what changed this wave
+  int battleCount = 0;            // number of battles fought (for display)
 
   // Synergy hover tooltip state
   int hoverSynergyIdx = -1;
@@ -2019,7 +2020,8 @@ int main(int argc, char *argv[]) {
           // First wave: spawn directly, no map choice yet
           mapActive = false;
           firstWaveDone = false;
-          SpawnWave(units, &unitCount, 0, unitTypeCount);
+          SpawnWave(units, &unitCount, 0, unitTypeCount, false);
+          battleCount = 1;
           phase = PHASE_PREP;
         }
       }
@@ -2885,7 +2887,8 @@ int main(int argc, char *argv[]) {
           switch (selected) {
           case NODE_COMBAT: {
             // Spawn normal wave and go to prep
-            SpawnWave(units, &unitCount, mapRound, unitTypeCount);
+            battleCount++;
+            SpawnWave(units, &unitCount, mapRound, unitTypeCount, false);
             // Apply act scaling
             for (int i = 0; i < unitCount; i++) {
               if (units[i].active && units[i].team == TEAM_RED) {
@@ -2905,7 +2908,8 @@ int main(int argc, char *argv[]) {
           } break;
           case NODE_ELITE: {
             // Elite fight: enemies are rare/legendary
-            SpawnWave(units, &unitCount, mapRound, unitTypeCount);
+            battleCount++;
+            SpawnWave(units, &unitCount, mapRound, unitTypeCount, false);
             for (int i = 0; i < unitCount; i++) {
               if (units[i].active && units[i].team == TEAM_RED) {
                 // Act scaling
@@ -2930,7 +2934,8 @@ int main(int argc, char *argv[]) {
           } break;
           case NODE_BOSS: {
             // Boss wave — spawn a big boss + normal enemies
-            SpawnWave(units, &unitCount, mapRound, unitTypeCount);
+            battleCount++;
+            SpawnWave(units, &unitCount, mapRound, unitTypeCount, true);
             // Find first red unit and make it the boss
             bool bossAssigned = false;
             for (int i = 0; i < unitCount; i++) {
@@ -6000,7 +6005,7 @@ int main(int argc, char *argv[]) {
             goldInterest = playerGold / 5;
             roundGoldReward = goldFlat + goldKills + goldBoss + goldAlive;
           }
-          currentRound++;
+          if (!mapActive) currentRound++;
           lastOutcomeWin = (ba > 0);
           phase = PHASE_ROUND_OVER;
           roundOverTimer = 2.5f;
@@ -6207,7 +6212,7 @@ int main(int argc, char *argv[]) {
             ClearAllFloatingTexts(floatingTexts);
             ClearAllFissures(fissures);
             ClearRedUnits(units, &unitCount);
-            SpawnWave(units, &unitCount, currentRound, unitTypeCount);
+            SpawnWave(units, &unitCount, currentRound, unitTypeCount, currentRound >= TOTAL_ROUNDS && currentRound % 5 == 4);
             // Generate wave upgrade description
             if (currentRound < TOTAL_ROUNDS) {
               switch (currentRound) {
@@ -6335,7 +6340,7 @@ int main(int argc, char *argv[]) {
             }
             phase = PHASE_MAP;
           } else {
-            SpawnWave(units, &unitCount, currentRound, unitTypeCount);
+            SpawnWave(units, &unitCount, currentRound, unitTypeCount, currentRound >= TOTAL_ROUNDS && currentRound % 5 == 4);
             // Generate wave upgrade description
             if (currentRound < TOTAL_ROUNDS) {
               switch (currentRound) {
@@ -8119,8 +8124,8 @@ int main(int argc, char *argv[]) {
         // Round indicator (large, top center)
         // During GAME_OVER, currentRound was already incremented — show the
         // wave we died/finished on
-        int displayRound =
-            (phase == PHASE_GAME_OVER) ? currentRound : currentRound + 1;
+        int displayRound = mapActive ? battleCount
+            : ((phase == PHASE_GAME_OVER) ? currentRound : currentRound + 1);
         const char *roundText = isMultiplayer
                                     ? TextFormat("Round %d", displayRound)
                                     : TextFormat("Wave %d", displayRound);

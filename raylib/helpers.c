@@ -913,11 +913,13 @@ static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
 };
 
 // Spawn a wave of enemies for the given round (0-indexed)
-void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount) {
+void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount, bool isBoss) {
   (void)unitTypeCount; // use VALID_UNIT_TYPES instead
   if (round < TOTAL_ROUNDS) {
     // Scripted wave (rounds 0-4)
-    const WaveDef *wave = &WAVE_DEFS[round];
+    // Round 4 is a boss wave — clamp to round 3 for non-boss nodes
+    int effectiveRound = (round == 4 && !isBoss) ? 3 : round;
+    const WaveDef *wave = &WAVE_DEFS[effectiveRound];
     for (int e = 0; e < wave->count; e++) {
       int type = wave->entries[e].unitType;
       if (type < 0)
@@ -960,7 +962,7 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount) {
     float dmgScale = 1.0f + 0.03f * (float)(extraRounds + 1);
 
     // Boss at every milestone (every 5th round, 0-indexed: 4, 9, 14, ...)
-    bool isMilestone = (round > 0 && round % 5 == 4);
+    bool isMilestone = isBoss;
     if (isMilestone) {
       // Spawn boss unit first
       int bossType =

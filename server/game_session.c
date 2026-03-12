@@ -57,7 +57,7 @@ static void setup_pve_enemies(Unit combatUnits[], int *combatUnitCount,
     *combatUnitCount = count;
 
     // Use the solo wave system for red PVE enemies
-    SpawnWave(combatUnits, combatUnitCount, waveIndex, 2);
+    SpawnWave(combatUnits, combatUnitCount, waveIndex, 2, waveIndex >= TOTAL_ROUNDS && waveIndex % 5 == 4);
 }
 
 static void setup_pvp_combat(Unit combatUnits[], int *combatUnitCount,
