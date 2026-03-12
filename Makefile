@@ -170,7 +170,7 @@ release: export
 	gh release create $(VERSION) \
 		$(GAME_NAME)-$(VERSION)-windows.zip \
 		--title "$(GAME_NAME) $(VERSION)" \
-		--target local-only \
+		--target main \
 		$(if $(NOTES),--notes "$(NOTES)",--notes "")
 	@rm -f $(GAME_NAME)-$(VERSION)-windows.zip
 	@echo "=== Released $(VERSION) ==="
@@ -184,7 +184,7 @@ release: export-windows
 	gh release create $(VERSION) \
 		$(GAME_NAME)-$(VERSION)-windows.zip \
 		--title "$(GAME_NAME) $(VERSION)" \
-		--target local-only \
+		--target main \
 		$(if $(NOTES),--notes "$(NOTES)",--notes "")
 	@rm -f $(GAME_NAME)-$(VERSION)-windows.zip
 	@echo "=== Released $(VERSION) — CI will add Linux + Mac builds ==="
