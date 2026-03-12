@@ -41,6 +41,7 @@ static bool cgDebugOverlay = false;
 #include "helpers.h"
 #include "items.h"
 #include "map.h"
+#include "events.h"
 #include "synergies.h"
 
 // Must match server's COMBAT_DT exactly (game_session.h)
@@ -838,6 +839,7 @@ int main(int argc, char *argv[]) {
   int itemShopOffers[3] = {ITEM_NONE, ITEM_NONE, ITEM_NONE};
   bool itemShopGenerated = false;
   int itemShopBuyCount = 0; // limits purchases per shop visit
+  bool showingItemShop = false; // overlay on map (like events)
   int removeConfirmUnit =
       -1; // unit index awaiting removal confirmation (-1 = none)
   ScreenShake shake = {0};
@@ -1560,7 +1562,7 @@ int main(int argc, char *argv[]) {
   bool mapActive = false;       // true when using map system (singleplayer)
   bool firstWaveDone = false;   // set after beating wave 1 (triggers map)
   int mapSelectedNodeType = -1; // last selected node type
-  MapEventType currentMapEvent = EVENT_FOUNTAIN;
+  int currentEventIndex = 0;
   bool showingMapEvent = false; // true when displaying event choices
   int mapEventChoice = -1;      // player's event choice (-1 = none yet)
   char playerName[32] = "Player";
@@ -2794,109 +2796,82 @@ int main(int argc, char *argv[]) {
       }
 
       if (showingMapEvent && !showEscMenu && !showHelp) {
-        // Event screen: handle choice buttons
+        // Event screen: handle choice buttons (data-driven)
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
           Vector2 emouse = GetMousePosition();
           int esw = GetScreenWidth(), esh = GetScreenHeight();
+          const EventDef *evt = &EVENT_DEFS[currentEventIndex];
           int btnW = 200, btnH = 50, btnGap = 20;
+          int totalBtnW = evt->choiceCount * btnW + (evt->choiceCount - 1) * btnGap;
+          int btnStartX = esw / 2 - totalBtnW / 2;
           int btnY = esh / 2 + 40;
-          // Choice A
-          Rectangle choiceA = {(float)(esw / 2 - btnW - btnGap / 2),
-                               (float)btnY, (float)btnW, (float)btnH};
-          // Choice B
-          Rectangle choiceB = {(float)(esw / 2 + btnGap / 2), (float)btnY,
-                               (float)btnW, (float)btnH};
-          if (CheckCollisionPointRec(emouse, choiceA))
-            mapEventChoice = 0;
-          else if (CheckCollisionPointRec(emouse, choiceB))
-            mapEventChoice = 1;
-
-          if (mapEventChoice >= 0) {
-            // Apply event effect
-            switch (currentMapEvent) {
-            case EVENT_FOUNTAIN:
-              if (mapEventChoice == 0) {
-                // Heal all to full
-                for (int i = 0; i < unitCount; i++) {
-                  if (units[i].active && units[i].team == TEAM_BLUE) {
-                    float maxHP = UNIT_STATS[units[i].typeIndex].health *
-                                  units[i].hpMultiplier;
-                    units[i].currentHealth = maxHP;
-                  }
-                }
-              } else {
-                playerGold += 10;
-              }
-              break;
-            case EVENT_MERCHANT:
-              if (mapEventChoice == 0 && playerGold >= 5) {
-                playerGold -= 5;
-                // Give random ability to a random blue unit
-                for (int i = 0; i < unitCount; i++) {
-                  if (!units[i].active || units[i].team != TEAM_BLUE)
-                    continue;
-                  for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                    if (units[i].abilities[a].abilityId == -1) {
-                      units[i].abilities[a].abilityId =
-                          GetRandomValue(0, ABILITY_COUNT - 1);
-                      units[i].abilities[a].level = 0;
-                      goto merchant_done;
-                    }
-                  }
-                }
-              merchant_done:
-                (void)0;
-              }
-              break;
-            case EVENT_TRAINING:
-              for (int i = 0; i < unitCount; i++) {
-                if (!units[i].active || units[i].team != TEAM_BLUE)
-                  continue;
-                if (mapEventChoice == 0) {
-                  units[i].hpMultiplier *= 1.1f;
-                  float maxHP = UNIT_STATS[units[i].typeIndex].health *
-                                units[i].hpMultiplier;
-                  units[i].currentHealth = maxHP;
-                } else {
-                  units[i].dmgMultiplier *= 1.1f;
-                }
-                break; // only one random unit
-              }
-              break;
-            case EVENT_ALTAR:
-              if (mapEventChoice == 0) {
-                for (int i = 0; i < unitCount; i++) {
-                  if (units[i].active && units[i].team == TEAM_BLUE)
-                    units[i].currentHealth *= 0.8f;
-                }
-                playerGold += 15;
-              }
-              break;
-            case EVENT_TOME:
-              if (mapEventChoice == 0) {
-                for (int i = 0; i < unitCount; i++) {
-                  if (!units[i].active || units[i].team != TEAM_BLUE)
-                    continue;
-                  for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
-                    if (units[i].abilities[a].abilityId == -1) {
-                      units[i].abilities[a].abilityId =
-                          GetRandomValue(0, ABILITY_COUNT - 1);
-                      units[i].abilities[a].level = 0;
-                      goto tome_done;
-                    }
-                  }
-                }
-              tome_done:
-                (void)0;
-              }
-              break;
-            default:
+          for (int c = 0; c < evt->choiceCount; c++) {
+            Rectangle btnRect = {(float)(btnStartX + c * (btnW + btnGap)),
+                                 (float)btnY, (float)btnW, (float)btnH};
+            if (CheckCollisionPointRec(emouse, btnRect)) {
+              mapEventChoice = c;
               break;
             }
+          }
+          if (mapEventChoice >= 0) {
+            const EventChoice *choice = &evt->choices[mapEventChoice];
+            bool needsPicker = false;
+            int pickerType = 0;
+            ApplyEventEffect(choice->effect, choice->value, choice->cost,
+                             units, unitCount, &playerGold,
+                             &needsPicker, &pickerType);
             // Save snapshot and return to map
             SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
             showingMapEvent = false;
             mapEventChoice = -1;
+          }
+        }
+      } else if (showingItemShop && !showEscMenu && !showHelp) {
+        // Item shop overlay: handle clicks
+        if (IsKeyPressed(KEY_ESCAPE)) {
+          showingItemShop = false;
+          itemShopGenerated = false;
+          SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
+        }
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+          Vector2 emouse = GetMousePosition();
+          int esw = GetScreenWidth(), esh = GetScreenHeight();
+          int iCardW = 200, iCardH = 80, iCardGap = 20;
+          int iTotalW = 3 * iCardW + 2 * iCardGap;
+          int iStartX = esw / 2 - iTotalW / 2;
+          int iCardY = esh / 2 - 20;
+          for (int io = 0; io < 3; io++) {
+            int ix = iStartX + io * (iCardW + iCardGap);
+            Rectangle iRect = {(float)ix, (float)iCardY, (float)iCardW, (float)iCardH};
+            if (CheckCollisionPointRec(emouse, iRect)) {
+              int iid = itemShopOffers[io];
+              if (iid >= 0 && iid < ITEM_COUNT && itemShopBuyCount < 1) {
+                const ItemDef *idef = &ITEM_DEFS[iid];
+                if (playerGold >= idef->cost && itemInventoryCount < MAX_ITEMS) {
+                  playerGold -= idef->cost;
+                  for (int ii = 0; ii < MAX_ITEMS; ii++) {
+                    if (itemInventory[ii] == ITEM_NONE) {
+                      itemInventory[ii] = iid;
+                      itemInventoryCount++;
+                      break;
+                    }
+                  }
+                  itemShopOffers[io] = ITEM_NONE;
+                  itemShopBuyCount++;
+                }
+              }
+              break;
+            }
+          }
+          // Continue button
+          int contW = 180, contH = 40;
+          int contX = esw / 2 - contW / 2;
+          int contY = iCardY + iCardH + 30;
+          Rectangle contRect = {(float)contX, (float)contY, (float)contW, (float)contH};
+          if (CheckCollisionPointRec(emouse, contRect)) {
+            showingItemShop = false;
+            itemShopGenerated = false;
+            SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
           }
         }
       } else if (!showEscMenu && !showHelp) {
@@ -2926,6 +2901,7 @@ int main(int argc, char *argv[]) {
             RollShop(shopSlots, &playerGold, 0, currentRound);
             rollCost = rollCostBase;
             phase = PHASE_PREP;
+            if (pendingIntro.active) { intro = pendingIntro; pendingIntro.active = false; }
           } break;
           case NODE_ELITE: {
             // Elite fight: enemies are rare/legendary
@@ -2950,6 +2926,7 @@ int main(int argc, char *argv[]) {
             RollShop(shopSlots, &playerGold, 0, currentRound);
             rollCost = rollCostBase;
             phase = PHASE_PREP;
+            if (pendingIntro.active) { intro = pendingIntro; pendingIntro.active = false; }
           } break;
           case NODE_BOSS: {
             // Boss wave — spawn a big boss + normal enemies
@@ -2986,13 +2963,10 @@ int main(int argc, char *argv[]) {
             RollShop(shopSlots, &playerGold, 0, currentRound);
             rollCost = rollCostBase;
             phase = PHASE_PREP;
+            if (pendingIntro.active) { intro = pendingIntro; pendingIntro.active = false; }
           } break;
           case NODE_SHOP: {
-            // Shop: go to prep with no enemies + item shop
-            RollShop(shopSlots, &playerGold, 0, currentRound);
-            rollCost = rollCostBase;
-            waveUpgradeText[0] = '\0';
-            // Generate 3 random item offers
+            // Shop: show item shop overlay on map
             {
               uint32_t iseed = actMap.seed + (uint32_t)actMap.currentNode * 97;
               for (int io = 0; io < 3; io++) {
@@ -3016,7 +2990,7 @@ int main(int argc, char *argv[]) {
               itemShopGenerated = true;
               itemShopBuyCount = 0;
             }
-            phase = PHASE_PREP;
+            showingItemShop = true;
           } break;
           case NODE_REST: {
             // Heal all units by 30% max HP
@@ -3034,7 +3008,7 @@ int main(int argc, char *argv[]) {
           } break;
           case NODE_EVENT: {
             // Show event screen
-            currentMapEvent = GetRandomEvent(
+            currentEventIndex = GetRandomEventIndex(
                 (uint32_t)(actMap.seed + actMap.currentNode * 31));
             showingMapEvent = true;
             mapEventChoice = -1;
@@ -3410,14 +3384,6 @@ int main(int argc, char *argv[]) {
                 clickedButton = true;
               }
             }
-          } else if (mapActive && mapSelectedNodeType == NODE_SHOP) {
-            // Shop node: "DONE" returns to map
-            SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
-            ClearRedUnits(units, &unitCount);
-            itemShopGenerated = false;
-            ScrollMapToLayer(actMap.currentLayer);
-            phase = PHASE_MAP;
-            clickedButton = true;
           } else {
             // Solo: check both teams have units, start combat
             int ba, ra;
@@ -3440,10 +3406,13 @@ int main(int argc, char *argv[]) {
               combatElapsedTime = 0.0f;
               combatAccum = 0.0f;
               ClearAllModifiers(modifiers);
-              // Apply item effects for blue units
+              // Apply item modifier effects for blue units (stat mults already applied during prep)
               for (int ji = 0; ji < unitCount; ji++) {
-                if (units[ji].active && units[ji].team == TEAM_BLUE)
-                  ApplyItemEffects(&units[ji], ji, modifiers);
+                if (units[ji].active && units[ji].team == TEAM_BLUE) {
+                  int iid = units[ji].itemId;
+                  if (iid >= 0 && iid < ITEM_COUNT && ITEM_DEFS[iid].effectType == IEFF_MODIFIER)
+                    ApplyItemEffects(&units[ji], ji, modifiers);
+                }
               }
               ClearAllProjectiles(projectiles);
               ClearAllParticles(particles);
@@ -7139,7 +7108,7 @@ int main(int argc, char *argv[]) {
           MOD_STUN,         MOD_SPELL_PROTECT, MOD_CRAGGY_ARMOR, MOD_STONE_GAZE,
           MOD_INVULNERABLE, MOD_LIFESTEAL,     MOD_ARMOR,        MOD_DIG_HEAL,
           MOD_SPEED_MULT,   MOD_SHIELD,        MOD_MAELSTROM,    MOD_VLAD_AURA,
-          MOD_CHARGING,
+          MOD_CHARGING,     MOD_POISON,        MOD_FERVOR,
       };
       const Color ringColors[] = {
           {255, 255, 0, 255},   // STUN - yellow
@@ -7155,6 +7124,8 @@ int main(int argc, char *argv[]) {
           {255, 230, 50, 255},  // MAELSTROM - yellow lightning
           {180, 30, 30, 255},   // VLAD_AURA - dark red
           {255, 140, 0, 255},   // CHARGING - orange
+          {40, 200, 40, 255},   // POISON - green
+          {255, 140, 40, 255},  // FERVOR - orange
       };
       const int ringOrderCount = sizeof(ringOrder) / sizeof(ringOrder[0]);
 
@@ -7628,6 +7599,19 @@ int main(int argc, char *argv[]) {
             shieldW = bx + bw - shieldX;
           DrawRectangle(shieldX, by, shieldW, bh, (Color){80, 160, 255, 200});
         }
+        // Poison bar (green overlay) showing pending poison damage
+        {
+          float poisonDPS = GetModifierValue(modifiers, i, MOD_POISON);
+          if (poisonDPS > 0) {
+            float poisonPreview = poisonDPS * 2.0f; // 2s of damage
+            float poisonRatio = poisonPreview / maxHP;
+            if (poisonRatio > hpRatio) poisonRatio = hpRatio;
+            int poisonW = (int)(bw * poisonRatio);
+            int poisonX = bx + fillW - poisonW;
+            if (poisonW > 0)
+              DrawRectangle(poisonX, by, poisonW, bh, (Color){40, 180, 40, 120});
+          }
+        }
         // HP separator notches — only show when bar is wide enough to look good
         {
           float notchHP = (maxHP > 100.0f) ? 50.0f : 25.0f;
@@ -7791,6 +7775,15 @@ int main(int argc, char *argv[]) {
           modLabel = "CDR";
           modColor = (Color){180, 120, 255, 255};
           break;
+        case MOD_POISON:
+          modLabel = "POISON";
+          modColor = (Color){40, 200, 40, 255};
+          break;
+        case MOD_FERVOR: {
+          int fvStacks = (int)modifiers[m].value;
+          modLabel = TextFormat("FERVOR x%d", fvStacks);
+          modColor = (Color){255, 140, 40, 255};
+        } break;
         }
         if (modLabel) {
           int totalLen = (int)strlen(modLabel);
@@ -8065,10 +8058,9 @@ int main(int argc, char *argv[]) {
                               (float)playBtnW, (float)playBtnH};
         int ba, ra;
         CountTeams(units, unitCount, &ba, &ra);
-        bool isShopNode = (mapActive && mapSelectedNodeType == NODE_SHOP);
         bool canPlay = isMultiplayer
                            ? (ba > 0)
-                           : (isShopNode ? (ba > 0) : (ba > 0 && ra > 0));
+                           : (ba > 0 && ra > 0);
         bool alreadyReady = isMultiplayer && playerReady;
         Color pc;
         if (alreadyReady)
@@ -8089,8 +8081,6 @@ int main(int argc, char *argv[]) {
             pt = waitingForOpponent ? "WAITING FOR OPPONENT..." : "I'M READY!";
           else
             pt = TextFormat("I'M READY - Round %d", currentRound + 1);
-        } else if (isShopNode) {
-          pt = "DONE - Return to Map";
         } else {
           pt = TextFormat("PLAY Round %d", currentRound + 1);
         }
@@ -8151,7 +8141,7 @@ int main(int argc, char *argv[]) {
           int wuY = roundY + roundSz + S(6);
           bool isBoss = (currentRound == 4);
           Color wuColor =
-              isBoss ? (Color){255, 80, 80, 240} : (Color){255, 200, 100, 220};
+              isBoss ? (Color){255, 255, 255, 240} : (Color){255, 255, 255, 220};
           DrawRectangle(wuX - S(8), wuY - S(2), wuW + S(16), wuSz + S(4),
                         (Color){20, 20, 30, 180});
           GameDrawText(waveUpgradeText, wuX, wuY, wuSz, wuColor);
@@ -8936,7 +8926,9 @@ int main(int argc, char *argv[]) {
               if (phase == PHASE_PREP && itemDrag.dragging && iSlotHover &&
                   IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
                 int oldItem = units[ui].itemId;
+                UnapplyItemStatMults(&units[ui]); // unapply old item
                 units[ui].itemId = itemDrag.itemId;
+                ApplyItemStatMults(&units[ui]); // apply new item
                 if (itemDrag.sourceType == 0 && itemDrag.sourceIndex >= 0 &&
                     itemDrag.sourceIndex < MAX_ITEMS) {
                   itemInventory[itemDrag.sourceIndex] = oldItem;
@@ -8948,6 +8940,7 @@ int main(int argc, char *argv[]) {
                        IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
                        !itemDrag.dragging) {
                 int unequipId = units[ui].itemId;
+                UnapplyItemStatMults(&units[ui]); // unapply before removing
                 units[ui].itemId = ITEM_NONE;
                 for (int ii = 0; ii < MAX_ITEMS; ii++) {
                   if (itemInventory[ii] == ITEM_NONE) {
@@ -8972,6 +8965,7 @@ int main(int argc, char *argv[]) {
               if (phase == PHASE_PREP && itemDrag.dragging && iSlotHover &&
                   IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
                 units[ui].itemId = itemDrag.itemId;
+                ApplyItemStatMults(&units[ui]); // apply new item stats
                 // Remove from source
                 if (itemDrag.sourceType == 0 && itemDrag.sourceIndex >= 0 &&
                     itemDrag.sourceIndex < MAX_ITEMS) {
@@ -9448,90 +9442,11 @@ int main(int argc, char *argv[]) {
           int lhY = shopY + shopCardH + S(14);
           float lhPulse = 0.5f + 0.5f * sinf((float)GetTime() * 3.0f);
           unsigned char lhAlpha = (unsigned char)(120 + (int)(lhPulse * 100));
-          DrawRectangle(lhX - S(4), lhY - 1, lhW + S(8), lhSz + 2,
-                       (Color){20, 20, 30, (unsigned char)(lhAlpha / 2)});
-          GameDrawText(lhint, lhX, lhY, lhSz, (Color){0, 200, 200, lhAlpha});
-        }
-
-        // Item shop (only on shop nodes)
-        if (mapActive && mapSelectedNodeType == NODE_SHOP &&
-            itemShopGenerated) {
-          int iShopY = shopY - S(60);
-          const char *iTitle = "ITEM SHOP";
-          int itw = GameMeasureText(iTitle, S(14));
-          GameDrawText(iTitle, (hudSw - itw) / 2, iShopY, S(14),
-                       (Color){255, 210, 60, 255});
-          // Subtitle: buy limit
-          const char *iSub =
-              (itemShopBuyCount >= 1) ? "SOLD OUT" : "Pick 1 item";
-          int isw = GameMeasureText(iSub, S(10));
-          GameDrawText(iSub, (hudSw - isw) / 2, iShopY + S(16), S(10),
-                       (itemShopBuyCount >= 1) ? (Color){120, 80, 80, 200}
-                                               : (Color){180, 180, 200, 200});
-          int iCardW = S(140), iCardH = S(42), iCardGap = S(10);
-          int iTotalW = 3 * iCardW + 2 * iCardGap;
-          int iStartX = (hudSw - iTotalW) / 2;
-          int iCardY = iShopY + S(18);
-          for (int io = 0; io < 3; io++) {
-            int ix = iStartX + io * (iCardW + iCardGap);
-            int iid = itemShopOffers[io];
-            if (iid < 0 || iid >= ITEM_COUNT) {
-              DrawRectangle(ix, iCardY, iCardW, iCardH,
-                            (Color){35, 35, 45, 255});
-              DrawRectangleLines(ix, iCardY, iCardW, iCardH,
-                                 (Color){60, 60, 80, 255});
-              int soldFsz = S(14);
-              GameDrawText("SOLD",
-                           ix + (iCardW - GameMeasureText("SOLD", soldFsz)) / 2,
-                           iCardY + (iCardH - soldFsz) / 2, soldFsz,
-                           (Color){60, 60, 80, 255});
-              continue;
-            }
-            const ItemDef *idef = &ITEM_DEFS[iid];
-            bool canBuy =
-                (playerGold >= idef->cost && itemInventoryCount < MAX_ITEMS &&
-                 itemShopBuyCount < 1);
-            Color icBg = canBuy ? idef->color : (Color){50, 50, 65, 255};
-            Rectangle iRect = {(float)ix, (float)iCardY, (float)iCardW,
-                               (float)iCardH};
-            bool iHover = CheckCollisionPointRec(GetMousePosition(), iRect);
-            if (canBuy && iHover)
-              icBg = (Color){(unsigned char)(icBg.r + 30),
-                             (unsigned char)(icBg.g + 30),
-                             (unsigned char)(icBg.b + 30), 255};
-            DrawRectangleRec(iRect, icBg);
-            DrawRectangleLinesEx(iRect, 1, (Color){90, 90, 110, 255});
-            // Item name + cost
-            int iFsz = S(12);
-            const char *iLabel = TextFormat("%s  %dg", idef->name, idef->cost);
-            int ilw = GameMeasureText(iLabel, iFsz);
-            if (canBuy)
-              GameDrawTextOnColor(iLabel, ix + (iCardW - ilw) / 2,
-                                  iCardY + S(4), iFsz, icBg);
-            else
-              GameDrawText(iLabel, ix + (iCardW - ilw) / 2, iCardY + S(4), iFsz,
-                           (Color){100, 100, 120, 255});
-            // Description
-            int dFsz = S(10);
-            const char *dLabel = idef->description;
-            int dlw = GameMeasureText(dLabel, dFsz);
-            GameDrawText(dLabel, ix + (iCardW - dlw) / 2, iCardY + S(18), dFsz,
-                         (Color){180, 180, 200, 220});
-            // Buy on click
-            if (iHover && canBuy && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-              playerGold -= idef->cost;
-              // Add to inventory
-              for (int ii = 0; ii < MAX_ITEMS; ii++) {
-                if (itemInventory[ii] == ITEM_NONE) {
-                  itemInventory[ii] = iid;
-                  itemInventoryCount++;
-                  break;
-                }
-              }
-              itemShopOffers[io] = ITEM_NONE;
-              itemShopBuyCount++;
-            }
-          }
+          DrawRectangle(lhX - S(6), lhY - S(2), lhW + S(12), lhSz + S(4),
+                       (Color){20, 20, 35, (unsigned char)(lhAlpha * 3 / 4)});
+          DrawRectangleLines(lhX - S(6), lhY - S(2), lhW + S(12), lhSz + S(4),
+                       (Color){255, 220, 100, (unsigned char)(lhAlpha / 2)});
+          GameDrawText(lhint, lhX, lhY, lhSz, (Color){255, 230, 120, lhAlpha});
         }
 
         // Gold display (right side)
@@ -10433,84 +10348,121 @@ int main(int argc, char *argv[]) {
     if (phase == PHASE_MAP) {
       DrawMap(&actMap);
 
-      // Event overlay
+      // Event overlay (data-driven from EVENT_DEFS)
       if (showingMapEvent) {
         int esw = GetScreenWidth(), esh = GetScreenHeight();
         DrawRectangle(0, 0, esw, esh, (Color){10, 10, 20, 220});
 
-        const char *eventTitle = "";
-        const char *eventDesc = "";
-        const char *choiceAText = "";
-        const char *choiceBText = "";
-
-        switch (currentMapEvent) {
-        case EVENT_FOUNTAIN:
-          eventTitle = "Mysterious Fountain";
-          eventDesc = "A glowing spring bubbles with restorative energy.";
-          choiceAText = "Heal all to full HP";
-          choiceBText = "Gain 10 gold";
-          break;
-        case EVENT_MERCHANT:
-          eventTitle = "Wandering Merchant";
-          eventDesc = "A cloaked figure offers rare goods.";
-          choiceAText = "Buy random ability (5g)";
-          choiceBText = "Skip";
-          break;
-        case EVENT_TRAINING:
-          eventTitle = "Training Grounds";
-          eventDesc = "An ancient arena pulses with power.";
-          choiceAText = "Unit gets +10% HP";
-          choiceBText = "Unit gets +10% DMG";
-          break;
-        case EVENT_ALTAR:
-          eventTitle = "Cursed Altar";
-          eventDesc = "Dark energy radiates from the stone.";
-          choiceAText = "Sacrifice 20% HP, gain 15g";
-          choiceBText = "Walk away";
-          break;
-        case EVENT_TOME:
-          eventTitle = "Ancient Tome";
-          eventDesc = "A dusty book hums with magical knowledge.";
-          choiceAText = "Learn random ability";
-          choiceBText = "Leave it alone";
-          break;
-        default:
-          break;
-        }
+        const EventDef *evt = &EVENT_DEFS[currentEventIndex];
 
         int titleSz = 28, descSz = 18;
-        int ttw = MeasureText(eventTitle, titleSz);
-        DrawText(eventTitle, esw / 2 - ttw / 2, esh / 2 - 100, titleSz, GOLD);
-        int dtw = MeasureText(eventDesc, descSz);
-        DrawText(eventDesc, esw / 2 - dtw / 2, esh / 2 - 60, descSz,
+        int ttw = MeasureText(evt->title, titleSz);
+        DrawText(evt->title, esw / 2 - ttw / 2, esh / 2 - 100, titleSz, GOLD);
+        int dtw = MeasureText(evt->description, descSz);
+        DrawText(evt->description, esw / 2 - dtw / 2, esh / 2 - 60, descSz,
                  (Color){200, 200, 220, 255});
 
         int btnW = 200, btnH = 50, btnGap = 20;
+        int totalBtnW = evt->choiceCount * btnW + (evt->choiceCount - 1) * btnGap;
+        int btnStartX = esw / 2 - totalBtnW / 2;
         int btnY = esh / 2 + 40;
 
-        // Choice A
-        Rectangle choiceARect = {(float)(esw / 2 - btnW - btnGap / 2),
-                                 (float)btnY, (float)btnW, (float)btnH};
-        Color caBg = (Color){50, 120, 180, 255};
-        if (CheckCollisionPointRec(GetMousePosition(), choiceARect))
-          caBg = (Color){70, 150, 220, 255};
-        DrawRectangleRec(choiceARect, caBg);
-        DrawRectangleLinesEx(choiceARect, 2, WHITE);
-        int caw = MeasureText(choiceAText, 14);
-        DrawText(choiceAText, (int)(choiceARect.x + btnW / 2 - caw / 2),
-                 btnY + 18, 14, WHITE);
+        Color btnColors[] = {
+          {50, 120, 180, 255}, {120, 80, 50, 255}, {80, 120, 80, 255}
+        };
+        Color btnHoverColors[] = {
+          {70, 150, 220, 255}, {160, 110, 70, 255}, {100, 160, 100, 255}
+        };
 
-        // Choice B
-        Rectangle choiceBRect = {(float)(esw / 2 + btnGap / 2), (float)btnY,
-                                 (float)btnW, (float)btnH};
-        Color cbBg = (Color){120, 80, 50, 255};
-        if (CheckCollisionPointRec(GetMousePosition(), choiceBRect))
-          cbBg = (Color){160, 110, 70, 255};
-        DrawRectangleRec(choiceBRect, cbBg);
-        DrawRectangleLinesEx(choiceBRect, 2, WHITE);
-        int cbw = MeasureText(choiceBText, 14);
-        DrawText(choiceBText, (int)(choiceBRect.x + btnW / 2 - cbw / 2),
-                 btnY + 18, 14, WHITE);
+        for (int c = 0; c < evt->choiceCount; c++) {
+          Rectangle btnRect = {(float)(btnStartX + c * (btnW + btnGap)),
+                               (float)btnY, (float)btnW, (float)btnH};
+          Color bg = btnColors[c % 3];
+          if (CheckCollisionPointRec(GetMousePosition(), btnRect))
+            bg = btnHoverColors[c % 3];
+          DrawRectangleRec(btnRect, bg);
+          DrawRectangleLinesEx(btnRect, 2, WHITE);
+
+          const char *label = evt->choices[c].label;
+          if (evt->choices[c].cost > 0)
+            label = TextFormat("%s (%dg)", evt->choices[c].label, evt->choices[c].cost);
+          int lw = MeasureText(label, 14);
+          DrawText(label, (int)(btnRect.x + (float)btnW / 2.0f - (float)lw / 2.0f),
+                   btnY + 18, 14, WHITE);
+        }
+      }
+
+      // Item shop overlay (on map)
+      if (showingItemShop && itemShopGenerated) {
+        int esw = GetScreenWidth(), esh = GetScreenHeight();
+        DrawRectangle(0, 0, esw, esh, (Color){10, 10, 20, 220});
+
+        const char *iTitle = "ITEM SHOP";
+        int itSz = 28;
+        int itw = MeasureText(iTitle, itSz);
+        DrawText(iTitle, esw / 2 - itw / 2, esh / 2 - 110, itSz, GOLD);
+
+        const char *iSub = (itemShopBuyCount >= 1) ? "SOLD OUT" : "Pick 1 item";
+        int isSz = 16;
+        int isw2 = MeasureText(iSub, isSz);
+        DrawText(iSub, esw / 2 - isw2 / 2, esh / 2 - 75, isSz,
+                 (itemShopBuyCount >= 1) ? (Color){120, 80, 80, 200}
+                                         : (Color){200, 200, 220, 200});
+
+        int iCardW = 200, iCardH = 80, iCardGap = 20;
+        int iTotalW = 3 * iCardW + 2 * iCardGap;
+        int iStartX = esw / 2 - iTotalW / 2;
+        int iCardY = esh / 2 - 20;
+
+        for (int io = 0; io < 3; io++) {
+          int ix = iStartX + io * (iCardW + iCardGap);
+          int iid = itemShopOffers[io];
+          if (iid < 0 || iid >= ITEM_COUNT) {
+            DrawRectangle(ix, iCardY, iCardW, iCardH, (Color){35, 35, 45, 255});
+            DrawRectangleLines(ix, iCardY, iCardW, iCardH, (Color){60, 60, 80, 255});
+            int soldFsz = 18;
+            int sw2 = MeasureText("SOLD", soldFsz);
+            DrawText("SOLD", ix + (iCardW - sw2) / 2,
+                     iCardY + (iCardH - soldFsz) / 2, soldFsz, (Color){60, 60, 80, 255});
+            continue;
+          }
+          const ItemDef *idef = &ITEM_DEFS[iid];
+          bool canBuy = (playerGold >= idef->cost && itemInventoryCount < MAX_ITEMS &&
+                         itemShopBuyCount < 1);
+          Color icBg = canBuy ? idef->color : (Color){50, 50, 65, 255};
+          Rectangle iRect = {(float)ix, (float)iCardY, (float)iCardW, (float)iCardH};
+          bool iHover = CheckCollisionPointRec(GetMousePosition(), iRect);
+          if (canBuy && iHover)
+            icBg = (Color){(unsigned char)(icBg.r + 30),
+                           (unsigned char)(icBg.g + 30),
+                           (unsigned char)(icBg.b + 30), 255};
+          DrawRectangleRec(iRect, icBg);
+          DrawRectangleLinesEx(iRect, 1, (Color){90, 90, 110, 255});
+
+          const char *iLabel = TextFormat("%s  %dg", idef->name, idef->cost);
+          int ilFsz = 16;
+          int ilw = MeasureText(iLabel, ilFsz);
+          DrawText(iLabel, ix + (iCardW - ilw) / 2, iCardY + 15, ilFsz,
+                   canBuy ? WHITE : (Color){100, 100, 120, 255});
+          int dFsz = 14;
+          int dlw = MeasureText(idef->description, dFsz);
+          DrawText(idef->description, ix + (iCardW - dlw) / 2, iCardY + 40, dFsz,
+                   (Color){180, 180, 200, 220});
+        }
+
+        // Continue button
+        int contW = 180, contH = 40;
+        int contX = esw / 2 - contW / 2;
+        int contY = iCardY + iCardH + 30;
+        Rectangle contRect = {(float)contX, (float)contY, (float)contW, (float)contH};
+        Color contBg = (Color){50, 120, 80, 255};
+        if (CheckCollisionPointRec(GetMousePosition(), contRect))
+          contBg = (Color){70, 160, 100, 255};
+        DrawRectangleRec(contRect, contBg);
+        DrawRectangleLinesEx(contRect, 2, WHITE);
+        const char *contTxt = "Continue";
+        int ctw = MeasureText(contTxt, 16);
+        DrawText(contTxt, contX + (contW - ctw) / 2, contY + 12, 16, WHITE);
       }
 
       // Gold display

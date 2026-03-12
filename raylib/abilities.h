@@ -28,6 +28,9 @@ typedef enum {
     ABILITY_PRIMAL_CHARGE,
     ABILITY_MULTICAST,
     ABILITY_SHARE_PAIN,
+    ABILITY_VENOM_STRIKE,
+    ABILITY_TOXIC_CLOUD,
+    ABILITY_FERVOR,
     ABILITY_COUNT,
 } AbilityId;
 
@@ -54,11 +57,13 @@ typedef enum {
     MOD_MULTICAST,       // value = 2x proc chance (0-1)
     MOD_SHARE_PAIN,      // value = share percentage (0-1)
     MOD_COOLDOWN_REDUCTION, // value = fraction of CD reduced (0.2 = 20% faster)
+    MOD_POISON,             // value = DPS (stacks additively)
+    MOD_FERVOR,             // value = current stack count
 } ModifierType;
 
 // Returns true for modifier types that stack (SUM) instead of dedup (MAX)
 static inline bool ModifierTypeStacks(ModifierType type) {
-    return type == MOD_LIFESTEAL;
+    return type == MOD_LIFESTEAL || type == MOD_POISON;
 }
 
 typedef enum {
@@ -150,6 +155,16 @@ typedef enum {
 #define AV_SPP_SHARE_PCT   0  // damage share percentage
 #define AV_SPP_RADIUS      1  // ally search radius
 #define AV_SPP_DURATION    2
+// -- Venom Strike
+#define AV_VS_POISON_DPS   0  // poison DPS applied on hit
+#define AV_VS_DURATION     1  // poison duration (refreshed each hit)
+// -- Toxic Cloud
+#define AV_TC_POISON_DPS   0  // poison DPS in cloud
+#define AV_TC_RADIUS       1  // cloud radius
+#define AV_TC_DURATION     2  // poison duration on affected units
+// -- Fervor
+#define AV_FV_SPEED_RED    0  // attack speed reduction per stack (fraction)
+#define AV_FV_MAX_STACKS   1  // maximum stacks
 
 typedef struct {
     const char *name;
@@ -524,6 +539,63 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
             { [AV_SPP_SHARE_PCT]=0.48f, [AV_SPP_RADIUS]=44.0f, [AV_SPP_DURATION]=9.0f },
             { [AV_SPP_SHARE_PCT]=0.55f, [AV_SPP_RADIUS]=50.0f, [AV_SPP_DURATION]=10.0f },
             { [AV_SPP_SHARE_PCT]=0.65f, [AV_SPP_RADIUS]=58.0f, [AV_SPP_DURATION]=11.0f },
+        },
+    },
+    [ABILITY_VENOM_STRIKE] = {
+        .name = "Venom Strike", .description = "Attacks apply poison DOT",
+        .abbrev = "VS", .color = { 40, 180, 40, 255 },
+        .targetType = TARGET_NONE, .isPassive = true, .goldCost = 3,
+        .range    = { 0 },
+        .cooldown = { 0 },
+        .values = {
+            { [AV_VS_POISON_DPS]=0.5f,  [AV_VS_DURATION]=4.0f },
+            { [AV_VS_POISON_DPS]=0.8f,  [AV_VS_DURATION]=4.0f },
+            { [AV_VS_POISON_DPS]=1.1f,  [AV_VS_DURATION]=4.0f },
+            { [AV_VS_POISON_DPS]=1.5f,  [AV_VS_DURATION]=4.0f },
+            { [AV_VS_POISON_DPS]=2.0f,  [AV_VS_DURATION]=4.0f },
+            { [AV_VS_POISON_DPS]=2.5f,  [AV_VS_DURATION]=4.0f },
+            { [AV_VS_POISON_DPS]=3.2f,  [AV_VS_DURATION]=4.0f },
+            { [AV_VS_POISON_DPS]=4.0f,  [AV_VS_DURATION]=4.0f },
+            { [AV_VS_POISON_DPS]=5.0f,  [AV_VS_DURATION]=4.0f },
+            { [AV_VS_POISON_DPS]=6.5f,  [AV_VS_DURATION]=4.0f },
+        },
+    },
+    [ABILITY_TOXIC_CLOUD] = {
+        .name = "Toxic Cloud", .description = "AoE poison cloud around caster",
+        .abbrev = "TC", .color = { 80, 220, 40, 255 },
+        .targetType = TARGET_SELF_AOE, .isPassive = false, .goldCost = 4,
+        .range    = { 15.0f, 16.0f, 17.0f, 18.0f, 20.0f, 22.0f, 24.0f, 26.0f, 28.0f, 30.0f },
+        .cooldown = { 14.0f, 13.0f, 12.0f, 11.0f, 10.5f, 10.0f, 9.5f, 9.0f, 8.5f, 8.0f },
+        .values = {
+            { [AV_TC_POISON_DPS]=1.0f,  [AV_TC_RADIUS]=15.0f, [AV_TC_DURATION]=5.0f },
+            { [AV_TC_POISON_DPS]=1.5f,  [AV_TC_RADIUS]=16.0f, [AV_TC_DURATION]=5.0f },
+            { [AV_TC_POISON_DPS]=2.0f,  [AV_TC_RADIUS]=17.0f, [AV_TC_DURATION]=5.0f },
+            { [AV_TC_POISON_DPS]=2.8f,  [AV_TC_RADIUS]=18.0f, [AV_TC_DURATION]=5.0f },
+            { [AV_TC_POISON_DPS]=3.5f,  [AV_TC_RADIUS]=20.0f, [AV_TC_DURATION]=5.0f },
+            { [AV_TC_POISON_DPS]=4.5f,  [AV_TC_RADIUS]=22.0f, [AV_TC_DURATION]=5.0f },
+            { [AV_TC_POISON_DPS]=5.5f,  [AV_TC_RADIUS]=24.0f, [AV_TC_DURATION]=5.0f },
+            { [AV_TC_POISON_DPS]=7.0f,  [AV_TC_RADIUS]=26.0f, [AV_TC_DURATION]=5.0f },
+            { [AV_TC_POISON_DPS]=8.5f,  [AV_TC_RADIUS]=28.0f, [AV_TC_DURATION]=5.0f },
+            { [AV_TC_POISON_DPS]=10.0f, [AV_TC_RADIUS]=30.0f, [AV_TC_DURATION]=5.0f },
+        },
+    },
+    [ABILITY_FERVOR] = {
+        .name = "Fervor", .description = "Attack speed grows on same target",
+        .abbrev = "FV", .color = { 255, 140, 40, 255 },
+        .targetType = TARGET_NONE, .isPassive = true, .goldCost = 3,
+        .range    = { 0 },
+        .cooldown = { 0 },
+        .values = {
+            { [AV_FV_SPEED_RED]=0.05f, [AV_FV_MAX_STACKS]=5.0f },
+            { [AV_FV_SPEED_RED]=0.06f, [AV_FV_MAX_STACKS]=5.0f },
+            { [AV_FV_SPEED_RED]=0.07f, [AV_FV_MAX_STACKS]=6.0f },
+            { [AV_FV_SPEED_RED]=0.08f, [AV_FV_MAX_STACKS]=6.0f },
+            { [AV_FV_SPEED_RED]=0.09f, [AV_FV_MAX_STACKS]=7.0f },
+            { [AV_FV_SPEED_RED]=0.10f, [AV_FV_MAX_STACKS]=7.0f },
+            { [AV_FV_SPEED_RED]=0.11f, [AV_FV_MAX_STACKS]=8.0f },
+            { [AV_FV_SPEED_RED]=0.12f, [AV_FV_MAX_STACKS]=8.0f },
+            { [AV_FV_SPEED_RED]=0.13f, [AV_FV_MAX_STACKS]=9.0f },
+            { [AV_FV_SPEED_RED]=0.15f, [AV_FV_MAX_STACKS]=10.0f },
         },
     },
 };

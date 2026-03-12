@@ -66,6 +66,7 @@ bool SpawnUnit(Unit units[], int *unitCount, int typeIndex, Team team) {
       .shieldHP = 0.0f,
       .abilityCastDelay = 0.0f,
       .chargeTarget = -1,
+      .lastAttackTarget = -1,
       .itemId = -1,
   };
   for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
@@ -188,6 +189,7 @@ void RestoreSnapshot(Unit units[], int *unitCount, UnitSnapshot snaps[],
         .shieldHP = 0.0f,
         .abilityCastDelay = 0.0f,
         .chargeTarget = -1,
+        .lastAttackTarget = -1,
     };
     for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)
       units[i].abilities[a] = snaps[i].abilities[a];
@@ -836,8 +838,8 @@ static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
              {.unitType = -1,
               .numAbilities = 1,
               .abilityLevel = 0,
-              .hpMult = 1.1f,
-              .dmgMult = 1.0f,
+              .hpMult = 0.85f,
+              .dmgMult = 0.75f,
               .scaleMult = 1.0f},
          }},
     // Round 2: 2 enemies, 1 ability each
@@ -847,14 +849,14 @@ static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
              {.unitType = 0,
               .numAbilities = 1,
               .abilityLevel = 0,
-              .hpMult = 1.15f,
-              .dmgMult = 1.05f,
+              .hpMult = 0.90f,
+              .dmgMult = 0.80f,
               .scaleMult = 1.0f},
              {.unitType = 1,
               .numAbilities = 1,
               .abilityLevel = 0,
-              .hpMult = 1.15f,
-              .dmgMult = 1.05f,
+              .hpMult = 0.90f,
+              .dmgMult = 0.80f,
               .scaleMult = 1.0f},
          }},
     // Round 3: 2 enemies, 2 abilities each
@@ -1080,6 +1082,48 @@ void ApplyItemEffects(Unit *unit, int unitIndex, Modifier modifiers[]) {
   }
 }
 
+void ApplyItemStatMults(Unit *unit) {
+  if (unit->itemId < 0 || unit->itemId >= ITEM_COUNT) return;
+  const ItemDef *item = &ITEM_DEFS[unit->itemId];
+  float hpPct = (UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier > 0)
+      ? unit->currentHealth / (UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier)
+      : 1.0f;
+  switch (item->effectType) {
+  case IEFF_HP_MULT:
+    unit->hpMultiplier *= item->effectValue;
+    unit->currentHealth = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier * hpPct;
+    break;
+  case IEFF_DMG_MULT:
+    unit->dmgMultiplier *= item->effectValue;
+    break;
+  case IEFF_SPEED_MULT:
+    unit->speedMultiplier *= item->effectValue;
+    break;
+  default: break;
+  }
+}
+
+void UnapplyItemStatMults(Unit *unit) {
+  if (unit->itemId < 0 || unit->itemId >= ITEM_COUNT) return;
+  const ItemDef *item = &ITEM_DEFS[unit->itemId];
+  float hpPct = (UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier > 0)
+      ? unit->currentHealth / (UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier)
+      : 1.0f;
+  switch (item->effectType) {
+  case IEFF_HP_MULT:
+    unit->hpMultiplier /= item->effectValue;
+    unit->currentHealth = UNIT_STATS[unit->typeIndex].health * unit->hpMultiplier * hpPct;
+    break;
+  case IEFF_DMG_MULT:
+    unit->dmgMultiplier /= item->effectValue;
+    break;
+  case IEFF_SPEED_MULT:
+    unit->speedMultiplier /= item->effectValue;
+    break;
+  default: break;
+  }
+}
+
 void SpawnMushling(Unit units[], int *unitCount, int parentIndex) {
   if (*unitCount >= MAX_UNITS)
     return;
@@ -1109,6 +1153,7 @@ void SpawnMushling(Unit units[], int *unitCount, int parentIndex) {
       .shieldHP = 0.0f,
       .abilityCastDelay = 0.0f,
       .chargeTarget = -1,
+      .lastAttackTarget = -1,
       .isMushling = true,
   };
   for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++)

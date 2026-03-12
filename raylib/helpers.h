@@ -119,6 +119,8 @@ void ApplyRarityBuffs(Unit units[], int unitCount);
 
 // Item effects
 void ApplyItemEffects(Unit *unit, int unitIndex, Modifier modifiers[]);
+void ApplyItemStatMults(Unit *unit);    // Apply HP/DMG/SPEED multipliers (prep-time)
+void UnapplyItemStatMults(Unit *unit);  // Reverse HP/DMG/SPEED multipliers (prep-time)
 
 // Mushroom synergy helpers
 void SpawnMushling(Unit units[], int *unitCount, int parentIndex);

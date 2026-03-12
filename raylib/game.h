@@ -226,6 +226,7 @@ typedef struct {
   bool isMushling; // spawned mushling (no further spawns)
   uint8_t rarity;  // 0=common, 1=rare, 2=legendary
   int itemId;      // equipped item (-1 = ITEM_NONE)
+  int lastAttackTarget; // Fervor: last melee target index (-1 = none)
 } Unit;
 
 //------------------------------------------------------------------------------------

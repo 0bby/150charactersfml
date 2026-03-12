@@ -136,6 +136,12 @@ int CombatTick(Unit units[], int *unitCountPtr,
             units[ui].currentHealth += modifiers[m].value * dt;
             if (units[ui].currentHealth > maxHP) units[ui].currentHealth = maxHP;
         }
+        // Poison DOT — bypasses armor/shield
+        if (modifiers[m].type == MOD_POISON && units[ui].active) {
+            float poisonDmg = modifiers[m].value * dt;
+            units[ui].currentHealth -= poisonDmg;
+            if (units[ui].currentHealth <= 0) units[ui].active = false;
+        }
     }
 
     // === STEP 1b: Tick fissures ===
@@ -290,6 +296,12 @@ int CombatTick(Unit units[], int *unitCountPtr,
                         float healPerSec = unitMaxHP / healDur;
                         AddModifier(modifiers, i, MOD_INVULNERABLE, healDur, 0);
                         AddModifier(modifiers, i, MOD_DIG_HEAL, healDur, healPerSec);
+                    }
+                } else if (slot->abilityId == ABILITY_FERVOR) {
+                    // Apply fervor modifier once (long duration, starts at 0 stacks)
+                    if (!slot->triggered) {
+                        slot->triggered = true;
+                        AddModifier(modifiers, i, MOD_FERVOR, 99999.0f, 0.0f);
                     }
                 } else if (slot->abilityId == ABILITY_SUNDER) {
                     if (slot->triggered || slot->cooldownRemaining > 0) continue;
@@ -608,6 +620,23 @@ int CombatTick(Unit units[], int *unitCountPtr,
                 slot->cooldownRemaining = spDef->cooldown[slot->level];
                 castThisFrame = true;
             } break;
+            case ABILITY_TOXIC_CLOUD: {
+                const AbilityDef *tcDef = &ABILITY_DEFS[ABILITY_TOXIC_CLOUD];
+                float radius = tcDef->values[slot->level][AV_TC_RADIUS];
+                float poisonDPS = tcDef->values[slot->level][AV_TC_POISON_DPS];
+                float poisonDur = tcDef->values[slot->level][AV_TC_DURATION];
+                bool hitAny = false;
+                for (int j = 0; j < unitCount; j++) {
+                    if (!units[j].active || units[j].team == units[i].team) continue;
+                    if (DistXZ(units[i].position, units[j].position) <= radius) {
+                        AddModifier(modifiers, j, MOD_POISON, poisonDur, poisonDPS);
+                        hitAny = true;
+                    }
+                }
+                if (!hitAny) break;
+                slot->cooldownRemaining = tcDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
             default: break;
             }
             if (castThisFrame) {
@@ -837,8 +866,60 @@ int CombatTick(Unit units[], int *unitCountPtr,
                                 mlDef->values[mlLvl][AV_ML_BOUNCE_RANGE]);
                         }
                     }
+                    // Venom Strike on-hit: apply/refresh poison on target
+                    {
+                        int vsLvl = GetUnitAbilityLevel(units, i, ABILITY_VENOM_STRIKE);
+                        if (vsLvl >= 0 && dmg > 0) {
+                            float poisonDPS = ABILITY_DEFS[ABILITY_VENOM_STRIKE].values[vsLvl][AV_VS_POISON_DPS];
+                            float poisonDur = ABILITY_DEFS[ABILITY_VENOM_STRIKE].values[vsLvl][AV_VS_DURATION];
+                            AddModifier(modifiers, target, MOD_POISON, poisonDur, poisonDPS);
+                        }
+                    }
+                    // Fervor: track same-target attacks for attack speed bonus
+                    {
+                        int fvLvl = GetUnitAbilityLevel(units, i, ABILITY_FERVOR);
+                        if (fvLvl >= 0) {
+                            int maxStacks = (int)ABILITY_DEFS[ABILITY_FERVOR].values[fvLvl][AV_FV_MAX_STACKS];
+                            if (units[i].lastAttackTarget == target) {
+                                // Same target: increment stacks
+                                for (int m = 0; m < MAX_MODIFIERS; m++) {
+                                    if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_FERVOR) {
+                                        float stacks = modifiers[m].value + 1.0f;
+                                        if (stacks > (float)maxStacks) stacks = (float)maxStacks;
+                                        modifiers[m].value = stacks;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                // New target: reset to 1
+                                for (int m = 0; m < MAX_MODIFIERS; m++) {
+                                    if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_FERVOR) {
+                                        modifiers[m].value = 1.0f;
+                                        break;
+                                    }
+                                }
+                            }
+                            units[i].lastAttackTarget = target;
+                        }
+                    }
                 }
-                units[i].attackCooldown = stats->attackSpeed;
+                // Fervor: modify attack cooldown based on stacks
+                {
+                    float fvStacks = GetModifierValue(modifiers, i, MOD_FERVOR);
+                    if (fvStacks > 0) {
+                        int fvLvl = GetUnitAbilityLevel(units, i, ABILITY_FERVOR);
+                        if (fvLvl >= 0) {
+                            float redPerStack = ABILITY_DEFS[ABILITY_FERVOR].values[fvLvl][AV_FV_SPEED_RED];
+                            float speedMlt = 1.0f - fvStacks * redPerStack;
+                            if (speedMlt < 0.3f) speedMlt = 0.3f;
+                            units[i].attackCooldown = stats->attackSpeed * speedMlt;
+                        } else {
+                            units[i].attackCooldown = stats->attackSpeed;
+                        }
+                    } else {
+                        units[i].attackCooldown = stats->attackSpeed;
+                    }
+                }
                 } // end else (non-devil melee)
             }
         }

@@ -19,7 +19,8 @@
       "Bash(wc:*)",
       "Bash(mv:*)",
       "Bash(export:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(find:*)"
     ]
   }
 }

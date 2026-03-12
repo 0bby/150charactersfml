@@ -188,6 +188,7 @@ int deserialize_units(const NetUnit in[], int inCount, Unit units[], int maxUnit
             .shieldHP = 0.0f,
             .abilityCastDelay = 0.0f,
             .chargeTarget = -1,
+            .lastAttackTarget = -1,
         };
         for (int a = 0; a < 4; a++) {
             units[count].abilities[a] = (AbilitySlot){
