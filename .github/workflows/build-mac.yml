@@ -1,0 +1,51 @@
+name: Build macOS
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.7)'
+        required: true
+
+env:
+  TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+
+permissions:
+  contents: write
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install raylib
+        run: brew install raylib pkg-config
+
+      - name: Build game
+        run: make game
+
+      - name: Assemble export
+        run: |
+          mkdir -p export/mac
+          cp raylib/game export/mac/
+          cp deps/eos-sdk/Bin/libEOSSDK-Mac-Shipping.dylib export/mac/
+          for dir in assets fonts resources sfx music; do
+            [ -d "raylib/$dir" ] && cp -r "raylib/$dir" export/mac/
+          done
+          for f in raylib/env_layout.txt raylib/leaderboard.dat raylib/leaderboard.json; do
+            [ -f "$f" ] && cp "$f" export/mac/
+          done
+          cp raylib/*.obj raylib/*.mtl export/mac/ 2>/dev/null || true
+
+      - name: Zip
+        run: cd export && zip -qr ../relic-rivals-${TAG}-mac.zip mac/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: relic-rivals-${{ env.TAG }}-mac.zip
