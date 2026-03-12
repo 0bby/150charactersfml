@@ -20,7 +20,8 @@
       "Bash(mv:*)",
       "Bash(export:*)",
       "Bash(ls:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "WebSearch"
     ]
   }
 }

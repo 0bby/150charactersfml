@@ -53,7 +53,7 @@ GAME_NAME = relic-rivals
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 # --- Targets ---
-.PHONY: all game clean clean-game clean-deps run export release deps
+.PHONY: all game clean clean-game clean-deps run export export-mac release deps
 
 all: game
 
@@ -103,6 +103,26 @@ endif
 	done
 	@echo "=== Linux Export complete: export/linux/game ==="
 
+export-mac:
+	@echo "=== Building macOS ==="
+	$(MAKE) clean-game
+	$(MAKE) game
+	@echo "=== Assembling macOS export ==="
+	@mkdir -p export/mac
+	@cp $(GAME_TARGET) export/mac/
+ifneq ($(USE_EOS),0)
+	@cp $(EOS_SDK)/Bin/libEOSSDK-Mac-Shipping.dylib export/mac/
+endif
+	@for dir in $(GAME_ASSET_DIRS); do \
+		if [ -d "$(GAME_DIR)/$$dir" ]; then \
+			cp -r "$(GAME_DIR)/$$dir" export/mac/; \
+		fi; \
+	done
+	@for f in $(GAME_ASSETS); do \
+		[ -f "$$f" ] && cp "$$f" export/mac/ || true; \
+	done
+	@echo "=== macOS Export complete: export/mac/game ==="
+
 export-windows:
 	@echo "=== Building Windows ==="
 	$(MAKE) -f Makefile.win USE_EOS=1
@@ -129,7 +149,7 @@ release: export
 	gh release create $(VERSION) \
 		$(GAME_NAME)-$(VERSION)-windows.zip \
 		--title "$(GAME_NAME) $(VERSION)" \
-		--notes "Windows build"
+		$(if $(NOTES),--notes "$(NOTES)",--notes "")
 	@rm -f $(GAME_NAME)-$(VERSION)-windows.zip
 	@echo "=== Released $(VERSION) ==="
 else
@@ -144,7 +164,7 @@ release: export
 		$(GAME_NAME)-$(VERSION)-linux.zip \
 		$(GAME_NAME)-$(VERSION)-windows.zip \
 		--title "$(GAME_NAME) $(VERSION)" \
-		--notes "Linux and Windows builds"
+		$(if $(NOTES),--notes "$(NOTES)",--notes "")
 	@rm -f $(GAME_NAME)-$(VERSION)-linux.zip $(GAME_NAME)-$(VERSION)-windows.zip
 	@echo "=== Released $(VERSION) ==="
 endif
