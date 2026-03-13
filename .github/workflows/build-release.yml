@@ -19,13 +19,12 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libgl-dev
+          sudo apt-get install -y build-essential libgl-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 
       - name: Build static raylib + game
         run: make export-linux
@@ -43,27 +42,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
 
-      - name: Build static raylib
-        run: make deps-mac
-
-      - name: Build game
-        run: make STATIC_RAYLIB=1 game
-
-      - name: Assemble export
-        run: |
-          mkdir -p export/mac
-          cp raylib/game export/mac/
-          cp deps/eos-sdk/Bin/libEOSSDK-Mac-Shipping.dylib export/mac/
-          for dir in assets fonts resources sfx music; do
-            [ -d "raylib/$dir" ] && cp -r "raylib/$dir" export/mac/
-          done
-          for f in raylib/env_layout.txt raylib/leaderboard.dat raylib/leaderboard.json; do
-            [ -f "$f" ] && cp "$f" export/mac/
-          done
-          cp raylib/*.obj raylib/*.mtl export/mac/ 2>/dev/null || true
+      - name: Build static raylib + game
+        run: make export-mac
 
       - name: Zip
         run: cd export && zip -qr ../relic-rivals-${TAG}-mac.zip mac/
