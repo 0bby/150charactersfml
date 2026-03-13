@@ -248,8 +248,8 @@ void ScrollMapToLayer(int layer) {
   // In DrawMap, layer L is drawn at: baseY - scrollY +
   // (MAP_LAYERS-1-L)*layerSpacing We want that Y position at roughly 60% down
   // the screen (so you see layers above).
-  float baseY = 60.0f;
-  float layerSpacing = 80.0f;
+  float baseY = 80.0f;
+  float layerSpacing = 140.0f;
   float screenH = (float)GetScreenHeight();
   float layerDrawPos = (float)(MAP_LAYERS - 1 - layer) * layerSpacing;
   // desiredScroll: baseY - scroll + layerDrawPos = screenH * 0.6
@@ -272,10 +272,10 @@ int UpdateMap(ActMap *map) {
   // Mouse wheel scroll
   float wheel = GetMouseWheelMove();
   if (wheel != 0) {
-    mapScrollTarget -= wheel * 60.0f;
+    mapScrollTarget -= wheel * 100.0f;
     if (mapScrollTarget < 0)
       mapScrollTarget = 0;
-    float maxScroll = (MAP_LAYERS - 1) * 80.0f;
+    float maxScroll = (MAP_LAYERS - 1) * 140.0f;
     if (mapScrollTarget > maxScroll)
       mapScrollTarget = maxScroll;
   }
@@ -290,7 +290,7 @@ int UpdateMap(ActMap *map) {
       continue;
     float nx = map->nodes[i].x;
     float ny = map->nodes[i].y;
-    float radius = 18.0f;
+    float radius = 28.0f;
     if (CheckCollisionPointCircle(mouse, (Vector2){nx, ny}, radius)) {
       // Select this node
       map->nodes[i].visited = true;
@@ -311,7 +311,7 @@ int UpdateMap(ActMap *map) {
 
       // Auto-scroll to show available nodes
       if (map->nodes[i].layer < MAP_LAYERS - 1) {
-        float targetLayerY = (float)(map->nodes[i].layer + 1) * 80.0f;
+        float targetLayerY = (float)(map->nodes[i].layer + 1) * 140.0f;
         float screenH = (float)GetScreenHeight();
         float desiredScroll = targetLayerY - screenH * 0.6f;
         if (desiredScroll < 0)
@@ -334,11 +334,11 @@ void DrawMap(ActMap *map) {
 
   // Title
   const char *title = TextFormat("ACT %d", map->act);
-  int tw = MeasureText(title, 30);
-  DrawText(title, sw / 2 - tw / 2, 15, 30, (Color){200, 180, 120, 255});
+  int tw = MeasureText(title, 36);
+  DrawText(title, sw / 2 - tw / 2, 15, 36, (Color){200, 180, 120, 255});
 
-  float baseY = 60.0f; // top padding
-  float layerSpacing = 80.0f;
+  float baseY = 80.0f; // top padding
+  float layerSpacing = 140.0f;
   float offsetY = baseY - mapScrollY;
 
   // Compute node positions
@@ -346,12 +346,12 @@ void DrawMap(ActMap *map) {
     int count = map->nodesPerLayer[L];
     float layerY = offsetY + (float)(MAP_LAYERS - 1 - L) *
                                  layerSpacing; // bottom=layer 0, top=boss
-    float totalWidth = (float)(count - 1) * 100.0f;
+    float totalWidth = (float)(count - 1) * 180.0f;
     float startX = (float)sw / 2.0f - totalWidth / 2.0f;
 
     for (int c = 0; c < count; c++) {
       int ni = map->layerOffset[L] + c;
-      map->nodes[ni].x = startX + (float)c * 100.0f;
+      map->nodes[ni].x = startX + (float)c * 180.0f;
       map->nodes[ni].y = layerY;
     }
   }
@@ -387,7 +387,7 @@ void DrawMap(ActMap *map) {
                   3 * u * f * f * p2.x + f * f * f * p3.x;
         float y = u * u * u * p0.y + 3 * u * u * f * p1.y +
                   3 * u * f * f * p2.y + f * f * f * p3.y;
-        DrawLineEx(prev, (Vector2){x, y}, 2.0f, lineColor);
+        DrawLineEx(prev, (Vector2){x, y}, 2.5f, lineColor);
         prev = (Vector2){x, y};
       }
     }
@@ -401,7 +401,7 @@ void DrawMap(ActMap *map) {
     MapNode *node = &map->nodes[i];
     float nx = node->x;
     float ny = node->y;
-    float radius = 16.0f;
+    float radius = 24.0f;
 
     // Skip offscreen nodes
     if (ny < -30 || ny > sh + 30)
@@ -422,7 +422,7 @@ void DrawMap(ActMap *map) {
       bg.r = (unsigned char)((float)bg.r * pulse);
       bg.g = (unsigned char)((float)bg.g * pulse);
       bg.b = (unsigned char)((float)bg.b * pulse);
-      radius = 18.0f;
+      radius = 28.0f;
     } else {
       // Dark / locked
       bg.r /= 2;
@@ -459,13 +459,13 @@ void DrawMap(ActMap *map) {
       label = "?";
       break;
     }
-    int lw = MeasureText(label, 16);
-    DrawText(label, (int)(nx - lw / 2), (int)(ny - 8), 16, WHITE);
+    int lw = MeasureText(label, 22);
+    DrawText(label, (int)(nx - lw / 2), (int)(ny - 11), 22, WHITE);
 
     // Current position marker
     if (i == map->currentNode) {
-      DrawCircleLinesV((Vector2){nx, ny}, radius + 4, GOLD);
-      DrawCircleLinesV((Vector2){nx, ny}, radius + 5, GOLD);
+      DrawCircleLinesV((Vector2){nx, ny}, radius + 6, GOLD);
+      DrawCircleLinesV((Vector2){nx, ny}, radius + 7, GOLD);
     }
 
     // Hover detection

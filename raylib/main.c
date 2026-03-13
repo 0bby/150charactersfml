@@ -121,6 +121,13 @@ int main(int argc, char *argv[]) {
   InitWindow(1280, 720, "Relic Rivals");
   SetExitKey(0); // Disable default ESC-to-close — we handle ESC ourselves
   SetWindowMinSize(640, 360);
+  {
+    Image icon = LoadImage("assets/ui/game_icon/game_icon.png");
+    if (icon.data) {
+      SetWindowIcon(icon);
+      UnloadImage(icon);
+    }
+  }
   InitAudioDevice();
 
   // Load font at large size — bilinear filter handles downscaling
@@ -861,6 +868,7 @@ int main(int argc, char *argv[]) {
   Fissure fissures[MAX_FISSURES] = {0};
   UnitIntro intro = {.active = false, .timer = 0.0f};
   UnitIntro pendingIntro = {.active = false}; // deferred intro (shown after map pick)
+  float postIntroDelay = 0.0f; // pause after intro before enemies flee
   StatueSpawn statueSpawn = {.phase = SSPAWN_INACTIVE};
   int hoverAbilityId = -1;
   int hoverAbilityLevel = 0;
@@ -1830,6 +1838,7 @@ int main(int argc, char *argv[]) {
       }
       if (intro.timer >= INTRO_DURATION) {
         intro.active = false;
+        if (lobbySelection.heroSelected) postIntroDelay = 1.5f;
         // Trigger statue spawn for blue units
         if (intro.unitIndex >= 0 && intro.unitIndex < unitCount &&
             units[intro.unitIndex].active &&
@@ -1993,6 +2002,7 @@ int main(int argc, char *argv[]) {
     //------------------------------------------------------------------------------
     if (phase == PHASE_PLAZA) {
       // Update plaza sub-states
+      if (postIntroDelay > 0.0f) postIntroDelay -= dt;
       if (plazaState == PLAZA_ROAMING) {
         PlazaUpdateRoaming(units, unitCount, plazaData, dt);
       } else if (plazaState == PLAZA_SCARED) {
@@ -2103,7 +2113,7 @@ int main(int argc, char *argv[]) {
       // Auto-start: after hero selected + intro finished → trigger scared →
       // flee → prep
       if (lobbySelection.heroSelected && !intro.active &&
-          plazaState == PLAZA_ROAMING) {
+          postIntroDelay <= 0.0f && plazaState == PLAZA_ROAMING) {
         PlazaTriggerScared(units, unitCount, plazaData, &plazaState,
                            &plazaTimer);
       }
@@ -2962,8 +2972,8 @@ int main(int argc, char *argv[]) {
                   if (bossScale > 3.5f)
                     bossScale = 3.5f;
                   units[i].scaleOverride = bossScale;
-                  units[i].hpMultiplier *= actHpMult * 3.0f;
-                  units[i].dmgMultiplier *= actDmgMult * 1.3f;
+                  units[i].hpMultiplier *= actHpMult * 1.5f;
+                  units[i].dmgMultiplier *= actDmgMult * 1.1f;
                   units[i].rarity = RARITY_LEGENDARY;
                   ApplyUnitRarity(&units[i]);
                   bossAssigned = true;
@@ -3572,7 +3582,8 @@ int main(int argc, char *argv[]) {
         // --- Shop: ROLL button click ---
         if (!clickedButton && !(isMultiplayer && playerReady)) {
           int shopY = hudTop + 2;
-          Rectangle rollBtn = {20, (float)(shopY + 10), S(90), S(34)};
+          int shopH = S(HUD_SHOP_HEIGHT_BASE) - 2;
+          Rectangle rollBtn = {20, (float)(shopY + (shopH - S(34)) / 2), S(90), S(34)};
           if (CheckCollisionPointRec(mouse, rollBtn) &&
               playerGold >= rollCost) {
             PlaySound(sfxUiReroll);
@@ -3594,13 +3605,14 @@ int main(int argc, char *argv[]) {
         // --- Shop: Buy ability card click ---
         if (!clickedButton && !(isMultiplayer && playerReady)) {
           int shopY = hudTop + 2;
+          int shopH = S(HUD_SHOP_HEIGHT_BASE) - 2;
           int shopCardW = S(160), shopCardH = S(38), shopCardGap = 10;
           int totalShopW =
               MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
           int shopCardsX = (sw - totalShopW) / 2;
           for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
             int scx = shopCardsX + s * (shopCardW + shopCardGap);
-            Rectangle r = {(float)scx, (float)(shopY + 8), (float)shopCardW,
+            Rectangle r = {(float)scx, (float)(shopY + (shopH - shopCardH) / 2), (float)shopCardW,
                            (float)shopCardH};
             if (CheckCollisionPointRec(mouse, r) &&
                 shopSlots[s].abilityId >= 0) {
@@ -3947,13 +3959,14 @@ int main(int argc, char *argv[]) {
         int sh = GetScreenHeight();
         int hudTop = sh - hudTotalH;
         int shopY = hudTop + 2;
+        int shopH = S(HUD_SHOP_HEIGHT_BASE) - 2;
         int shopCardW = S(160), shopCardH = S(38), shopCardGap = 10;
         int totalShopW =
             MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
         int shopCardsX = (sw - totalShopW) / 2;
         for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
           int scx = shopCardsX + s * (shopCardW + shopCardGap);
-          Rectangle r = {(float)scx, (float)(shopY + 8), (float)shopCardW,
+          Rectangle r = {(float)scx, (float)(shopY + (shopH - shopCardH) / 2), (float)shopCardW,
                          (float)shopCardH};
           if (CheckCollisionPointRec(mouse, r) && shopSlots[s].abilityId >= 0) {
             shopSlots[s].locked = !shopSlots[s].locked;
@@ -6165,6 +6178,24 @@ int main(int argc, char *argv[]) {
             rollCost = rollCostBase;
             GenerateMap(&actMap, 1, (uint32_t)GetRandomValue(1, 999999));
             ResetMapScroll();
+            // Auto-complete layer 0 (wave 1 already beaten)
+            for (int i = 0; i < actMap.nodeCount; i++) {
+              if (actMap.nodes[i].layer == 0 && actMap.nodes[i].available) {
+                actMap.nodes[i].visited = true;
+                actMap.nodes[i].available = false;
+                actMap.currentNode = i;
+                actMap.currentLayer = 0;
+                for (int j = 0; j < actMap.nodeCount; j++)
+                  actMap.nodes[j].available = false;
+                for (int e = 0; e < actMap.nodes[i].edgeCount; e++) {
+                  int next = actMap.nodes[i].edges[e];
+                  if (next >= 0 && next < actMap.nodeCount)
+                    actMap.nodes[next].available = true;
+                }
+                break;
+              }
+            }
+            ScrollMapToLayer(1);
             mapActive = true;
             showingMapEvent = false;
             mapEventChoice = -1;
@@ -6190,6 +6221,11 @@ int main(int argc, char *argv[]) {
             // If boss node was beaten, go to milestone
             if (mapSelectedNodeType == NODE_BOSS && !blueLostLastRound) {
               phase = PHASE_MILESTONE;
+            } else if (mapSelectedNodeType == NODE_BOSS && blueLostLastRound) {
+              // Lost to the boss — game over
+              deathPenalty = true;
+              lastOutcomeWin = false;
+              phase = PHASE_GAME_OVER;
             } else {
               ScrollMapToLayer(actMap.currentLayer);
               phase = PHASE_MAP;
@@ -8769,14 +8805,25 @@ int main(int argc, char *argv[]) {
             int effSPD = (int)(stats->movementSpeed);
             const char *statLine =
                 TextFormat("%d HP  %d DMG  %d SPD", effHP, effDMG, effSPD);
-            int statFsz = S(8);
+            int statFsz = S(10);
             int statW = GameMeasureText(statLine, statFsz);
-            GameDrawText(statLine, hbX + (hbW - statW) / 2, hbY + hbH + S(2),
+            int statMinX = cardX + S(2);
+            int statMaxX = cardX + hudCardW - S(2);
+            // Scale font down if text wider than card
+            while (statW > (statMaxX - statMinX) && statFsz > S(6)) {
+              statFsz--;
+              statW = GameMeasureText(statLine, statFsz);
+            }
+            int statX = hbX + (hbW - statW) / 2;
+            if (statX < statMinX) statX = statMinX;
+            GameDrawText(statLine, statX, hbY + hbH + S(1),
                          statFsz, (Color){160, 160, 180, 255});
           }
 
           // 2x2 Ability slot grid (right side of card)
-          int abilStartX = cardX + hudPortraitSize + 12;
+          int abilGridW = 2 * hudAbilSlotSize + hudAbilSlotGap;
+          int rightArea = hudCardW - hudPortraitSize - S(4);
+          int abilStartX = cardX + S(4) + hudPortraitSize + (rightArea - abilGridW) / 2;
           int abilStartY = cardsY + 8;
           for (int a = 0; a < MAX_ABILITIES_PER_UNIT; a++) {
             int col = a % 2;
@@ -8900,9 +8947,10 @@ int main(int argc, char *argv[]) {
             arY = abilStartY + step + (hudAbilSlotSize - arFsz) / 2;
             GameDrawText("<", arX, arY, arFsz, arCol);
             // BL(2)->TL(0): up arrow on left side, between row 1 and row 0
-            arX = abilStartX +
-                  (hudAbilSlotSize - GameMeasureText("^", arFsz)) / 2 -
-                  hudAbilSlotSize / 2;
+            {
+              int upArrowGap = abilStartX - (cardX + S(4) + hudPortraitSize);
+              arX = abilStartX - upArrowGap / 2 - GameMeasureText("^", arFsz) / 2;
+            }
             arY = abilStartY + hudAbilSlotSize + (hudAbilSlotGap - arFsz) / 2;
             GameDrawText("^", arX, arY, arFsz, arCol);
           }
@@ -9217,7 +9265,7 @@ int main(int argc, char *argv[]) {
         // Draw synergy panel rows (right of the cards)
         int synPanelX = cardsStartX + totalCardsW + S(16);
         int synPanelY = cardsY - S(2);
-        int synRowH = S(20);
+        int synRowH = S(22);
         int maxSynRows = hudCardH / synRowH;
         int activeSynCount = 0;
         for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
@@ -9238,7 +9286,8 @@ int main(int argc, char *argv[]) {
           // Colored dot
           DrawCircle(synPanelX + S(5), rowY + synRowH / 2, S(4), syn->color);
           // Synergy name
-          GameDrawText(syn->name, synPanelX + S(14), rowY + S(2), S(11), WHITE);
+          int textY = rowY + (synRowH - S(11)) / 2;
+          GameDrawText(syn->name, synPanelX + S(14), textY, S(11), WHITE);
           // Tier pips
           int pipX =
               synPanelX + S(14) + GameMeasureText(syn->name, S(11)) + S(6);
@@ -9256,7 +9305,7 @@ int main(int argc, char *argv[]) {
         int badgeH = badgeFsz + S(4);
         for (int sl = 0; sl < blueHudCount; sl++) {
           int cardX = cardsStartX + sl * (hudCardW + hudCardSpacing);
-          int badgeY = cardsY + hudCardH - badgeH - S(2);
+          int badgeY = cardsY + hudCardH - badgeH - S(14);
           int badgeX = cardX + S(2);
           for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
             if (!unitSyn[sl][s])
@@ -9325,7 +9374,7 @@ int main(int argc, char *argv[]) {
         DrawRectangle(0, shopY + shopH - 1, hudSw, 1, (Color){60, 60, 80, 255});
 
         // ROLL button (left) — show cost
-        Rectangle rollBtn = {20, (float)(shopY + 10), S(90), S(34)};
+        Rectangle rollBtn = {20, (float)(shopY + (shopH - S(34)) / 2), S(90), S(34)};
         bool canRoll = (playerGold >= rollCost);
         Color rollColor =
             canRoll ? (Color){180, 140, 40, 255} : (Color){80, 70, 40, 255};
@@ -9367,7 +9416,7 @@ int main(int argc, char *argv[]) {
         int shopCardsX = (hudSw - totalShopW) / 2;
         for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
           int scx = shopCardsX + s * (shopCardW + shopCardGap);
-          int scy = shopY + 8;
+          int scy = shopY + (shopH - shopCardH) / 2;
           if (shopSlots[s].abilityId >= 0 &&
               shopSlots[s].abilityId < ABILITY_COUNT) {
             const AbilityDef *sdef = &ABILITY_DEFS[shopSlots[s].abilityId];
@@ -9471,12 +9520,13 @@ int main(int argc, char *argv[]) {
         // Gold display (right side)
         const char *goldText = TextFormat("Gold: %d", playerGold);
         int gw = GameMeasureText(goldText, S(20));
-        GameDrawText(goldText, hudSw - gw - 20, shopY + 16, S(20),
+        int goldY = shopY + (shopH - S(20)) / 2 - S(6);
+        GameDrawText(goldText, hudSw - gw - 20, goldY, S(20),
                      (Color){240, 200, 60, 255});
         {
           const char *intText = TextFormat("+%d interest", playerGold / 5);
           int iw = GameMeasureText(intText, S(12));
-          GameDrawText(intText, hudSw - iw - 20, shopY + 16 + S(22), S(12),
+          GameDrawText(intText, hudSw - iw - 20, goldY + S(20) + S(2), S(12),
                        (Color){200, 180, 60, 180});
         }
 
@@ -9695,12 +9745,12 @@ int main(int argc, char *argv[]) {
 
       int tipW = S(300);
       int tipH = S(50) + numStatLines * S(18);
-      int tipX = (int)mpos.x + 14;
-      int tipY = (int)mpos.y - tipH - 4;
+      int tipX = (int)mpos.x + S(10);
+      int tipY = (int)mpos.y - tipH - S(8);
       if (tipX + tipW > GetScreenWidth())
-        tipX = (int)mpos.x - tipW - 4;
+        tipX = (int)mpos.x - tipW - S(8);
       if (tipY < 0)
-        tipY = (int)mpos.y + 20;
+        tipY = (int)mpos.y + S(12);
       DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
       DrawRectangleLines(tipX, tipY, tipW, tipH, (Color){100, 100, 130, 255});
       GameDrawText(tipDef->name, tipX + S(6), tipY + S(4), S(16), WHITE);
@@ -9849,12 +9899,12 @@ int main(int argc, char *argv[]) {
       int tipH = 52;
       if (nextThresh > 0)
         tipH += 14;
-      int tipX = (int)mpos.x + 14;
-      int tipY = (int)mpos.y - tipH - 4;
+      int tipX = (int)mpos.x + S(10);
+      int tipY = (int)mpos.y - tipH - S(8);
       if (tipX + tipW > GetScreenWidth())
-        tipX = (int)mpos.x - tipW - 4;
+        tipX = (int)mpos.x - tipW - S(8);
       if (tipY < 0)
-        tipY = (int)mpos.y + 20;
+        tipY = (int)mpos.y + S(12);
       DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
       DrawRectangleLines(tipX, tipY, tipW, tipH, syn->color);
       GameDrawText(tierLabel, tipX + 6, tipY + 4, 12, WHITE);
@@ -11366,10 +11416,37 @@ int main(int argc, char *argv[]) {
         isFullscreen = !isFullscreen;
       }
 
+      // --- Main Menu Button (singleplayer only) ---
+      if (!isMultiplayer) {
+        int mmBtnW = panelW - S(60), mmBtnH = S(36);
+        int mmBtnX = panelX + panelW / 2 - mmBtnW / 2;
+        int mmBtnY = panelY + S(210);
+        Rectangle mmBtn = {(float)mmBtnX, (float)mmBtnY, (float)mmBtnW, (float)mmBtnH};
+        Color mmBg = (Color){50, 80, 160, 220};
+        if (CheckCollisionPointRec(GetMousePosition(), mmBtn))
+          mmBg = (Color){60, 100, 210, 255};
+        DrawRectangleRec(mmBtn, mmBg);
+        DrawRectangleLinesEx(mmBtn, 1, (Color){100, 100, 130, 255});
+        const char *mmText = "MAIN MENU";
+        int mmtw = GameMeasureText(mmText, S(18));
+        GameDrawText(mmText, mmBtnX + mmBtnW / 2 - mmtw / 2, mmBtnY + S(8), S(18), WHITE);
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), mmBtn)) {
+          PlaySound(sfxUiClick);
+          SaveSettings(musicVolume, sfxVolume, isFullscreen, playerName);
+          unitCount = 0;
+          memset(plazaData, 0, sizeof(plazaData));
+          PlazaSpawnLobbyPool(units, &unitCount, plazaData, &lobbySelection);
+          plazaState = PLAZA_ROAMING;
+          mapActive = false;
+          phase = PHASE_PLAZA;
+          showEscMenu = false;
+        }
+      }
+
       // --- Quit / Disconnect Button ---
       int quitBtnW = panelW - S(60), quitBtnH = S(36);
       int quitBtnX = panelX + panelW / 2 - quitBtnW / 2;
-      int quitBtnY = panelY + S(210);
+      int quitBtnY = panelY + S(isMultiplayer ? 210 : 260);
       Rectangle quitBtn = {(float)quitBtnX, (float)quitBtnY, (float)quitBtnW,
                            (float)quitBtnH};
       Color quitBg = (Color){160, 50, 50, 220};
@@ -11416,7 +11493,7 @@ int main(int argc, char *argv[]) {
       {
         int helpBtnW = panelW - S(60), helpBtnH = S(36);
         int helpBtnX = panelX + panelW / 2 - helpBtnW / 2;
-        int helpBtnY = panelY + S(265);
+        int helpBtnY = panelY + S(isMultiplayer ? 265 : 315);
         Rectangle helpBtn = {(float)helpBtnX, (float)helpBtnY, (float)helpBtnW,
                              (float)helpBtnH};
         Color helpBg = (Color){60, 60, 120, 220};
