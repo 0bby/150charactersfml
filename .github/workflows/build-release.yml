@@ -1,7 +1,5 @@
 name: Build Releases
 on:
-  release:
-    types: [created]
   workflow_dispatch:
     inputs:
       tag:
@@ -12,13 +10,15 @@ permissions:
   contents: write
 
 env:
-  TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+  TAG: ${{ github.event.inputs.tag }}
 
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
 
       - name: Install dependencies
         run: |
@@ -42,6 +42,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
 
       - name: Build static raylib + game
         run: make export-mac
@@ -54,3 +56,35 @@ jobs:
         with:
           tag_name: ${{ env.TAG }}
           files: relic-rivals-${{ env.TAG }}-mac.zip
+
+  build-windows:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install mingw-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64
+
+      - name: Download pre-built raylib for Windows
+        run: |
+          curl -fsSL -o raylib-win.zip \
+            https://github.com/raysan5/raylib/releases/download/5.5/raylib-5.5_win64_mingw-w64.zip
+          unzip -q raylib-win.zip
+          mkdir -p deps/raylib-win
+          cp -r raylib-5.5_win64_mingw-w64/* deps/raylib-win/
+
+      - name: Build Windows export
+        run: make export-windows
+
+      - name: Zip
+        run: cd export && zip -qr ../relic-rivals-${TAG}-windows.zip windows/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: relic-rivals-${{ env.TAG }}-windows.zip

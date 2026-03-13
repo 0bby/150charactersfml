@@ -161,34 +161,17 @@ export-windows:
 	done
 	@echo "=== Windows Export complete: export/windows/game.exe ==="
 
-ifeq ($(UNAME),Windows_NT)
-export: export-windows
-release: export
-	@echo "=== Zipping ==="
-	cd export && zip -qr ../$(GAME_NAME)-$(VERSION)-windows.zip windows/
-	@echo "=== Creating GitHub release $(VERSION) ==="
-	gh release create $(VERSION) \
-		$(GAME_NAME)-$(VERSION)-windows.zip \
-		--title "$(GAME_NAME) $(VERSION)" \
-		--target main \
-		$(if $(NOTES),--notes "$(NOTES)",--notes "")
-	@rm -f $(GAME_NAME)-$(VERSION)-windows.zip
-	@echo "=== Released $(VERSION) ==="
-else
 export: export-linux export-windows
 
-release: export-windows
-	@echo "=== Zipping ==="
-	cd export && zip -qr ../$(GAME_NAME)-$(VERSION)-windows.zip windows/
+release:
 	@echo "=== Creating GitHub release $(VERSION) ==="
 	gh release create $(VERSION) \
-		$(GAME_NAME)-$(VERSION)-windows.zip \
 		--title "$(GAME_NAME) $(VERSION)" \
 		--target main \
 		$(if $(NOTES),--notes "$(NOTES)",--notes "")
-	@rm -f $(GAME_NAME)-$(VERSION)-windows.zip
-	@echo "=== Released $(VERSION) — CI will add Linux + Mac builds ==="
-endif
+	@echo "=== Triggering CI builds ==="
+	gh workflow run build-release.yml -f tag=$(VERSION)
+	@echo "=== Released $(VERSION) — CI will build and upload Linux + Mac + Windows ==="
 
 clean: clean-game
 	$(MAKE) -f Makefile.win clean
