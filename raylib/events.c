@@ -36,7 +36,7 @@ const EventDef EVENT_DEFS[] = {
     { "Bazaar of Wonders",
       "A bustling market appears from thin air.",
       3, {
-        { "Extra shop slot (8g)",    EVFX_ADD_SHOP_SLOT, 1, 8 },
+        { "Extra shop slot",          EVFX_ADD_SHOP_SLOT, 1, 8 },
         { "Gain 12 gold",           EVFX_GOLD, 12, 0 },
         { "Skip",                    EVFX_NONE, 0, 0 },
     }},
@@ -49,8 +49,8 @@ const EventDef EVENT_DEFS[] = {
     { "Enchanted Forge",
       "The forge glows with arcane runes.",
       2, {
-        { "Level up random ability (6g)",  EVFX_LEVEL_UP_RANDOM, 1, 6 },
-        { "Level up chosen ability (10g)", EVFX_LEVEL_UP_CHOOSE, 1, 10 },
+        { "Level up random ability",        EVFX_LEVEL_UP_RANDOM, 1, 6 },
+        { "Level up chosen ability",       EVFX_LEVEL_UP_CHOOSE, 1, 10 },
     }},
     { "Witch's Cauldron",
       "A bubbling brew promises great power... at a cost.",

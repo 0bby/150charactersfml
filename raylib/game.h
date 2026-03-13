@@ -55,7 +55,7 @@ typedef enum {
   ANIM_COUNT
 } AnimState;
 
-#define MAX_SHOP_SLOTS 3
+#define MAX_SHOP_SLOTS 6
 #define MAX_MODIFIERS 128
 #define MAX_PROJECTILES 32
 #define MAX_PARTICLES 1024

@@ -350,12 +350,12 @@ void UpdateParticles(Particle particles[], float dt) {
 //------------------------------------------------------------------------------------
 // Shop & Inventory Helpers
 //------------------------------------------------------------------------------------
-void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round) {
+void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round, int slotCount) {
   if (*gold < cost)
     return;
   *gold -= cost;
   (void)round;
-  for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
+  for (int i = 0; i < slotCount; i++) {
     if (shopSlots[i].locked)
       continue;
     shopSlots[i].abilityId = GetRandomValue(0, ABILITY_COUNT - 1);

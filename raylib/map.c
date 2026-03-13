@@ -1,6 +1,7 @@
 #include "map.h"
 #include "raylib.h"
 #include "raymath.h"
+#include "ui.h"
 #include <math.h>
 #include <string.h>
 
@@ -290,7 +291,7 @@ int UpdateMap(ActMap *map) {
       continue;
     float nx = map->nodes[i].x;
     float ny = map->nodes[i].y;
-    float radius = 28.0f;
+    float radius = 36.0f;
     if (CheckCollisionPointCircle(mouse, (Vector2){nx, ny}, radius)) {
       // Select this node
       map->nodes[i].visited = true;
@@ -309,13 +310,19 @@ int UpdateMap(ActMap *map) {
           map->nodes[next].available = true;
       }
 
-      // Auto-scroll to show available nodes
+      // Auto-scroll to show available nodes (next layer)
       if (map->nodes[i].layer < MAP_LAYERS - 1) {
-        float targetLayerY = (float)(map->nodes[i].layer + 1) * 140.0f;
+        int nextLayer = map->nodes[i].layer + 1;
+        float baseY = 80.0f;
+        float layerSpacing = 140.0f;
         float screenH = (float)GetScreenHeight();
-        float desiredScroll = targetLayerY - screenH * 0.6f;
+        float layerDrawPos = (float)(MAP_LAYERS - 1 - nextLayer) * layerSpacing;
+        float desiredScroll = baseY + layerDrawPos - screenH * 0.6f;
         if (desiredScroll < 0)
           desiredScroll = 0;
+        float maxScroll = (MAP_LAYERS - 1) * layerSpacing;
+        if (desiredScroll > maxScroll)
+          desiredScroll = maxScroll;
         mapScrollTarget = desiredScroll;
       }
 
@@ -401,7 +408,7 @@ void DrawMap(ActMap *map) {
     MapNode *node = &map->nodes[i];
     float nx = node->x;
     float ny = node->y;
-    float radius = 24.0f;
+    float radius = 32.0f;
 
     // Skip offscreen nodes
     if (ny < -30 || ny > sh + 30)
@@ -422,7 +429,7 @@ void DrawMap(ActMap *map) {
       bg.r = (unsigned char)((float)bg.r * pulse);
       bg.g = (unsigned char)((float)bg.g * pulse);
       bg.b = (unsigned char)((float)bg.b * pulse);
-      radius = 28.0f;
+      radius = 36.0f;
     } else {
       // Dark / locked
       bg.r /= 2;
@@ -459,8 +466,8 @@ void DrawMap(ActMap *map) {
       label = "?";
       break;
     }
-    int lw = MeasureText(label, 22);
-    DrawText(label, (int)(nx - lw / 2), (int)(ny - 11), 22, WHITE);
+    int lw = GameMeasureText(label, 28);
+    GameDrawText(label, (int)(nx - (float)lw / 2.0f), (int)(ny - 14), 28, WHITE);
 
     // Current position marker
     if (i == map->currentNode) {
@@ -481,7 +488,7 @@ void DrawMap(ActMap *map) {
     if (ly < -20 || ly > sh + 20)
       continue;
     const char *floorLabel = TextFormat("%d", L + 1);
-    DrawText(floorLabel, 10, (int)(ly - 8), 14, (Color){80, 80, 100, 200});
+    GameDrawText(floorLabel, 10, (int)(ly - 10), 18, (Color){80, 80, 100, 200});
   }
 
   // Tooltip on hover
@@ -512,13 +519,13 @@ void DrawMap(ActMap *map) {
       tooltip = typeName;
       break;
     }
-    int ttw = MeasureText(tooltip, 16);
+    int ttw = GameMeasureText(tooltip, 22);
     int ttx = (int)(mouse.x + 15);
-    int tty = (int)(mouse.y - 10);
+    int tty = (int)(mouse.y - 12);
     if (ttx + ttw + 10 > sw)
       ttx = sw - ttw - 10;
-    DrawRectangle(ttx - 4, tty - 2, ttw + 8, 20, (Color){20, 20, 30, 230});
-    DrawText(tooltip, ttx, tty, 16, node->available ? WHITE : GRAY);
+    DrawRectangle(ttx - 4, tty - 2, ttw + 8, 26, (Color){20, 20, 30, 230});
+    GameDrawText(tooltip, ttx, tty, 22, node->available ? WHITE : GRAY);
   }
 }
 

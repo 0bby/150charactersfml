@@ -31,9 +31,9 @@
 #define GLSL_VERSION 330
 
 // --- Color grading tweakable defaults (bright & bubbly) ---
-static float cgExposure = 0.89f;
+static float cgExposure = 0.95f;
 static float cgContrast = 1.20f;
-static float cgSaturation = 0.85f;
+static float cgSaturation = 0.90f;
 static float cgTemperature = 0.10f;
 static float cgVignetteStr = 0.46f;
 static float cgVignetteSoft = 0.94f;
@@ -131,7 +131,7 @@ int main(int argc, char *argv[]) {
   InitAudioDevice();
 
   // Load font at large size — bilinear filter handles downscaling
-  g_gameFont = LoadFontEx("fonts/game_font.ttf", 128, NULL, 0);
+  g_gameFont = LoadFontEx("fonts/old-newspaper-types-font/Oldnewspapertypes-449D.ttf", 128, NULL, 0);
   if (g_gameFont.glyphCount > 0) {
     GenTextureMipmaps(&g_gameFont.texture);
     SetTextureFilter(g_gameFont.texture, TEXTURE_FILTER_TRILINEAR);
@@ -271,7 +271,7 @@ int main(int argc, char *argv[]) {
               prepX = 37.0f;
   const float combatHeight = 200.0f, combatDistance = 150.0f, combatFOV = 48.0f,
               combatX = 0.0f;
-  const float plazaHeight = 120.0f, plazaDistance = 180.0f, plazaFOV = 55.0f,
+  const float plazaHeight = 95.0f, plazaDistance = 210.0f, plazaFOV = 52.0f,
               plazaX = 25.0f;
   const float camLerpSpeed = 2.5f;
 
@@ -483,7 +483,7 @@ int main(int argc, char *argv[]) {
 
   Light lights[MAX_LIGHTS] = {0};
   lights[0] =
-      CreateLight(LIGHT_DIRECTIONAL, (Vector3){40, 60, 30}, Vector3Zero(),
+      CreateLight(LIGHT_DIRECTIONAL, (Vector3){0, 60, 30}, Vector3Zero(),
                   (Color){245, 230, 200, 255}, lightShader);
   lights[1] = CreateLight(LIGHT_POINT, (Vector3){0, 40, 0}, Vector3Zero(),
                           (Color){220, 200, 170, 255}, lightShader);
@@ -565,7 +565,7 @@ int main(int argc, char *argv[]) {
       TextFormat("resources/shaders/glsl%i/shadow_depth.fs", GLSL_VERSION));
 
   // Light-space matrix (static directional light)
-  Vector3 shadowLightPos = {40.0f, 60.0f, -30.0f};
+  Vector3 shadowLightPos = {0.0f, 60.0f, -30.0f};
   Vector3 shadowLightTarget = {0.0f, 0.0f, 0.0f};
   Matrix lightView = MatrixLookAt(shadowLightPos, shadowLightTarget,
                                   (Vector3){0.0f, 1.0f, 0.0f});
@@ -835,6 +835,7 @@ int main(int argc, char *argv[]) {
   const int rollCostBase = 1;
   const int rollCostIncrement = 1;
   ShopSlot shopSlots[MAX_SHOP_SLOTS];
+  int activeShopSlots = 3; // can grow up to MAX_SHOP_SLOTS via events
   for (int i = 0; i < MAX_SHOP_SLOTS; i++) {
     shopSlots[i].abilityId = -1;
     shopSlots[i].locked = false;
@@ -1691,6 +1692,10 @@ int main(int argc, char *argv[]) {
       debugMode = !debugMode;
     if (debugMode && IsKeyPressed(KEY_G))
       debugSpawnRarity = (debugSpawnRarity + 1) % 3;
+    if (debugMode && IsKeyPressed(KEY_EQUAL) && activeShopSlots < MAX_SHOP_SLOTS)
+      activeShopSlots++;
+    if (debugMode && IsKeyPressed(KEY_MINUS) && activeShopSlots > 1)
+      activeShopSlots--;
     if (IsKeyPressed(KEY_F6))
       cgDebugOverlay = !cgDebugOverlay;
     if (cgDebugOverlay) {
@@ -2037,7 +2042,7 @@ int main(int argc, char *argv[]) {
           itemInventoryCount = 0;
           itemShopGenerated = false;
           itemDrag.dragging = false;
-          RollShop(shopSlots, &playerGold, 0, currentRound);
+          RollShop(shopSlots, &playerGold, 0, currentRound, activeShopSlots);
           rollCost = rollCostBase;
           dragState.dragging = false;
           waveUpgradeText[0] = '\0';
@@ -2827,7 +2832,7 @@ int main(int argc, char *argv[]) {
           Vector2 emouse = GetMousePosition();
           int esw = GetScreenWidth(), esh = GetScreenHeight();
           const EventDef *evt = &EVENT_DEFS[currentEventIndex];
-          int btnW = 200, btnH = 50, btnGap = 20;
+          int btnW = 260, btnH = 60, btnGap = 24;
           int totalBtnW = evt->choiceCount * btnW + (evt->choiceCount - 1) * btnGap;
           int btnStartX = esw / 2 - totalBtnW / 2;
           int btnY = esh / 2 + 40;
@@ -2846,6 +2851,11 @@ int main(int argc, char *argv[]) {
             ApplyEventEffect(choice->effect, choice->value, choice->cost,
                              units, unitCount, &playerGold,
                              &needsPicker, &pickerType);
+            // Handle shop slot changes (needs local var access)
+            if (choice->effect == EVFX_ADD_SHOP_SLOT && activeShopSlots < MAX_SHOP_SLOTS)
+              activeShopSlots++;
+            else if (choice->effect == EVFX_REMOVE_SHOP_SLOT && activeShopSlots > 1)
+              activeShopSlots--;
             // Save snapshot and return to map
             SaveSnapshot(units, unitCount, snapshots, &snapshotCount);
             showingMapEvent = false;
@@ -2925,7 +2935,7 @@ int main(int argc, char *argv[]) {
               }
             }
             waveUpgradeText[0] = '\0';
-            RollShop(shopSlots, &playerGold, 0, currentRound);
+            RollShop(shopSlots, &playerGold, 0, currentRound, activeShopSlots);
             rollCost = rollCostBase;
             phase = PHASE_PREP;
             if (pendingIntro.active) { intro = pendingIntro; pendingIntro.active = false; }
@@ -2951,7 +2961,7 @@ int main(int argc, char *argv[]) {
               }
             }
             snprintf(waveUpgradeText, sizeof(waveUpgradeText), "ELITE FIGHT!");
-            RollShop(shopSlots, &playerGold, 0, currentRound);
+            RollShop(shopSlots, &playerGold, 0, currentRound, activeShopSlots);
             rollCost = rollCostBase;
             phase = PHASE_PREP;
             if (pendingIntro.active) { intro = pendingIntro; pendingIntro.active = false; }
@@ -2989,7 +2999,7 @@ int main(int argc, char *argv[]) {
             }
             snprintf(waveUpgradeText, sizeof(waveUpgradeText), "ACT %d BOSS!",
                      actMap.act);
-            RollShop(shopSlots, &playerGold, 0, currentRound);
+            RollShop(shopSlots, &playerGold, 0, currentRound, activeShopSlots);
             rollCost = rollCostBase;
             phase = PHASE_PREP;
             if (pendingIntro.active) { intro = pendingIntro; pendingIntro.active = false; }
@@ -3233,8 +3243,8 @@ int main(int argc, char *argv[]) {
       // Quick-buy: keys 1, 2, 3 for shop slots
       if (!(isMultiplayer && playerReady) && !intro.active &&
           statueSpawn.phase == SSPAWN_INACTIVE) {
-        int quickBuyKeys[3] = {KEY_ONE, KEY_TWO, KEY_THREE};
-        for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
+        int quickBuyKeys[6] = {KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE, KEY_SIX};
+        for (int s = 0; s < activeShopSlots; s++) {
           if (IsKeyPressed(quickBuyKeys[s]) && shopSlots[s].abilityId >= 0) {
             usedShopHotkey = true;
             shopHighlightAbilityId = shopSlots[s].abilityId;
@@ -3325,7 +3335,7 @@ int main(int argc, char *argv[]) {
 #endif
               net_client_send_roll(&netClient);
           } else {
-            RollShop(shopSlots, &playerGold, rollCost, currentRound);
+            RollShop(shopSlots, &playerGold, rollCost, currentRound, activeShopSlots);
           }
           rollCost += rollCostIncrement;
           TriggerShake(&shake, 2.0f, 0.15f);
@@ -3595,7 +3605,7 @@ int main(int argc, char *argv[]) {
 #endif
                 net_client_send_roll(&netClient);
             } else {
-              RollShop(shopSlots, &playerGold, rollCost, currentRound);
+              RollShop(shopSlots, &playerGold, rollCost, currentRound, activeShopSlots);
             }
             rollCost += rollCostIncrement;
             TriggerShake(&shake, 2.0f, 0.15f);
@@ -3608,9 +3618,9 @@ int main(int argc, char *argv[]) {
           int shopH = S(HUD_SHOP_HEIGHT_BASE) - 2;
           int shopCardW = S(160), shopCardH = S(38), shopCardGap = 10;
           int totalShopW =
-              MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
+              activeShopSlots * shopCardW + (activeShopSlots - 1) * shopCardGap;
           int shopCardsX = (sw - totalShopW) / 2;
-          for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
+          for (int s = 0; s < activeShopSlots; s++) {
             int scx = shopCardsX + s * (shopCardW + shopCardGap);
             Rectangle r = {(float)scx, (float)(shopY + (shopH - shopCardH) / 2), (float)shopCardW,
                            (float)shopCardH};
@@ -3962,9 +3972,9 @@ int main(int argc, char *argv[]) {
         int shopH = S(HUD_SHOP_HEIGHT_BASE) - 2;
         int shopCardW = S(160), shopCardH = S(38), shopCardGap = 10;
         int totalShopW =
-            MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
+            activeShopSlots * shopCardW + (activeShopSlots - 1) * shopCardGap;
         int shopCardsX = (sw - totalShopW) / 2;
-        for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
+        for (int s = 0; s < activeShopSlots; s++) {
           int scx = shopCardsX + s * (shopCardW + shopCardGap);
           Rectangle r = {(float)scx, (float)(shopY + (shopH - shopCardH) / 2), (float)shopCardW,
                          (float)shopCardH};
@@ -6174,7 +6184,7 @@ int main(int argc, char *argv[]) {
             ClearAllFissures(fissures);
             ClearRedUnits(units, &unitCount);
             playerGold += roundGoldReward + goldInterest;
-            RollShop(shopSlots, &playerGold, 0, currentRound);
+            RollShop(shopSlots, &playerGold, 0, currentRound, activeShopSlots);
             rollCost = rollCostBase;
             GenerateMap(&actMap, 1, (uint32_t)GetRandomValue(1, 999999));
             ResetMapScroll();
@@ -6202,6 +6212,11 @@ int main(int argc, char *argv[]) {
             phase = PHASE_MAP;
           } else if (mapActive) {
             // Map mode: return to map after combat
+            // Defer intro so it plays after the next combat pick, not over the map
+            if (intro.active) {
+              pendingIntro = intro;
+              intro.active = false;
+            }
             RestoreSnapshot(units, &unitCount, snapshots, snapshotCount);
             for (int i = 0; i < unitCount; i++) {
               units[i].nextAbilitySlot = 0;
@@ -6299,7 +6314,7 @@ int main(int argc, char *argv[]) {
             {
               playerGold += roundGoldReward + goldInterest;
             }
-            RollShop(shopSlots, &playerGold, 0, currentRound);
+            RollShop(shopSlots, &playerGold, 0, currentRound, activeShopSlots);
             rollCost = rollCostBase;
             phase = PHASE_PREP;
           }
@@ -6427,7 +6442,7 @@ int main(int argc, char *argv[]) {
             {
               playerGold += roundGoldReward + goldInterest;
             }
-            RollShop(shopSlots, &playerGold, 0, currentRound);
+            RollShop(shopSlots, &playerGold, 0, currentRound, activeShopSlots);
             rollCost = rollCostBase;
             phase = PHASE_PREP;
           }
@@ -6593,6 +6608,7 @@ int main(int argc, char *argv[]) {
         ClearAllFissures(fissures);
         intro.active = false;
         statueSpawn.phase = SSPAWN_INACTIVE;
+        activeShopSlots = 3;
         playerGold = 20;
         for (int i = 0; i < MAX_INVENTORY_SLOTS; i++)
           inventory[i].abilityId = -1;
@@ -7877,7 +7893,7 @@ int main(int argc, char *argv[]) {
             dimBuf[dimLen] = '\0';
             GameDrawText(dimBuf, startX + activeW, modY, S(11), dimGray);
           }
-          modY += 10;
+          modY += S(13);
         }
       }
     }
@@ -8008,6 +8024,8 @@ int main(int argc, char *argv[]) {
         }
         GameDrawText(TextFormat("[</>] Tiles: %s", tileLayoutNames[tileLayout]),
                      dBtnXBlue, dBtnYStart - 36, 12, YELLOW);
+        GameDrawText(TextFormat("[+/-] Shop Slots: %d", activeShopSlots),
+                     dBtnXBlue, dBtnYStart - 52, 12, YELLOW);
 
         // --- ENV PIECE spawn buttons (centered column) ---
         {
@@ -8798,12 +8816,26 @@ int main(int argc, char *argv[]) {
           }
           DrawRectangleLines(hbX, hbY, hbW, hbH, (Color){60, 60, 80, 255});
 
-          // Concise stat line below health bar
+          // Concise stat line below health bar (live-updated with modifiers)
           {
             int effHP = (int)(stats->health * units[ui].hpMultiplier);
             int effDMG = (int)(stats->attackDamage * units[ui].dmgMultiplier);
-            int effMSPD = (int)(stats->movementSpeed);
-            float effASPD = 1.0f / stats->attackSpeed;
+            float effMS = stats->movementSpeed * units[ui].speedMultiplier;
+            float spdMult = GetModifierValue(modifiers, ui, MOD_SPEED_MULT);
+            if (spdMult > 0) effMS *= spdMult;
+            int effMSPD = (int)effMS;
+            float effAtkSpd = stats->attackSpeed;
+            float fvStacks = GetModifierValue(modifiers, ui, MOD_FERVOR);
+            if (fvStacks > 0) {
+              int fvLvl = GetUnitAbilityLevel(units, ui, ABILITY_FERVOR);
+              if (fvLvl >= 0) {
+                float redPerStack = ABILITY_DEFS[ABILITY_FERVOR].values[fvLvl][AV_FV_SPEED_RED];
+                float speedMlt = 1.0f - fvStacks * redPerStack;
+                if (speedMlt < 0.3f) speedMlt = 0.3f;
+                effAtkSpd *= speedMlt;
+              }
+            }
+            float effASPD = 1.0f / effAtkSpd;
             const char *statLine =
                 TextFormat("%d HP  %d DMG  %d MS  %.1f AS", effHP, effDMG, effMSPD, effASPD);
             int statFsz = S(10);
@@ -9349,14 +9381,14 @@ int main(int argc, char *argv[]) {
           GameDrawText(rhint, rhX, rhY, rhSz, (Color){255, 230, 120, rhAlpha});
         }
 
-        // Shop ability cards (3 slots, centered)
+        // Shop ability cards (up to 6 slots, centered)
         int shopCardW = S(160);
         int shopCardH = S(38);
         int shopCardGap = 10;
         int totalShopW =
-            MAX_SHOP_SLOTS * shopCardW + (MAX_SHOP_SLOTS - 1) * shopCardGap;
+            activeShopSlots * shopCardW + (activeShopSlots - 1) * shopCardGap;
         int shopCardsX = (hudSw - totalShopW) / 2;
-        for (int s = 0; s < MAX_SHOP_SLOTS; s++) {
+        for (int s = 0; s < activeShopSlots; s++) {
           int scx = shopCardsX + s * (shopCardW + shopCardGap);
           int scy = shopY + (shopH - shopCardH) / 2;
           if (shopSlots[s].abilityId >= 0 &&
@@ -9899,20 +9931,25 @@ int main(int argc, char *argv[]) {
       int msw = GetScreenWidth();
       int msh = GetScreenHeight();
 
-      // Title text (floating over the 3D scene)
+      // Title text (floating over the 3D scene, scales with window)
       const char *title = "Relic Rivals";
-      int titleSize = 72;
+      float titleScale = (float)msh / 720.0f;
+      int titleSize = (int)(128.0f * titleScale);
+      if (titleSize < 48) titleSize = 48;
       int tw = GameMeasureText(title, titleSize);
-      GameDrawText(title, msw / 2 - tw / 2, 60, titleSize,
-                   (Color){200, 180, 255, 220});
+      int titleY = (int)(60.0f * titleScale);
+      GameDrawText(title, msw / 2 - tw / 2, titleY, titleSize,
+                   (Color){245, 245, 235, 220});
 
       const char *subtitle = lobbySelection.heroSelected
                                  ? "Hero selected!"
                                  : "Select a hero to begin";
-      int subSize = 32;
+      int subSize = (int)(54.0f * titleScale);
+      if (subSize < 20) subSize = 20;
       int sw2 = GameMeasureText(subtitle, subSize);
-      GameDrawText(subtitle, msw / 2 - sw2 / 2, 140, subSize,
-                   (Color){160, 140, 200, 160});
+      int subY = titleY + titleSize + (int)(10.0f * titleScale);
+      GameDrawText(subtitle, msw / 2 - sw2 / 2, subY, subSize,
+                   (Color){200, 190, 175, 160});
 
       // Draw hover arrow + tooltip above roaming red units (hero selection)
       if (!lobbySelection.heroSelected) {
@@ -10396,14 +10433,14 @@ int main(int argc, char *argv[]) {
 
         const EventDef *evt = &EVENT_DEFS[currentEventIndex];
 
-        int titleSz = 28, descSz = 18;
-        int ttw = MeasureText(evt->title, titleSz);
-        DrawText(evt->title, esw / 2 - ttw / 2, esh / 2 - 100, titleSz, GOLD);
-        int dtw = MeasureText(evt->description, descSz);
-        DrawText(evt->description, esw / 2 - dtw / 2, esh / 2 - 60, descSz,
+        int titleSz = 38, descSz = 24;
+        int ttw = GameMeasureText(evt->title, titleSz);
+        GameDrawText(evt->title, esw / 2 - ttw / 2, esh / 2 - 120, titleSz, GOLD);
+        int dtw = GameMeasureText(evt->description, descSz);
+        GameDrawText(evt->description, esw / 2 - dtw / 2, esh / 2 - 70, descSz,
                  (Color){200, 200, 220, 255});
 
-        int btnW = 200, btnH = 50, btnGap = 20;
+        int btnW = 260, btnH = 60, btnGap = 24;
         int totalBtnW = evt->choiceCount * btnW + (evt->choiceCount - 1) * btnGap;
         int btnStartX = esw / 2 - totalBtnW / 2;
         int btnY = esh / 2 + 40;
@@ -10427,9 +10464,9 @@ int main(int argc, char *argv[]) {
           const char *label = evt->choices[c].label;
           if (evt->choices[c].cost > 0)
             label = TextFormat("%s (%dg)", evt->choices[c].label, evt->choices[c].cost);
-          int lw = MeasureText(label, 14);
-          DrawText(label, (int)(btnRect.x + (float)btnW / 2.0f - (float)lw / 2.0f),
-                   btnY + 18, 14, WHITE);
+          int lw = GameMeasureText(label, 20);
+          GameDrawText(label, (int)(btnRect.x + (float)btnW / 2.0f - (float)lw / 2.0f),
+                   btnY + 20, 20, WHITE);
         }
       }
 

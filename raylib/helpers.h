@@ -39,7 +39,7 @@ void SpawnParticle(Particle particles[], Vector3 pos, Vector3 vel, float life, f
 void UpdateParticles(Particle particles[], float dt);
 
 // Shop & inventory helpers
-void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round);
+void RollShop(ShopSlot shopSlots[], int *gold, int cost, int round, int slotCount);
 void BuyAbility(ShopSlot *slot, InventorySlot inventory[], Unit units[], int unitCount, int *gold);
 void AssignRandomAbilities(Unit *unit, int numAbilities);
 void SellAbility(int abilityId, int level, int *gold);
