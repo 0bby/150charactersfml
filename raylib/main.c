@@ -7592,7 +7592,7 @@ int main(int argc, char *argv[]) {
         continue;
 
       if (units[i].rarity > 0) {
-        const char *stars = (units[i].rarity == RARITY_LEGENDARY) ? "* *" : "*";
+        const char *stars = (units[i].rarity == RARITY_LEGENDARY) ? "* * *" : "* *";
         int starsW = GameMeasureText(stars, S(14));
         Color starColor = (units[i].rarity == RARITY_LEGENDARY)
                               ? (Color){255, 60, 60, 255}
@@ -8754,7 +8754,7 @@ int main(int argc, char *argv[]) {
 
           if (units[ui].rarity > 0) {
             const char *stars =
-                (units[ui].rarity == RARITY_LEGENDARY) ? "* *" : "*";
+                (units[ui].rarity == RARITY_LEGENDARY) ? "* * *" : "* *";
             int starsW = GameMeasureText(stars, S(10));
             Color starColor = (units[ui].rarity == RARITY_LEGENDARY)
                                   ? (Color){255, 60, 60, 255}
@@ -8802,9 +8802,10 @@ int main(int argc, char *argv[]) {
           {
             int effHP = (int)(stats->health * units[ui].hpMultiplier);
             int effDMG = (int)(stats->attackDamage * units[ui].dmgMultiplier);
-            int effSPD = (int)(stats->movementSpeed);
+            int effMSPD = (int)(stats->movementSpeed);
+            float effASPD = 1.0f / stats->attackSpeed;
             const char *statLine =
-                TextFormat("%d HP  %d DMG  %d SPD", effHP, effDMG, effSPD);
+                TextFormat("%d HP  %d DMG  %d MS  %.1f AS", effHP, effDMG, effMSPD, effASPD);
             int statFsz = S(10);
             int statW = GameMeasureText(statLine, statFsz);
             int statMinX = cardX + S(2);
@@ -8814,7 +8815,7 @@ int main(int argc, char *argv[]) {
               statFsz--;
               statW = GameMeasureText(statLine, statFsz);
             }
-            int statX = hbX + (hbW - statW) / 2;
+            int statX = hbX + (hbW - statW) / 2 + S(6);
             if (statX < statMinX) statX = statMinX;
             GameDrawText(statLine, statX, hbY + hbH + S(1),
                          statFsz, (Color){160, 160, 180, 255});
@@ -8946,13 +8947,6 @@ int main(int argc, char *argv[]) {
                   (hudAbilSlotGap - GameMeasureText("<", arFsz)) / 2;
             arY = abilStartY + step + (hudAbilSlotSize - arFsz) / 2;
             GameDrawText("<", arX, arY, arFsz, arCol);
-            // BL(2)->TL(0): up arrow on left side, between row 1 and row 0
-            {
-              int upArrowGap = abilStartX - (cardX + S(4) + hudPortraitSize);
-              arX = abilStartX - upArrowGap / 2 - GameMeasureText("^", arFsz) / 2;
-            }
-            arY = abilStartY + hudAbilSlotSize + (hudAbilSlotGap - arFsz) / 2;
-            GameDrawText("^", arX, arY, arFsz, arCol);
           }
           // Item slot (below ability grid)
           {
@@ -9204,14 +9198,10 @@ int main(int argc, char *argv[]) {
         int synTier[SYNERGY_COUNT];
         int synMatchCount[SYNERGY_COUNT];
         (void)synMatchCount;
-        bool unitSyn[BLUE_TEAM_MAX_SIZE][SYNERGY_COUNT];
         for (int s = 0; s < (int)SYNERGY_COUNT; s++)
           synTier[s] = -1;
         for (int s = 0; s < (int)SYNERGY_COUNT; s++)
           synMatchCount[s] = 0;
-        for (int sl = 0; sl < BLUE_TEAM_MAX_SIZE; sl++)
-          for (int s = 0; s < (int)SYNERGY_COUNT; s++)
-            unitSyn[sl][s] = false;
 
         for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
           const SynergyDef *syn = &SYNERGY_DEFS[s];
@@ -9243,23 +9233,6 @@ int main(int argc, char *argv[]) {
             if (matchCount >= syn->tiers[tier].minUnits)
               synTier[s] = tier;
 
-          // Mark which card slots benefit from this synergy
-          if (synTier[s] >= 0) {
-            for (int sl = 0; sl < blueHudCount; sl++) {
-              int ui = blueHudUnits[sl];
-              bool isTarget = false;
-              if (syn->targetType < 0) {
-                for (int r = 0; r < syn->requiredTypeCount; r++)
-                  if (units[ui].typeIndex == syn->requiredTypes[r]) {
-                    isTarget = true;
-                    break;
-                  }
-              } else {
-                isTarget = (units[ui].typeIndex == syn->targetType);
-              }
-              unitSyn[sl][s] = isTarget;
-            }
-          }
         }
 
         // Draw synergy panel rows (right of the cards)
@@ -9300,37 +9273,6 @@ int main(int argc, char *argv[]) {
           activeSynCount++;
         }
 
-        // Per-card synergy badges (inside card, at bottom)
-        int badgeFsz = S(9);
-        int badgeH = badgeFsz + S(4);
-        for (int sl = 0; sl < blueHudCount; sl++) {
-          int cardX = cardsStartX + sl * (hudCardW + hudCardSpacing);
-          int badgeY = cardsY + hudCardH - badgeH - S(14);
-          int badgeX = cardX + S(2);
-          for (int s = 0; s < (int)SYNERGY_COUNT; s++) {
-            if (!unitSyn[sl][s])
-              continue;
-            const SynergyDef *syn = &SYNERGY_DEFS[s];
-            int abbrW = GameMeasureText(syn->abbrev, badgeFsz) + S(6);
-            if (badgeX + abbrW > cardX + hudCardW - S(2))
-              break;
-            // Pill background
-            DrawRectangle(
-                badgeX, badgeY, abbrW, badgeH,
-                (Color){syn->color.r, syn->color.g, syn->color.b, 180});
-            DrawRectangleLines(
-                badgeX, badgeY, abbrW, badgeH,
-                (Color){syn->color.r, syn->color.g, syn->color.b, 255});
-            GameDrawText(syn->abbrev, badgeX + S(3), badgeY + S(2), badgeFsz,
-                         WHITE);
-            // Badge hover detection
-            Rectangle badgeRect = {(float)badgeX, (float)badgeY, (float)abbrW,
-                                   (float)badgeH};
-            if (CheckCollisionPointRec(GetMousePosition(), badgeRect))
-              hoverSynergyIdx = s;
-            badgeX += abbrW + S(3);
-          }
-        }
       }
 
       // --- Drag ghost ---
@@ -9735,13 +9677,34 @@ int main(int argc, char *argv[]) {
         statLines[numStatLines++] =
             (StatLine){"Duration", AV_SPP_DURATION, false};
         break;
+      case ABILITY_VENOM_STRIKE:
+        statLines[numStatLines++] =
+            (StatLine){"Poison DPS", AV_VS_POISON_DPS, false};
+        statLines[numStatLines++] =
+            (StatLine){"Duration", AV_VS_DURATION, false};
+        break;
+      case ABILITY_TOXIC_CLOUD:
+        statLines[numStatLines++] =
+            (StatLine){"Poison DPS", AV_TC_POISON_DPS, false};
+        statLines[numStatLines++] = (StatLine){"Radius", AV_TC_RADIUS, false};
+        statLines[numStatLines++] =
+            (StatLine){"Duration", AV_TC_DURATION, false};
+        break;
+      case ABILITY_FERVOR:
+        statLines[numStatLines++] =
+            (StatLine){"Spd/Stack", AV_FV_SPEED_RED, true};
+        statLines[numStatLines++] =
+            (StatLine){"Max Stacks", AV_FV_MAX_STACKS, false};
+        break;
       default:
         break;
       }
-      // Always add cooldown as last line
-      int cdLineIdx =
-          numStatLines; // special: cooldown uses cooldown[] not values[]
-      numStatLines++;   // reserve a line for cooldown
+      // Add cooldown line for non-passive abilities
+      int cdLineIdx = -1;
+      if (!tipDef->isPassive) {
+        cdLineIdx = numStatLines;
+        numStatLines++;
+      }
 
       int tipW = S(300);
       int tipH = S(50) + numStatLines * S(18);
@@ -9759,8 +9722,17 @@ int main(int argc, char *argv[]) {
       int lvlW = GameMeasureText(lvlText, S(12));
       GameDrawText(lvlText, tipX + tipW - lvlW - S(6), tipY + S(6), S(12),
                    (Color){180, 180, 200, 255});
-      GameDrawText(tipDef->description, tipX + S(6), tipY + S(22), S(12),
-                   (Color){180, 180, 200, 255});
+      if (tipDef->isPassive) {
+        GameDrawText("Passive", tipX + S(6), tipY + S(22), S(12),
+                     (Color){120, 200, 140, 255});
+        int passW = GameMeasureText("Passive", S(12));
+        GameDrawText(TextFormat(" - %s", tipDef->description),
+                     tipX + S(6) + passW, tipY + S(22), S(12),
+                     (Color){180, 180, 200, 255});
+      } else {
+        GameDrawText(tipDef->description, tipX + S(6), tipY + S(22), S(12),
+                     (Color){180, 180, 200, 255});
+      }
 
       Color dimStatColor = {100, 100, 120, 255};
       // Rolling 3-window: show 3 levels centered on current
@@ -9895,10 +9867,10 @@ int main(int argc, char *argv[]) {
                                    : "units");
       }
 
-      int tipW = 180;
-      int tipH = 52;
+      int tipW = S(300);
+      int tipH = S(50) + S(18) * 2;
       if (nextThresh > 0)
-        tipH += 14;
+        tipH += S(18);
       int tipX = (int)mpos.x + S(10);
       int tipY = (int)mpos.y - tipH - S(8);
       if (tipX + tipW > GetScreenWidth())
@@ -9906,17 +9878,17 @@ int main(int argc, char *argv[]) {
       if (tipY < 0)
         tipY = (int)mpos.y + S(12);
       DrawRectangle(tipX, tipY, tipW, tipH, (Color){20, 20, 30, 230});
-      DrawRectangleLines(tipX, tipY, tipW, tipH, syn->color);
-      GameDrawText(tierLabel, tipX + 6, tipY + 4, 12, WHITE);
-      GameDrawText(bonusText, tipX + 6, tipY + 20, 10,
-                   (Color){200, 200, 220, 220});
-      GameDrawText(countText, tipX + 6, tipY + 36, 10,
-                   (Color){160, 160, 180, 200});
+      DrawRectangleLines(tipX, tipY, tipW, tipH, (Color){100, 100, 130, 255});
+      GameDrawText(tierLabel, tipX + S(6), tipY + S(4), S(16), WHITE);
+      GameDrawText(countText, tipX + S(6), tipY + S(22), S(12),
+                   (Color){180, 180, 200, 255});
+      GameDrawText(bonusText, tipX + S(6), tipY + S(40), S(12),
+                   (Color){200, 200, 220, 255});
       if (nextThresh > 0) {
         const char *nextText = TextFormat("Next: %d for tier %s", nextThresh,
                                           (curTier + 1 == 1) ? "II" : "III");
-        GameDrawText(nextText, tipX + 6, tipY + 50, 9,
-                     (Color){120, 120, 140, 180});
+        GameDrawText(nextText, tipX + S(6), tipY + S(58), S(12),
+                     (Color){120, 120, 140, 200});
       }
     }
 
@@ -11078,7 +11050,7 @@ int main(int argc, char *argv[]) {
         int starY = lineY2 + 10;
         starHeight = starSize + 10;
         if (intro.rarity == RARITY_RARE) {
-          const char *star = "*";
+          const char *star = "* *";
           GameDrawText(star, (int)nameFinalX + 4, starY, starSize,
                        (Color){180, 100, 255, (unsigned char)(alpha * 0.9f)});
         } else if (intro.rarity == RARITY_LEGENDARY) {
@@ -11265,7 +11237,7 @@ int main(int argc, char *argv[]) {
       int esw = GetScreenWidth(), esh = GetScreenHeight();
       DrawRectangle(0, 0, esw, esh, (Color){0, 0, 0, 140});
 
-      int panelW = S(400), panelH = S(390);
+      int panelW = S(400), panelH = S(440);
       int panelX = esw / 2 - panelW / 2;
       int panelY = esh / 2 - panelH / 2;
       DrawRectangle(panelX, panelY, panelW, panelH, (Color){24, 24, 32, 240});
@@ -11493,7 +11465,7 @@ int main(int argc, char *argv[]) {
       {
         int helpBtnW = panelW - S(60), helpBtnH = S(36);
         int helpBtnX = panelX + panelW / 2 - helpBtnW / 2;
-        int helpBtnY = panelY + S(isMultiplayer ? 265 : 315);
+        int helpBtnY = panelY + S(isMultiplayer ? 265 : 310);
         Rectangle helpBtn = {(float)helpBtnX, (float)helpBtnY, (float)helpBtnW,
                              (float)helpBtnH};
         Color helpBg = (Color){60, 60, 120, 220};
@@ -11516,7 +11488,7 @@ int main(int argc, char *argv[]) {
       // --- Resume Button ---
       int resBtnW = panelW - S(60), resBtnH = S(36);
       int resBtnX = panelX + panelW / 2 - resBtnW / 2;
-      int resBtnY = panelY + S(320);
+      int resBtnY = panelY + S(360);
       Rectangle resBtn = {(float)resBtnX, (float)resBtnY, (float)resBtnW,
                           (float)resBtnH};
       Color resBg = (Color){50, 120, 80, 220};

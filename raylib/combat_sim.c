@@ -223,6 +223,15 @@ int CombatTick(Unit units[], int *unitCountPtr,
                         if (units[si].currentHealth > maxHP) units[si].currentHealth = maxHP;
                     }
                 }
+                // Venom Strike on-hit: apply/refresh poison from devil bolt
+                if (hitDmg > 0 && si >= 0 && si < unitCount && units[si].active) {
+                    int vsLvl = GetUnitAbilityLevel(units, si, ABILITY_VENOM_STRIKE);
+                    if (vsLvl >= 0) {
+                        float poisonDPS = ABILITY_DEFS[ABILITY_VENOM_STRIKE].values[vsLvl][AV_VS_POISON_DPS];
+                        float poisonDur = ABILITY_DEFS[ABILITY_VENOM_STRIKE].values[vsLvl][AV_VS_DURATION];
+                        AddModifier(modifiers, ti, MOD_POISON, poisonDur, poisonDPS);
+                    }
+                }
                 EmitEvent(events, eventCount, COMBAT_EVT_PROJECTILE_HIT, ti,
                           projectiles[p].type, projectiles[p].position, 0, 0);
                 projectiles[p].active = false;
@@ -824,7 +833,6 @@ int CombatTick(Unit units[], int *unitCountPtr,
                         (Color){200, 50, 50, 255});
                     units[i].attackCooldown = stats->attackSpeed;
                 } else {
-                {
                     float rawDmg = stats->attackDamage * units[i].dmgMultiplier;
                     float dmg = ApplyDamage(units, &unitCount, modifiers, target, rawDmg, DMG_SINGLE_TARGET);
                     EmitEvent(events, eventCount, COMBAT_EVT_MELEE_HIT, target, -1,
@@ -875,32 +883,31 @@ int CombatTick(Unit units[], int *unitCountPtr,
                             AddModifier(modifiers, target, MOD_POISON, poisonDur, poisonDPS);
                         }
                     }
-                    // Fervor: track same-target attacks for attack speed bonus
-                    {
-                        int fvLvl = GetUnitAbilityLevel(units, i, ABILITY_FERVOR);
-                        if (fvLvl >= 0) {
-                            int maxStacks = (int)ABILITY_DEFS[ABILITY_FERVOR].values[fvLvl][AV_FV_MAX_STACKS];
-                            if (units[i].lastAttackTarget == target) {
-                                // Same target: increment stacks
-                                for (int m = 0; m < MAX_MODIFIERS; m++) {
-                                    if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_FERVOR) {
-                                        float stacks = modifiers[m].value + 1.0f;
-                                        if (stacks > (float)maxStacks) stacks = (float)maxStacks;
-                                        modifiers[m].value = stacks;
-                                        break;
-                                    }
-                                }
-                            } else {
-                                // New target: reset to 1
-                                for (int m = 0; m < MAX_MODIFIERS; m++) {
-                                    if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_FERVOR) {
-                                        modifiers[m].value = 1.0f;
-                                        break;
-                                    }
+                    units[i].attackCooldown = stats->attackSpeed;
+                }
+                // Fervor: track same-target attacks for attack speed bonus (melee + ranged)
+                {
+                    int fvLvl = GetUnitAbilityLevel(units, i, ABILITY_FERVOR);
+                    if (fvLvl >= 0) {
+                        int maxStacks = (int)ABILITY_DEFS[ABILITY_FERVOR].values[fvLvl][AV_FV_MAX_STACKS];
+                        if (units[i].lastAttackTarget == target) {
+                            for (int m = 0; m < MAX_MODIFIERS; m++) {
+                                if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_FERVOR) {
+                                    float stacks = modifiers[m].value + 1.0f;
+                                    if (stacks > (float)maxStacks) stacks = (float)maxStacks;
+                                    modifiers[m].value = stacks;
+                                    break;
                                 }
                             }
-                            units[i].lastAttackTarget = target;
+                        } else {
+                            for (int m = 0; m < MAX_MODIFIERS; m++) {
+                                if (modifiers[m].active && modifiers[m].unitIndex == i && modifiers[m].type == MOD_FERVOR) {
+                                    modifiers[m].value = 1.0f;
+                                    break;
+                                }
+                            }
                         }
+                        units[i].lastAttackTarget = target;
                     }
                 }
                 // Fervor: modify attack cooldown based on stacks
@@ -913,14 +920,9 @@ int CombatTick(Unit units[], int *unitCountPtr,
                             float speedMlt = 1.0f - fvStacks * redPerStack;
                             if (speedMlt < 0.3f) speedMlt = 0.3f;
                             units[i].attackCooldown = stats->attackSpeed * speedMlt;
-                        } else {
-                            units[i].attackCooldown = stats->attackSpeed;
                         }
-                    } else {
-                        units[i].attackCooldown = stats->attackSpeed;
                     }
                 }
-                } // end else (non-devil melee)
             }
         }
     }
