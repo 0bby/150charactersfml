@@ -295,7 +295,7 @@ int main(int argc, char *argv[]) {
   unitTypes[0].scale = 0.10f;
   unitTypes[0].yOffset = 1.5f;
   unitTypes[1].name = "Goblin";
-  unitTypes[1].modelPath = "assets/classes/goblin/PluginGoblinWalk.glb";
+  unitTypes[1].modelPath = "assets/classes/goblin/UpdatedGoblinWalk.glb";
   unitTypes[1].scale = 9.0f;
   unitTypes[2].name = "Devil";
   unitTypes[2].modelPath = "assets/classes/devil/DevilIdle.glb";
@@ -328,12 +328,41 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Recompute goblin bounds across all meshes (new model may split geometry)
+  if (unitTypes[1].loaded && unitTypes[1].model.meshCount > 0) {
+    BoundingBox full = GetMeshBoundingBox(unitTypes[1].model.meshes[0]);
+    for (int m = 1; m < unitTypes[1].model.meshCount; m++) {
+      BoundingBox mb = GetMeshBoundingBox(unitTypes[1].model.meshes[m]);
+      if (mb.min.x < full.min.x) full.min.x = mb.min.x;
+      if (mb.min.y < full.min.y) full.min.y = mb.min.y;
+      if (mb.min.z < full.min.z) full.min.z = mb.min.z;
+      if (mb.max.x > full.max.x) full.max.x = mb.max.x;
+      if (mb.max.y > full.max.y) full.max.y = mb.max.y;
+      if (mb.max.z > full.max.z) full.max.z = mb.max.z;
+    }
+    // Shrink X/Z to body width centered on model origin (0,0)
+    float xzShrink = 0.5f;
+    float hx = (full.max.x - full.min.x) * 0.5f * xzShrink;
+    float hz = (full.max.z - full.min.z) * 0.5f * xzShrink;
+    full.min.x = -hx;
+    full.max.x =  hx;
+    full.min.z = -hz;
+    full.max.z =  hz;
+    unitTypes[1].baseBounds = full;
+  }
+
+  // Load and apply goblin texture
+  Texture2D goblinTex = LoadTexture("assets/goblin/T_ImprovedGoblin_BC.png");
+  for (int m = 0; m < unitTypes[1].model.materialCount; m++) {
+    unitTypes[1].model.materials[m].maps[MATERIAL_MAP_DIFFUSE].texture = goblinTex;
+  }
+
   // Load goblin animations from separate GLBs
   int walkAnimCount = 0, idleAnimCount = 0;
   ModelAnimation *walkAnims = LoadModelAnimations(
-      "assets/classes/goblin/PluginGoblinWalk.glb", &walkAnimCount);
+      "assets/classes/goblin/UpdatedGoblinWalk.glb", &walkAnimCount);
   ModelAnimation *idleAnims = LoadModelAnimations(
-      "assets/classes/goblin/PluginGoblinIdle.glb", &idleAnimCount);
+      "assets/classes/goblin/UpdatedGoblinIdle.glb", &idleAnimCount);
   // Store walk anims as the main array, keep idle separate
   unitTypes[1].anims = walkAnims;
   unitTypes[1].animCount = walkAnimCount;
@@ -6745,8 +6774,8 @@ int main(int argc, char *argv[]) {
       if (type->hasAnimations && type->animIndex[ANIM_IDLE] >= 0)
         UpdateModelAnimation(type->model,
                              type->idleAnims[type->animIndex[ANIM_IDLE]], 0);
-      DrawModel(type->model, (Vector3){0, 0, 0}, type->scale,
-                GetTeamTint(TEAM_BLUE));
+      Color portraitTint = (units[ui].typeIndex == 1) ? WHITE : GetTeamTint(TEAM_BLUE);
+      DrawModel(type->model, (Vector3){0, 0, 0}, type->scale, portraitTint);
       EndMode3D();
       EndTextureMode();
       portraitDirty[h] = false;
@@ -7099,7 +7128,7 @@ int main(int argc, char *argv[]) {
       UnitType *type = &unitTypes[units[i].typeIndex];
       if (!type->loaded)
         continue;
-      Color tint = GetTeamTint(units[i].team);
+      Color tint = (units[i].typeIndex == 1) ? WHITE : GetTeamTint(units[i].team);
       if (units[i].hitFlash > 0) {
         float f = units[i].hitFlash / HIT_FLASH_DURATION;
         if (f > 1.0f)
@@ -7432,8 +7461,8 @@ int main(int argc, char *argv[]) {
           UpdateModelAnimation(itype->model,
                                itype->idleAnims[itype->animIndex[ANIM_IDLE]],
                                intro.animFrame);
-        DrawModel(itype->model, (Vector3){0, 0, 0}, itype->scale,
-                  GetTeamTint(TEAM_BLUE));
+        Color introTint = (intro.typeIndex == 1) ? WHITE : GetTeamTint(TEAM_BLUE);
+        DrawModel(itype->model, (Vector3){0, 0, 0}, itype->scale, introTint);
         EndMode3D();
         EndTextureMode();
         SetShaderValue(lightShader, noShadowLoc, &noShadowOff,
