@@ -4431,6 +4431,29 @@ int main(int argc, char *argv[]) {
                                 (Color){255, 180, 60, 255}, 1.5f);
             }
           } break;
+          case COMBAT_EVT_HEAL: {
+            int ui = combatEvents[e].unitIndex;
+            if (ui >= 0 && ui < unitCount && units[ui].active) {
+              UnitType *htype = &unitTypes[units[ui].typeIndex];
+              float hH = (htype->baseBounds.max.y - htype->baseBounds.min.y) *
+                         htype->scale;
+              float hR = (htype->baseBounds.max.x - htype->baseBounds.min.x) *
+                         htype->scale * 0.5f;
+              for (int hp = 0; hp < 8; hp++) {
+                float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                float r = hR * 0.6f;
+                Vector3 pos = {
+                    units[ui].position.x + cosf(angle) * r,
+                    units[ui].position.y +
+                        (float)GetRandomValue(0, (int)(hH * 10.0f)) / 10.0f,
+                    units[ui].position.z + sinf(angle) * r};
+                Vector3 vel = {0, (float)GetRandomValue(30, 70) / 10.0f, 0};
+                Color green = {80, (unsigned char)GetRandomValue(200, 255), 120,
+                               255};
+                SpawnParticle(particles, pos, vel, 0.8f, 0.5f, green);
+              }
+            }
+          } break;
           default:
             break;
           }
@@ -4522,6 +4545,27 @@ int main(int argc, char *argv[]) {
               SpawnParticle(particles, pos, vel,
                             0.5f + (float)GetRandomValue(0, 3) / 10.0f, sz,
                             brown);
+            }
+          }
+          // Rejuvenate particles (green, rising)
+          if (UnitHasModifier(modifiers, i, MOD_REJUVENATE)) {
+            UnitType *rjtype = &unitTypes[units[i].typeIndex];
+            float rjH = (rjtype->baseBounds.max.y - rjtype->baseBounds.min.y) *
+                        rjtype->scale;
+            float rjR = (rjtype->baseBounds.max.x - rjtype->baseBounds.min.x) *
+                        rjtype->scale * 0.5f;
+            for (int pp = 0; pp < 2; pp++) {
+              float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+              float r = rjR * 0.5f;
+              Vector3 pos = {
+                  units[i].position.x + cosf(angle) * r,
+                  units[i].position.y +
+                      (float)GetRandomValue(0, (int)(rjH * 10.0f)) / 10.0f,
+                  units[i].position.z + sinf(angle) * r};
+              Vector3 vel = {0, (float)GetRandomValue(20, 50) / 10.0f, 0};
+              Color green = {80, (unsigned char)GetRandomValue(180, 240), 100,
+                             255};
+              SpawnParticle(particles, pos, vel, 0.6f, 0.4f, green);
             }
           }
         }
@@ -4668,6 +4712,29 @@ int main(int argc, char *argv[]) {
                                 (Color){255, 180, 60, 255}, 1.5f);
             }
           } break;
+          case COMBAT_EVT_HEAL: {
+            int ui = combatEvents[e].unitIndex;
+            if (ui >= 0 && ui < unitCount && units[ui].active) {
+              UnitType *htype = &unitTypes[units[ui].typeIndex];
+              float hH = (htype->baseBounds.max.y - htype->baseBounds.min.y) *
+                         htype->scale;
+              float hR = (htype->baseBounds.max.x - htype->baseBounds.min.x) *
+                         htype->scale * 0.5f;
+              for (int hp = 0; hp < 8; hp++) {
+                float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                float r = hR * 0.6f;
+                Vector3 pos = {
+                    units[ui].position.x + cosf(angle) * r,
+                    units[ui].position.y +
+                        (float)GetRandomValue(0, (int)(hH * 10.0f)) / 10.0f,
+                    units[ui].position.z + sinf(angle) * r};
+                Vector3 vel = {0, (float)GetRandomValue(30, 70) / 10.0f, 0};
+                Color green = {80, (unsigned char)GetRandomValue(200, 255), 120,
+                               255};
+                SpawnParticle(particles, pos, vel, 0.8f, 0.5f, green);
+              }
+            }
+          } break;
           default:
             break;
           }
@@ -4766,6 +4833,27 @@ int main(int argc, char *argv[]) {
               SpawnParticle(particles, pos, vel,
                             0.5f + (float)GetRandomValue(0, 3) / 10.0f, sz,
                             brown);
+            }
+          }
+          // Rejuvenate particles (green, rising)
+          if (UnitHasModifier(modifiers, i, MOD_REJUVENATE)) {
+            UnitType *rjtype = &unitTypes[units[i].typeIndex];
+            float rjH = (rjtype->baseBounds.max.y - rjtype->baseBounds.min.y) *
+                        rjtype->scale;
+            float rjR = (rjtype->baseBounds.max.x - rjtype->baseBounds.min.x) *
+                        rjtype->scale * 0.5f;
+            for (int pp = 0; pp < 2; pp++) {
+              float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+              float r = rjR * 0.5f;
+              Vector3 pos = {
+                  units[i].position.x + cosf(angle) * r,
+                  units[i].position.y +
+                      (float)GetRandomValue(0, (int)(rjH * 10.0f)) / 10.0f,
+                  units[i].position.z + sinf(angle) * r};
+              Vector3 vel = {0, (float)GetRandomValue(20, 50) / 10.0f, 0};
+              Color green = {80, (unsigned char)GetRandomValue(180, 240), 100,
+                             255};
+              SpawnParticle(particles, pos, vel, 0.6f, 0.4f, green);
             }
           }
         }
@@ -5522,6 +5610,12 @@ int main(int argc, char *argv[]) {
                 break;
               case ABILITY_PRIMAL_CHARGE:
                 castThisFrame = CastPrimalCharge(&combatState, i, slot);
+                break;
+              case ABILITY_MEND:
+                castThisFrame = CastMend(&combatState, i, slot);
+                break;
+              case ABILITY_REJUVENATE:
+                castThisFrame = CastRejuvenate(&combatState, i, slot);
                 break;
               default:
                 break;
@@ -7712,6 +7806,20 @@ int main(int argc, char *argv[]) {
               DrawRectangle(poisonX, by, poisonW, bh, (Color){40, 180, 40, 120});
           }
         }
+        // Rejuvenate heal preview bar (green, right of HP)
+        {
+          float healHPS = GetModifierValue(modifiers, i, MOD_REJUVENATE);
+          if (healHPS > 0) {
+            float healPreview = healHPS * 2.0f;
+            float healRatio = healPreview / maxHP;
+            float remainRatio = 1.0f - hpRatio;
+            if (healRatio > remainRatio) healRatio = remainRatio;
+            int healW = (int)(bw * healRatio);
+            int healX = bx + fillW;
+            if (healW > 0)
+              DrawRectangle(healX, by, healW, bh, (Color){80, 220, 120, 120});
+          }
+        }
         // HP separator notches — only show when bar is wide enough to look good
         {
           float notchHP = (maxHP > 100.0f) ? 50.0f : 25.0f;
@@ -7884,6 +7992,10 @@ int main(int argc, char *argv[]) {
           modLabel = TextFormat("FERVOR x%d", fvStacks);
           modColor = (Color){255, 140, 40, 255};
         } break;
+        case MOD_REJUVENATE:
+          modLabel = "REJUVENATE";
+          modColor = (Color){100, 200, 80, 255};
+          break;
         }
         if (modLabel) {
           int totalLen = (int)strlen(modLabel);
@@ -9756,6 +9868,20 @@ int main(int argc, char *argv[]) {
             (StatLine){"Spd/Stack", AV_FV_SPEED_RED, true};
         statLines[numStatLines++] =
             (StatLine){"Max Stacks", AV_FV_MAX_STACKS, false};
+        break;
+      case ABILITY_MEND:
+        statLines[numStatLines++] =
+            (StatLine){"Flat Heal", AV_MN_FLAT_HEAL, false};
+        statLines[numStatLines++] =
+            (StatLine){"% Heal", AV_MN_PCT_HEAL, true};
+        break;
+      case ABILITY_REJUVENATE:
+        statLines[numStatLines++] =
+            (StatLine){"Flat HPS", AV_RJ_FLAT_HPS, false};
+        statLines[numStatLines++] =
+            (StatLine){"% HPS", AV_RJ_PCT_HPS, true};
+        statLines[numStatLines++] =
+            (StatLine){"Duration", AV_RJ_DURATION, false};
         break;
       default:
         break;

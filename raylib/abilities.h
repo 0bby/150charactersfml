@@ -31,6 +31,8 @@ typedef enum {
     ABILITY_VENOM_STRIKE,
     ABILITY_TOXIC_CLOUD,
     ABILITY_FERVOR,
+    ABILITY_MEND,
+    ABILITY_REJUVENATE,
     ABILITY_COUNT,
 } AbilityId;
 
@@ -59,11 +61,12 @@ typedef enum {
     MOD_COOLDOWN_REDUCTION, // value = fraction of CD reduced (0.2 = 20% faster)
     MOD_POISON,             // value = DPS (stacks additively)
     MOD_FERVOR,             // value = current stack count
+    MOD_REJUVENATE,         // value = HPS (heal per second)
 } ModifierType;
 
 // Returns true for modifier types that stack (SUM) instead of dedup (MAX)
 static inline bool ModifierTypeStacks(ModifierType type) {
-    return type == MOD_LIFESTEAL || type == MOD_POISON;
+    return type == MOD_LIFESTEAL || type == MOD_POISON || type == MOD_REJUVENATE;
 }
 
 typedef enum {
@@ -165,6 +168,13 @@ typedef enum {
 // -- Fervor
 #define AV_FV_SPEED_RED    0  // attack speed reduction per stack (fraction)
 #define AV_FV_MAX_STACKS   1  // maximum stacks
+// -- Mend
+#define AV_MN_FLAT_HEAL    0  // flat HP healed
+#define AV_MN_PCT_HEAL     1  // % of target max HP healed (0.0-1.0)
+// -- Rejuvenate
+#define AV_RJ_FLAT_HPS     0  // flat HP per second
+#define AV_RJ_PCT_HPS      1  // % of max HP per second
+#define AV_RJ_DURATION     2  // buff duration
 
 typedef struct {
     const char *name;
@@ -318,18 +328,18 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
         .abbrev = "CA", .color = { 140, 140, 160, 255 },
         .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
         .range    = { 0 },
-        .cooldown = { 16.0f, 16.0f, 15.0f, 15.0f, 14.0f, 14.0f, 13.0f, 12.0f, 12.0f, 11.0f },
+        .cooldown = { 14.0f, 13.0f, 12.0f, 11.0f, 10.0f, 9.5f, 9.0f, 9.0f, 8.5f, 8.0f },
         .values = {
-            { [AV_CA_ARMOR]=0.5f, [AV_CA_STUN_CHANCE]=0.10f, [AV_CA_STUN_DUR]=0.5f, [AV_CA_DURATION]=4.0f },
-            { [AV_CA_ARMOR]=0.8f, [AV_CA_STUN_CHANCE]=0.12f, [AV_CA_STUN_DUR]=0.5f, [AV_CA_DURATION]=4.5f },
-            { [AV_CA_ARMOR]=1.0f, [AV_CA_STUN_CHANCE]=0.15f, [AV_CA_STUN_DUR]=0.6f, [AV_CA_DURATION]=5.0f },
-            { [AV_CA_ARMOR]=1.5f, [AV_CA_STUN_CHANCE]=0.20f, [AV_CA_STUN_DUR]=0.6f, [AV_CA_DURATION]=6.0f },
-            { [AV_CA_ARMOR]=2.0f, [AV_CA_STUN_CHANCE]=0.25f, [AV_CA_STUN_DUR]=0.7f, [AV_CA_DURATION]=7.0f },
-            { [AV_CA_ARMOR]=2.5f, [AV_CA_STUN_CHANCE]=0.30f, [AV_CA_STUN_DUR]=0.7f, [AV_CA_DURATION]=8.0f },
-            { [AV_CA_ARMOR]=3.0f, [AV_CA_STUN_CHANCE]=0.35f, [AV_CA_STUN_DUR]=0.8f, [AV_CA_DURATION]=8.5f },
-            { [AV_CA_ARMOR]=3.5f, [AV_CA_STUN_CHANCE]=0.45f, [AV_CA_STUN_DUR]=0.9f, [AV_CA_DURATION]=9.0f },
-            { [AV_CA_ARMOR]=4.5f, [AV_CA_STUN_CHANCE]=0.55f, [AV_CA_STUN_DUR]=1.0f, [AV_CA_DURATION]=10.0f },
-            { [AV_CA_ARMOR]=5.5f, [AV_CA_STUN_CHANCE]=0.65f, [AV_CA_STUN_DUR]=1.2f, [AV_CA_DURATION]=11.0f },
+            { [AV_CA_ARMOR]=2.0f,  [AV_CA_STUN_CHANCE]=0.15f, [AV_CA_STUN_DUR]=0.5f, [AV_CA_DURATION]=5.0f },
+            { [AV_CA_ARMOR]=2.5f,  [AV_CA_STUN_CHANCE]=0.18f, [AV_CA_STUN_DUR]=0.6f, [AV_CA_DURATION]=5.5f },
+            { [AV_CA_ARMOR]=3.0f,  [AV_CA_STUN_CHANCE]=0.22f, [AV_CA_STUN_DUR]=0.7f, [AV_CA_DURATION]=6.0f },
+            { [AV_CA_ARMOR]=4.0f,  [AV_CA_STUN_CHANCE]=0.28f, [AV_CA_STUN_DUR]=0.7f, [AV_CA_DURATION]=7.0f },
+            { [AV_CA_ARMOR]=5.0f,  [AV_CA_STUN_CHANCE]=0.32f, [AV_CA_STUN_DUR]=0.8f, [AV_CA_DURATION]=7.5f },
+            { [AV_CA_ARMOR]=6.5f,  [AV_CA_STUN_CHANCE]=0.38f, [AV_CA_STUN_DUR]=0.9f, [AV_CA_DURATION]=8.0f },
+            { [AV_CA_ARMOR]=8.0f,  [AV_CA_STUN_CHANCE]=0.45f, [AV_CA_STUN_DUR]=1.0f, [AV_CA_DURATION]=8.5f },
+            { [AV_CA_ARMOR]=10.0f, [AV_CA_STUN_CHANCE]=0.52f, [AV_CA_STUN_DUR]=1.1f, [AV_CA_DURATION]=9.0f },
+            { [AV_CA_ARMOR]=13.0f, [AV_CA_STUN_CHANCE]=0.60f, [AV_CA_STUN_DUR]=1.2f, [AV_CA_DURATION]=9.0f },
+            { [AV_CA_ARMOR]=16.0f, [AV_CA_STUN_CHANCE]=0.70f, [AV_CA_STUN_DUR]=1.4f, [AV_CA_DURATION]=8.0f },
         },
     },
     [ABILITY_STONE_GAZE] = {
@@ -596,6 +606,44 @@ static const AbilityDef ABILITY_DEFS[ABILITY_COUNT] = {
             { [AV_FV_SPEED_RED]=0.12f, [AV_FV_MAX_STACKS]=8.0f },
             { [AV_FV_SPEED_RED]=0.13f, [AV_FV_MAX_STACKS]=9.0f },
             { [AV_FV_SPEED_RED]=0.15f, [AV_FV_MAX_STACKS]=10.0f },
+        },
+    },
+    [ABILITY_MEND] = {
+        .name = "Mend", .description = "Heal lowest HP ally",
+        .abbrev = "MN", .color = { 80, 220, 120, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
+        .range    = { 40.0f, 42.0f, 45.0f, 48.0f, 52.0f, 56.0f, 60.0f, 65.0f, 70.0f, 80.0f },
+        .cooldown = { 14.0f, 13.0f, 12.0f, 12.0f, 11.0f, 10.0f, 10.0f, 9.0f, 8.0f, 7.0f },
+        .values = {
+            { [AV_MN_FLAT_HEAL]=3.0f,  [AV_MN_PCT_HEAL]=0.08f },
+            { [AV_MN_FLAT_HEAL]=5.0f,  [AV_MN_PCT_HEAL]=0.10f },
+            { [AV_MN_FLAT_HEAL]=7.0f,  [AV_MN_PCT_HEAL]=0.12f },
+            { [AV_MN_FLAT_HEAL]=10.0f, [AV_MN_PCT_HEAL]=0.15f },
+            { [AV_MN_FLAT_HEAL]=13.0f, [AV_MN_PCT_HEAL]=0.18f },
+            { [AV_MN_FLAT_HEAL]=16.0f, [AV_MN_PCT_HEAL]=0.22f },
+            { [AV_MN_FLAT_HEAL]=20.0f, [AV_MN_PCT_HEAL]=0.26f },
+            { [AV_MN_FLAT_HEAL]=25.0f, [AV_MN_PCT_HEAL]=0.30f },
+            { [AV_MN_FLAT_HEAL]=30.0f, [AV_MN_PCT_HEAL]=0.36f },
+            { [AV_MN_FLAT_HEAL]=40.0f, [AV_MN_PCT_HEAL]=0.42f },
+        },
+    },
+    [ABILITY_REJUVENATE] = {
+        .name = "Rejuvenate", .description = "Heal ally over time",
+        .abbrev = "RJ", .color = { 100, 200, 80, 255 },
+        .targetType = TARGET_NONE, .isPassive = false, .goldCost = 3,
+        .range    = { 40.0f, 42.0f, 45.0f, 48.0f, 52.0f, 56.0f, 60.0f, 65.0f, 70.0f, 80.0f },
+        .cooldown = { 16.0f, 15.0f, 14.0f, 13.0f, 12.0f, 11.0f, 10.0f, 9.0f, 8.5f, 8.0f },
+        .values = {
+            { [AV_RJ_FLAT_HPS]=1.0f, [AV_RJ_PCT_HPS]=0.02f,  [AV_RJ_DURATION]=4.0f },
+            { [AV_RJ_FLAT_HPS]=1.5f, [AV_RJ_PCT_HPS]=0.025f, [AV_RJ_DURATION]=4.0f },
+            { [AV_RJ_FLAT_HPS]=2.0f, [AV_RJ_PCT_HPS]=0.03f,  [AV_RJ_DURATION]=5.0f },
+            { [AV_RJ_FLAT_HPS]=2.5f, [AV_RJ_PCT_HPS]=0.035f, [AV_RJ_DURATION]=5.0f },
+            { [AV_RJ_FLAT_HPS]=3.0f, [AV_RJ_PCT_HPS]=0.04f,  [AV_RJ_DURATION]=5.0f },
+            { [AV_RJ_FLAT_HPS]=3.5f, [AV_RJ_PCT_HPS]=0.05f,  [AV_RJ_DURATION]=6.0f },
+            { [AV_RJ_FLAT_HPS]=4.5f, [AV_RJ_PCT_HPS]=0.06f,  [AV_RJ_DURATION]=6.0f },
+            { [AV_RJ_FLAT_HPS]=5.5f, [AV_RJ_PCT_HPS]=0.07f,  [AV_RJ_DURATION]=7.0f },
+            { [AV_RJ_FLAT_HPS]=7.0f, [AV_RJ_PCT_HPS]=0.08f,  [AV_RJ_DURATION]=7.0f },
+            { [AV_RJ_FLAT_HPS]=9.0f, [AV_RJ_PCT_HPS]=0.10f,  [AV_RJ_DURATION]=8.0f },
         },
     },
 };

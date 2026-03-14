@@ -452,6 +452,43 @@ bool CastPrimalCharge(CombatState *state, int caster, AbilitySlot *slot)
     return true;
 }
 
+bool CastMend(CombatState *state, int caster, AbilitySlot *slot)
+{
+    int ally = FindLowestHPAlly(state->units, state->unitCount, caster);
+    if (ally < 0) ally = caster;
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_MEND];
+    int lvl = slot->level;
+    float range = def->range[lvl];
+    if (DistXZ(state->units[caster].position, state->units[ally].position) > range)
+        return false;
+    float maxHP = UNIT_STATS[state->units[ally].typeIndex].health * state->units[ally].hpMultiplier;
+    float heal = def->values[lvl][AV_MN_FLAT_HEAL] + maxHP * def->values[lvl][AV_MN_PCT_HEAL];
+    state->units[ally].currentHealth += heal;
+    if (state->units[ally].currentHealth > maxHP)
+        state->units[ally].currentHealth = maxHP;
+    slot->cooldownRemaining = def->cooldown[lvl];
+    return true;
+}
+
+bool CastRejuvenate(CombatState *state, int caster, AbilitySlot *slot)
+{
+    int ally = FindLowestHPAlly(state->units, state->unitCount, caster);
+    if (ally < 0) ally = caster;
+    const AbilityDef *def = &ABILITY_DEFS[ABILITY_REJUVENATE];
+    int lvl = slot->level;
+    float range = def->range[lvl];
+    if (DistXZ(state->units[caster].position, state->units[ally].position) > range)
+        return false;
+    float maxHP = UNIT_STATS[state->units[ally].typeIndex].health * state->units[ally].hpMultiplier;
+    float flatHPS = def->values[lvl][AV_RJ_FLAT_HPS];
+    float pctHPS = def->values[lvl][AV_RJ_PCT_HPS];
+    float totalHPS = flatHPS + maxHP * pctHPS;
+    float dur = def->values[lvl][AV_RJ_DURATION];
+    AddModifier(state->modifiers, ally, MOD_REJUVENATE, dur, totalHPS);
+    slot->cooldownRemaining = def->cooldown[lvl];
+    return true;
+}
+
 //------------------------------------------------------------------------------------
 // Passive Ability Checks
 //------------------------------------------------------------------------------------

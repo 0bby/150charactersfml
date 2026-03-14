@@ -97,6 +97,8 @@ bool CastSwap(CombatState *state, int caster, AbilitySlot *slot);
 bool CastAphoticShield(CombatState *state, int caster, AbilitySlot *slot);
 bool CastHook(CombatState *state, int caster, AbilitySlot *slot);
 bool CastPrimalCharge(CombatState *state, int caster, AbilitySlot *slot);
+bool CastMend(CombatState *state, int caster, AbilitySlot *slot);
+bool CastRejuvenate(CombatState *state, int caster, AbilitySlot *slot);
 
 // Passive ability checks
 void CheckPassiveSunder(CombatState *state, int unitIndex);

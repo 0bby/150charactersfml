@@ -136,6 +136,12 @@ int CombatTick(Unit units[], int *unitCountPtr,
             units[ui].currentHealth += modifiers[m].value * dt;
             if (units[ui].currentHealth > maxHP) units[ui].currentHealth = maxHP;
         }
+        // Rejuvenate HOT
+        if (modifiers[m].type == MOD_REJUVENATE) {
+            float maxHP = UNIT_STATS[units[ui].typeIndex].health * units[ui].hpMultiplier;
+            units[ui].currentHealth += modifiers[m].value * dt;
+            if (units[ui].currentHealth > maxHP) units[ui].currentHealth = maxHP;
+        }
         // Poison DOT — bypasses armor/shield
         if (modifiers[m].type == MOD_POISON && units[ui].active) {
             float poisonDmg = modifiers[m].value * dt;
@@ -644,6 +650,37 @@ int CombatTick(Unit units[], int *unitCountPtr,
                 }
                 if (!hitAny) break;
                 slot->cooldownRemaining = tcDef->cooldown[slot->level];
+                castThisFrame = true;
+            } break;
+            case ABILITY_MEND: {
+                int ally = FindLowestHPAlly(units, unitCount, i);
+                if (ally < 0) ally = i;
+                const AbilityDef *mnDef = &ABILITY_DEFS[ABILITY_MEND];
+                float range = mnDef->range[slot->level];
+                if (DistXZ(units[i].position, units[ally].position) > range) break;
+                float maxHP = UNIT_STATS[units[ally].typeIndex].health * units[ally].hpMultiplier;
+                float heal = mnDef->values[slot->level][AV_MN_FLAT_HEAL]
+                           + maxHP * mnDef->values[slot->level][AV_MN_PCT_HEAL];
+                units[ally].currentHealth += heal;
+                if (units[ally].currentHealth > maxHP)
+                    units[ally].currentHealth = maxHP;
+                slot->cooldownRemaining = mnDef->cooldown[slot->level];
+                EmitEvent(events, eventCount, COMBAT_EVT_HEAL, ally, ABILITY_MEND, units[ally].position, 0, 0);
+                castThisFrame = true;
+            } break;
+            case ABILITY_REJUVENATE: {
+                int ally = FindLowestHPAlly(units, unitCount, i);
+                if (ally < 0) ally = i;
+                const AbilityDef *rjDef = &ABILITY_DEFS[ABILITY_REJUVENATE];
+                float range = rjDef->range[slot->level];
+                if (DistXZ(units[i].position, units[ally].position) > range) break;
+                float maxHP = UNIT_STATS[units[ally].typeIndex].health * units[ally].hpMultiplier;
+                float flatHPS = rjDef->values[slot->level][AV_RJ_FLAT_HPS];
+                float pctHPS = rjDef->values[slot->level][AV_RJ_PCT_HPS];
+                float totalHPS = flatHPS + maxHP * pctHPS;
+                float dur = rjDef->values[slot->level][AV_RJ_DURATION];
+                AddModifier(modifiers, ally, MOD_REJUVENATE, dur, totalHPS);
+                slot->cooldownRemaining = rjDef->cooldown[slot->level];
                 castThisFrame = true;
             } break;
             default: break;

@@ -866,14 +866,14 @@ static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
              {.unitType = 0,
               .numAbilities = 2,
               .abilityLevel = 0,
-              .hpMult = 1.3f,
-              .dmgMult = 1.1f,
+              .hpMult = 1.0f,
+              .dmgMult = 0.85f,
               .scaleMult = 1.0f},
              {.unitType = 1,
               .numAbilities = 2,
               .abilityLevel = 0,
-              .hpMult = 1.3f,
-              .dmgMult = 1.1f,
+              .hpMult = 1.0f,
+              .dmgMult = 0.85f,
               .scaleMult = 1.0f},
          }},
     // Round 4: 3 enemies, 2 abilities level 0-1
@@ -883,20 +883,20 @@ static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
              {.unitType = 0,
               .numAbilities = 2,
               .abilityLevel = 0,
-              .hpMult = 1.45f,
-              .dmgMult = 1.15f,
+              .hpMult = 1.1f,
+              .dmgMult = 0.9f,
               .scaleMult = 1.0f},
              {.unitType = 1,
               .numAbilities = 2,
               .abilityLevel = 1,
-              .hpMult = 1.45f,
-              .dmgMult = 1.15f,
+              .hpMult = 1.1f,
+              .dmgMult = 0.9f,
               .scaleMult = 1.0f},
              {.unitType = -1,
               .numAbilities = 1,
               .abilityLevel = 0,
-              .hpMult = 1.45f,
-              .dmgMult = 1.15f,
+              .hpMult = 1.1f,
+              .dmgMult = 0.9f,
               .scaleMult = 1.0f},
          }},
     // Round 5: BOSS — single massive unit, 4 abilities all level 2
@@ -906,8 +906,8 @@ static const WaveDef WAVE_DEFS[TOTAL_ROUNDS] = {
              {.unitType = -1,
               .numAbilities = 4,
               .abilityLevel = 2,
-              .hpMult = 4.0f,
-              .dmgMult = 1.5f,
+              .hpMult = 3.0f,
+              .dmgMult = 1.2f,
               .scaleMult = 2.5f},
          }},
 };
@@ -958,8 +958,8 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount, bool 
     if (abLevel > ABILITY_MAX_LEVELS - 1)
       abLevel = ABILITY_MAX_LEVELS - 1;
     // Stats scale gently
-    float hpScale = 1.2f + 0.06f * (float)(extraRounds + 1);
-    float dmgScale = 1.0f + 0.03f * (float)(extraRounds + 1);
+    float hpScale = 1.1f + 0.03f * (float)(extraRounds + 1);
+    float dmgScale = 0.9f + 0.015f * (float)(extraRounds + 1);
 
     // Boss at every milestone (every 5th round, 0-indexed: 4, 9, 14, ...)
     bool isMilestone = isBoss;
@@ -974,8 +974,8 @@ void SpawnWave(Unit units[], int *unitCount, int round, int unitTypeCount, bool 
         if (bossScale > 3.5f)
           bossScale = 3.5f;
         boss->scaleOverride = bossScale;
-        boss->hpMultiplier = hpScale * 3.0f;
-        boss->dmgMultiplier = dmgScale * 1.3f;
+        boss->hpMultiplier = hpScale * 2.5f;
+        boss->dmgMultiplier = dmgScale * 1.15f;
         boss->currentHealth = UNIT_STATS[bossType].health * boss->hpMultiplier;
         int bossAb = numAb + 1;
         if (bossAb > MAX_ABILITIES_PER_UNIT)

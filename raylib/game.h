@@ -412,6 +412,7 @@ typedef enum {
                              // position=impact pos
   COMBAT_EVT_MULTICAST,      // unitIndex=caster, value1=extra cast count (1=2x,
                              // 2=3x)
+  COMBAT_EVT_HEAL,           // unitIndex=target, position=target pos
 } CombatEventType;
 
 typedef struct {
