@@ -26,3 +26,8 @@ deps/*
 *~
 .vscode/
 .idea/
+
+# Local player data (created at runtime)
+raylib/settings.json
+raylib/leaderboard.dat
+raylib/leaderboard.json
